@@ -8,6 +8,7 @@ import { GhAdapter } from "../github/gh-adapter.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
 import { initRepo } from "../engine/init.js";
+import { GitWorkspace } from "../workspace/git-workspace.js";
 
 export interface ParsedArgs {
   cmd: string; sub?: string; repo?: string; dryRun?: boolean; json?: boolean;
@@ -51,8 +52,8 @@ async function main(): Promise<void> {
     const model = process.env.MONASTERY_MODEL ?? "haiku";
     const results = [];
     for (const repo of repos) {
-      const ctx = { repo, gh, provider, model, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store };
-      results.push(await reconcile(ctx)); // NOTE: --dry-run handled in a follow-up; M1 ships apply-only first
+      const ctx = { repo, gh, provider, model, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace() };
+      results.push(await reconcile(ctx));
     }
     console.log(args.json ? JSON.stringify(results, null, 2) : summarize(results));
     return;

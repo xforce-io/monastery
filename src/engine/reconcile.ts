@@ -1,6 +1,6 @@
 // src/engine/reconcile.ts
 import type { ReconcileResult, WaitReason } from "../types.js";
-import { macroStateOf, APPROVED, THESIS } from "../github/labels.js";
+import { macroStateOf, APPROVED, THESIS, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
 import { issueStep, type StepCtx } from "./issue-step.js";
 
 export const MAX_ITEMS_PER_TICK = 20;
@@ -11,8 +11,10 @@ const NEW_ISSUE_BACKOFF_MS = 7_200_000;  // fully idle, only watching for new is
 export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   const open = await ctx.gh.listOpenIssues(ctx.repo, 0);
 
-  // Runnable: virtual-new (no state label) OR approved-but-not-yet-executed.
+  // Runnable: explicit try-fix, virtual-new, triaged(thesis:in) for classification, or approved-but-not-executed.
   const runnable = open.filter((i) => {
+    if (i.labels.includes(PATCH_PROPOSED) || i.labels.includes(NEEDS_HUMAN)) return false; // parked
+    if (i.labels.includes(TRY_FIX) && !i.labels.includes(PATCH_PROPOSED) && !i.labels.includes(NEEDS_HUMAN)) return true;
     const st = macroStateOf(i.labels);
     if (st === "new") return true;
     if (st === "triaged" && i.labels.includes(THESIS.in)) return true; // M2: needs classification

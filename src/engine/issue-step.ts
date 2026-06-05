@@ -3,10 +3,12 @@ import { join } from "node:path";
 import type { GitHubAdapter } from "../github/adapter.js";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
-import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED } from "../github/labels.js";
+import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
 import { thesisGate } from "../judges/thesis-gate.js";
 import { triager } from "../judges/triager.js";
 import type { FailTracker } from "../config/store.js";
+import type { Workspace } from "../workspace/workspace.js";
+import { runPatch } from "./patch.js";
 
 export interface StepCtx {
   repo: string;
@@ -15,6 +17,7 @@ export interface StepCtx {
   model: string;
   artifactRoot: string;
   fails: FailTracker;
+  ws: Workspace;
 }
 
 const PANEL_PREFIX = "<!--monastery-state\nprotocol: gate\n-->";
@@ -24,6 +27,12 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   const issue = (await ctx.gh.listOpenIssues(ctx.repo, 0)).find((i) => i.number === num);
   if (!issue) return { kind: "noop" };
   const state = macroStateOf(issue.labels);
+
+  if (issue.labels.includes(PATCH_PROPOSED) || issue.labels.includes(NEEDS_HUMAN)) return { kind: "noop" }; // parked
+
+  if (issue.labels.includes(TRY_FIX) && !issue.labels.includes(PATCH_PROPOSED) && !issue.labels.includes(NEEDS_HUMAN)) {
+    return runPatch(ctx, issue);
+  }
 
   switch (state) {
     case "new":
