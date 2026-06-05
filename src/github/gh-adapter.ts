@@ -55,7 +55,7 @@ export class GhAdapter implements GitHubAdapter {
       "--jq", `[.[] | select(.body | startswith("${PANEL_MARKER}"))][0].id // ""`,
     ]).catch(() => "");
     if (id.trim()) {
-      await this.run(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id.trim()}`, "-f", `body=${body}`]);
+      await this.run(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id.trim()}`, "-F", "body=@-"], body);
     } else {
       await this.run(["issue", "comment", String(num), "--repo", repo, "--body-file", "-"], body);
     }

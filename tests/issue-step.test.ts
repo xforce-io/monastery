@@ -58,3 +58,19 @@ test("approved -> post reason + close + state:done", async () => {
   expect(gh.comments[4]?.join("\n")).toContain("out of scope");
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+test("multi-line out reason round-trips: every line quoted, full reason posted on approval", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 9, title: "x", body: "y", labels: [], state: "open" }] });
+  const provider = new FakeProvider({ "verdict.json": '{"verdict":"out","reason":"line one.\\nline two."}' });
+  const c = ctx(gh, provider);
+  await issueStep(c, 9);                 // virtual new -> needs-approval, panel draft
+  expect(gh.panels[9]).toContain("> line one.");
+  expect(gh.panels[9]).toContain("> line two.");
+  await gh.addLabel("o/r", 9, "monastery:approved"); // human approves
+  const out = await issueStep(c, 9);     // needs-approval + approved -> close
+  expect(out).toEqual({ kind: "done" });
+  const posted = gh.comments[9]?.join("\n") ?? "";
+  expect(posted).toContain("line one.");
+  expect(posted).toContain("line two.");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});

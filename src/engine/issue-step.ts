@@ -45,11 +45,12 @@ async function gateNewIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   await ctx.gh.addLabel(ctx.repo, issue.number, THESIS[v.verdict]);
 
   if (v.verdict === "out") {
+    const quotedReason = v.reason.split("\n").map((l) => `> ${l}`).join("\n");
     const draft = [
       PANEL_PREFIX,
       "**待审提议** — 关闭并回复（移除 `monastery:needs-approval` 改打 `monastery:approved` 即执行）：",
       "",
-      `> ${v.reason}`,
+      quotedReason,
     ].join("\n");
     await ctx.gh.upsertPanel(ctx.repo, issue.number, draft);
     await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
@@ -63,14 +64,17 @@ async function gateNewIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
 async function executeClose(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const panel = await ctx.gh.readPanel(ctx.repo, issue.number);
   const reason = extractDraft(panel) ?? "Closing as out of scope for this repo's thesis.";
-  await ctx.gh.postComment(ctx.repo, issue.number, reason);
+  // Close FIRST: a closed issue is no longer returned by listOpenIssues, so this
+  // transition can never re-run -> the outward comment can never be double-posted.
   await ctx.gh.closeIssue(ctx.repo, issue.number);
-  await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+  await ctx.gh.postComment(ctx.repo, issue.number, reason);
+  // Add the terminal state label BEFORE removing the prior one (never drop to zero labels).
   await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
+  await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
   return { kind: "done" };
 }
 
-/** The draft reason is the last `> quoted` block in the panel. */
+/** The draft reason = all `> ` quoted lines in the panel, joined (round-trips gateNewIssue). */
 function extractDraft(panel: string): string | null {
   const quoted = panel.split("\n").filter((l) => l.startsWith("> ")).map((l) => l.slice(2));
   return quoted.length ? quoted.join("\n") : null;

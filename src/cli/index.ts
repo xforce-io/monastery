@@ -32,6 +32,10 @@ async function main(): Promise<void> {
   }
 
   if (args.cmd === "step") {
+    if (args.dryRun) {
+      console.error("--dry-run is not supported in M1 (apply-only). Re-run without --dry-run.");
+      process.exit(2);
+    }
     const repos = args.repo ? [args.repo] : store.listRepos();
     const gh = new GhAdapter();
     const provider = new ClaudeCodeProvider();
