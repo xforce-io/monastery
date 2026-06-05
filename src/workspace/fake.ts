@@ -10,6 +10,7 @@ export class FakeWorkspace implements Workspace {
   public cloned: { repo: string; branch: string; dir: string }[] = [];
   public committed: { branch: string; message: string }[] = [];
   public cleaned: string[] = [];
+  public diffCalls = 0;
   constructor(private opts: { diff?: string; tests?: boolean | null } = {}) {}
   async clone(repo: string, branch: string): Promise<string> {
     const dir = mkdtempSync(join(tmpdir(), "fake-wt-"));
@@ -17,7 +18,7 @@ export class FakeWorkspace implements Workspace {
     return dir;
   }
   async runTests(_dir?: string): Promise<boolean | null> { return this.opts.tests ?? null; }
-  async stagedDiff(_dir?: string): Promise<string> { return this.opts.diff ?? ""; }
+  async stagedDiff(_dir?: string): Promise<string> { this.diffCalls++; return this.opts.diff ?? ""; }
   async commitPush(_dir: string, branch: string, message: string): Promise<void> {
     this.committed.push({ branch, message });
   }

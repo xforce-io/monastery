@@ -27,7 +27,7 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   try {
     const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${issue.body}`;
     await ctx.provider.run({ persona: PERSONA, context, artifactDir: dir, model: ctx.model });
-    const diff = await ctx.ws.stagedDiff(dir);
+    let diff = await ctx.ws.stagedDiff(dir);
 
     if (!diff.trim()) {
       const fails = ctx.fails.recordFail(ctx.repo, issue.number);
@@ -43,6 +43,8 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
 
     ctx.fails.clearFail(ctx.repo, issue.number);
     const tests = await ctx.ws.runTests(dir);
+    // re-stage AFTER tests so files the test run regenerates (e.g. package-lock.json from npm install) are committed too
+    diff = await ctx.ws.stagedDiff(dir);
     await ctx.ws.commitPush(dir, branch, `fix: address #${issue.number}`);
 
     const MAX_DIFF = 60000;

@@ -160,6 +160,7 @@ test("try-fix with changes -> draft PR opened, patch-proposed added, try-fix rem
   expect(i.labels).toContain("monastery:patch-proposed");
   expect(i.labels).not.toContain("monastery:try-fix");
   expect(ws.cleaned).toHaveLength(1); // cleanup always runs (finally)
+  expect(ws.diffCalls).toBe(2);       // re-stage after tests so regenerated files (e.g. lockfile) get committed
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 

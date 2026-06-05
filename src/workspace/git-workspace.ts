@@ -23,8 +23,8 @@ export class GitWorkspace implements Workspace {
     const dir = mkdtempSync(join(tmpdir(), "monastery-wt-"));
     await this.run("gh", ["repo", "clone", repo, dir]);
     await this.run("git", ["-C", dir, "checkout", "-b", branch]);
-    // keep the agent's scratch files out of the commit
-    try { appendFileSync(join(dir, ".git", "info", "exclude"), "\n" + SCRATCH.join("\n") + "\n"); } catch { /* best effort */ }
+    // keep the agent's scratch files and test-run node_modules out of the commit
+    try { appendFileSync(join(dir, ".git", "info", "exclude"), "\n" + [...SCRATCH, "node_modules/"].join("\n") + "\n"); } catch { /* best effort */ }
     return dir;
   }
 
