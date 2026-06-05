@@ -12,4 +12,5 @@ export interface GitHubAdapter {
   postComment(repo: string, num: number, body: string): Promise<void>;
   closeIssue(repo: string, num: number): Promise<void>;
   readThesis(repo: string): Promise<string>;
+  readPanel(repo: string, num: number): Promise<string>;
 }

@@ -26,5 +26,6 @@ export class FakeGitHub implements GitHubAdapter {
   }
   async closeIssue(_r: string, n: number): Promise<void> { this.must(n).state = "closed"; this.closed.push(n); }
   async readThesis(): Promise<string> { return this.opts.thesis; }
+  async readPanel(_r: string, n: number): Promise<string> { return this.panels[n] ?? ""; }
   private must(n: number): Issue { const i = this.issues.get(n); if (!i) throw new Error(`no issue ${n}`); return i; }
 }
