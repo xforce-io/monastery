@@ -27,3 +27,14 @@ test("upsertPanel writes once then edits in place (single panel)", async () => {
   await gh.upsertPanel("o/r", 1, "v2");
   expect(gh.panels[1]).toBe("v2");
 });
+
+test("ensureLabel records the label; createFile + fileExists round-trip", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [], files: { ".monastery/thesis.md": "existing" } });
+  await gh.ensureLabel("o/r", "thesis:in", "0E8A16", "in scope");
+  expect(gh.ensuredLabels).toEqual([{ name: "thesis:in", color: "0E8A16", description: "in scope" }]);
+  expect(await gh.fileExists("o/r", ".monastery/thesis.md")).toBe(true);
+  expect(await gh.fileExists("o/r", ".monastery/missing.md")).toBe(false);
+  await gh.createFile("o/r", ".monastery/new.md", "hello", "msg");
+  expect(await gh.fileExists("o/r", ".monastery/new.md")).toBe(true);
+  expect(gh.files[".monastery/new.md"]).toBe("hello");
+});

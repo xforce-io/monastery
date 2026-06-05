@@ -8,8 +8,11 @@ export class FakeGitHub implements GitHubAdapter {
   public panels: Record<number, string> = {};
   public comments: Record<number, string[]> = {};
   public closed: number[] = [];
-  constructor(private opts: { thesis: string; issues: Issue[] }) {
+  public ensuredLabels: { name: string; color: string; description: string }[] = [];
+  public files: Record<string, string> = {};
+  constructor(private opts: { thesis: string; issues: Issue[]; files?: Record<string, string> }) {
     for (const i of opts.issues) this.issues.set(i.number, { ...i, labels: [...i.labels] });
+    if (opts.files) this.files = { ...opts.files };
   }
   async listOpenIssues(_repo?: string, _sinceMs?: number): Promise<Issue[]> {
     return [...this.issues.values()].filter((i) => i.state === "open").map((i) => ({ ...i, labels: [...i.labels] }));
@@ -27,5 +30,14 @@ export class FakeGitHub implements GitHubAdapter {
   async closeIssue(_r: string, n: number): Promise<void> { this.must(n).state = "closed"; this.closed.push(n); }
   async readThesis(): Promise<string> { return this.opts.thesis; }
   async readPanel(_r: string, n: number): Promise<string> { return this.panels[n] ?? ""; }
+  async ensureLabel(_r: string, name: string, color: string, description: string): Promise<void> {
+    this.ensuredLabels.push({ name, color, description });
+  }
+  async fileExists(_r: string, path: string): Promise<boolean> {
+    return path in this.files;
+  }
+  async createFile(_r: string, path: string, content: string, _message: string): Promise<void> {
+    this.files[path] = content;
+  }
   private must(n: number): Issue { const i = this.issues.get(n); if (!i) throw new Error(`no issue ${n}`); return i; }
 }

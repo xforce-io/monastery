@@ -14,3 +14,7 @@ test("parses `repos add o/r`", () => {
 test("parses bare `step`", () => {
   expect(parseArgs(["step"])).toEqual({ cmd: "step", dryRun: false, json: false });
 });
+
+test("parses `init o/r`", () => {
+  expect(parseArgs(["init", "o/r"])).toEqual({ cmd: "init", repo: "o/r" });
+});

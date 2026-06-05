@@ -22,3 +22,24 @@ test("listOpenIssues parses gh json output", async () => {
   const issues = await gh.listOpenIssues("o/r", 0);
   expect(issues).toEqual([{ number: 1, title: "t", body: "b", labels: ["x"], state: "open" }]);
 });
+
+test("ensureLabel issues the correct gh argv (idempotent --force)", async () => {
+  const captured: string[][] = [];
+  const gh = new GhAdapter(async (args) => { captured.push(args); return ""; });
+  await gh.ensureLabel("o/r", "thesis:in", "0E8A16", "in scope");
+  expect(captured[0]).toEqual(["label", "create", "thesis:in", "--repo", "o/r", "--color", "0E8A16", "--description", "in scope", "--force"]);
+});
+
+test("createFile PUTs base64 content", async () => {
+  const captured: string[][] = [];
+  const gh = new GhAdapter(async (args) => { captured.push(args); return ""; });
+  await gh.createFile("o/r", ".monastery/thesis.md", "hello", "scaffold");
+  expect(captured[0]).toEqual(["api", "-X", "PUT", "repos/o/r/contents/.monastery/thesis.md", "-f", "message=scaffold", "-f", "content=aGVsbG8="]);
+});
+
+test("fileExists is true when api returns a sha, false when it throws", async () => {
+  const present = new GhAdapter(async () => "abc123");
+  expect(await present.fileExists("o/r", ".monastery/thesis.md")).toBe(true);
+  const absent = new GhAdapter(async () => { throw new Error("404"); });
+  expect(await absent.fileExists("o/r", ".monastery/missing.md")).toBe(false);
+});

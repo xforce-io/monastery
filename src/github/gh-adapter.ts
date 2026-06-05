@@ -60,4 +60,19 @@ export class GhAdapter implements GitHubAdapter {
       await this.run(["issue", "comment", String(num), "--repo", repo, "--body-file", "-"], body);
     }
   }
+  async ensureLabel(repo: string, name: string, color: string, description: string): Promise<void> {
+    await this.run(["label", "create", name, "--repo", repo, "--color", color, "--description", description, "--force"]);
+  }
+  async fileExists(repo: string, path: string): Promise<boolean> {
+    try {
+      const sha = await this.run(["api", `repos/${repo}/contents/${path}`, "--jq", ".sha"]);
+      return sha.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+  async createFile(repo: string, path: string, content: string, message: string): Promise<void> {
+    const b64 = Buffer.from(content, "utf8").toString("base64");
+    await this.run(["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${b64}`]);
+  }
 }
