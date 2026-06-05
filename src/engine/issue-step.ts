@@ -5,6 +5,7 @@ import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
 import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED } from "../github/labels.js";
 import { thesisGate } from "../judges/thesis-gate.js";
+import type { FailTracker } from "../config/store.js";
 
 export interface StepCtx {
   repo: string;
@@ -12,9 +13,11 @@ export interface StepCtx {
   provider: AgentProvider;
   model: string;
   artifactRoot: string;
+  fails: FailTracker;
 }
 
 const PANEL_PREFIX = "<!--monastery-state\nprotocol: gate\n-->";
+const GATE_FAIL_THRESHOLD = 3;
 
 export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   const issue = (await ctx.gh.listOpenIssues(ctx.repo, 0)).find((i) => i.number === num);
@@ -38,9 +41,20 @@ async function gateNewIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const dir = join(ctx.artifactRoot, `${issue.number}`);
   const v = await thesisGate(ctx.provider, ctx.model, thesis, issue, dir);
   if (!v) {
-    await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PANEL_PREFIX}\n⚠️ thesis-gate produced no valid verdict; skipped this tick.`);
+    const fails = ctx.fails.recordFail(ctx.repo, issue.number);
+    if (fails < GATE_FAIL_THRESHOLD) {
+      // transient, self-healing skip: stay local (next tick retries), do NOT write GitHub
+      console.warn(`[monastery] thesis-gate skip ${ctx.repo}#${issue.number} (${fails}/${GATE_FAIL_THRESHOLD})`);
+      return { kind: "noop" };
+    }
+    // persistent failure -> escalate to a visible, actionable note
+    await ctx.gh.upsertPanel(ctx.repo, issue.number,
+      `${PANEL_PREFIX}\n⚠️ thesis-gate has failed ${fails} consecutive ticks for this issue — needs a human.`);
     return { kind: "noop" };
   }
+
+  const priorFails = ctx.fails.failCount(ctx.repo, issue.number);
+  ctx.fails.clearFail(ctx.repo, issue.number);
 
   await ctx.gh.addLabel(ctx.repo, issue.number, THESIS[v.verdict]);
 
@@ -56,6 +70,10 @@ async function gateNewIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
     await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
   } else {
+    if (priorFails >= GATE_FAIL_THRESHOLD) {
+      // had escalated; reconcile the panel back to current (resolved) state
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PANEL_PREFIX}\n✓ thesis-gate resolved (\`${THESIS[v.verdict]}\`).`);
+    }
     await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("triaged"));
   }
   return { kind: "progressed" };
