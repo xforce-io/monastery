@@ -121,3 +121,25 @@ test("success after failures resets counter and reconciles the stale escalation 
   expect(gh.panels[12]).toContain("resolved"); // stale escalation reconciled
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+test("triaged + thesis:in -> triager classifies and advances to classified", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 20, title: "crash", body: "broken", labels: ["monastery/state:triaged", "thesis:in"], state: "open" }] });
+  const c = ctx(gh, new FakeProvider({ "triage.json": '{"type":"bug"}' }));
+  const out = await issueStep(c, 20);
+  expect(out).toEqual({ kind: "progressed" });
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("type:bug");
+  expect(i.labels).toContain("monastery/state:classified");
+  expect(i.labels).not.toContain("monastery/state:triaged");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("triaged + thesis:unclear -> parked (noop, triager not run)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 21, title: "x", body: "y", labels: ["monastery/state:triaged", "thesis:unclear"], state: "open" }] });
+  const provider = new FakeProvider({ "triage.json": '{"type":"bug"}' });
+  const c = ctx(gh, provider);
+  const out = await issueStep(c, 21);
+  expect(out).toEqual({ kind: "noop" });
+  expect(provider.calls.length).toBe(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});

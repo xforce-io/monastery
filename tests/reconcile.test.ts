@@ -49,3 +49,17 @@ test("only waiting items => idle true, long backoff", async () => {
   expect(r.nextPollMs).toBeGreaterThanOrEqual(3600_000);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+test("triaged+thesis:in is runnable (classification); unclear/classified are not", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "a", body: "b", labels: ["monastery/state:triaged", "thesis:in"], state: "open" },
+    { number: 2, title: "c", body: "d", labels: ["monastery/state:triaged", "thesis:unclear"], state: "open" },
+    { number: 3, title: "e", body: "f", labels: ["monastery/state:classified", "thesis:in", "type:bug"], state: "open" },
+  ]});
+  const provider = new FakeProvider({ "triage.json": '{"type":"feature"}' });
+  const c = baseCtx(gh, provider);
+  const r = await reconcile(c);
+  expect(r.advanced).toBe(1);          // only #1
+  expect(provider.calls.length).toBe(1);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});

@@ -5,6 +5,7 @@ import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
 import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED } from "../github/labels.js";
 import { thesisGate } from "../judges/thesis-gate.js";
+import { triager } from "../judges/triager.js";
 import type { FailTracker } from "../config/store.js";
 
 export interface StepCtx {
@@ -30,7 +31,7 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
     case "needs-approval":
       return issue.labels.includes(APPROVED) ? executeClose(ctx, issue) : { kind: "waiting", on: "human" };
     case "triaged":
-      return { kind: "noop" };
+      return issue.labels.includes(THESIS.in) ? triageIssue(ctx, issue) : { kind: "noop" };
     default:
       return { kind: "noop" };
   }
@@ -76,6 +77,27 @@ async function gateNewIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     }
     await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("triaged"));
   }
+  return { kind: "progressed" };
+}
+
+async function triageIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  const dir = join(ctx.artifactRoot, `${issue.number}-triage`);
+  const t = await triager(ctx.provider, ctx.model, issue, dir);
+  if (!t) {
+    const fails = ctx.fails.recordFail(ctx.repo, issue.number);
+    if (fails < GATE_FAIL_THRESHOLD) {
+      console.warn(`[monastery] triager skip ${ctx.repo}#${issue.number} (${fails}/${GATE_FAIL_THRESHOLD})`);
+      return { kind: "noop" };
+    }
+    await ctx.gh.upsertPanel(ctx.repo, issue.number,
+      `${PANEL_PREFIX}\n⚠️ triager has failed ${fails} consecutive ticks for this issue — needs a human.`);
+    return { kind: "noop" };
+  }
+  ctx.fails.clearFail(ctx.repo, issue.number);
+  await ctx.gh.addLabel(ctx.repo, issue.number, `type:${t.type}`);
+  // advance triaged -> classified (add new state before removing old; never drop to zero state labels)
+  await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("classified"));
+  await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("triaged"));
   return { kind: "progressed" };
 }
 

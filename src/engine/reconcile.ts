@@ -1,6 +1,6 @@
 // src/engine/reconcile.ts
 import type { ReconcileResult, WaitReason } from "../types.js";
-import { macroStateOf, APPROVED } from "../github/labels.js";
+import { macroStateOf, APPROVED, THESIS } from "../github/labels.js";
 import { issueStep, type StepCtx } from "./issue-step.js";
 
 export const MAX_ITEMS_PER_TICK = 20;
@@ -15,6 +15,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   const runnable = open.filter((i) => {
     const st = macroStateOf(i.labels);
     if (st === "new") return true;
+    if (st === "triaged" && i.labels.includes(THESIS.in)) return true; // M2: needs classification
     if (st === "needs-approval" && i.labels.includes(APPROVED)) return true;
     return false;
   });
