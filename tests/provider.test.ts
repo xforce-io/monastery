@@ -13,3 +13,10 @@ test("FakeProvider writes the preset files into artifactDir and returns them", a
   expect(JSON.parse(readFileSync(join(dir, "verdict.json"), "utf8")).verdict).toBe("out");
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("FakeProvider returns resultText when provided", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const dir = mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "mp-"));
+  const r = await new FakeProvider({}, "hello").run({ persona: "p", context: "c", artifactDir: dir, model: "haiku" });
+  expect(r.resultText).toBe("hello");
+});

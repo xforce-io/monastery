@@ -9,6 +9,7 @@ import { reconcile, MAX_ITEMS_PER_TICK } from "../src/engine/reconcile.js";
 
 const baseCtx = (gh: FakeGitHub, provider: FakeProvider) => ({
   repo: "o/r", gh, provider, model: "haiku", artifactRoot: mkdtempSync(join(tmpdir(), "monastery-rec-")),
+  fails: { recordFail: () => 1, failCount: () => 0, clearFail: () => {} },
 });
 
 test("processes virtual-new issues and reports advanced count", async () => {

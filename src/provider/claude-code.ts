@@ -1,6 +1,6 @@
 // src/provider/claude-code.ts
 import { execa } from "execa";
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentConfig, AgentProvider, AgentResult } from "./interface.js";
 
@@ -21,7 +21,15 @@ export class ClaudeCodeProvider implements AgentProvider {
       reject: false, // an exit code is not a throw; the shell judges by artifacts
     });
 
-    return { artifacts: scanArtifacts(config.artifactDir) };
+    let resultText: string | undefined;
+    const stdoutPath = join(config.artifactDir, "_claude_stdout.json");
+    if (existsSync(stdoutPath)) {
+      try {
+        const j = JSON.parse(readFileSync(stdoutPath, "utf8")) as { result?: unknown };
+        if (typeof j.result === "string") resultText = j.result;
+      } catch { /* leave resultText undefined */ }
+    }
+    return { artifacts: scanArtifacts(config.artifactDir), resultText };
   }
 }
 

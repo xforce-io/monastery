@@ -6,7 +6,7 @@ export interface AgentConfig {
   model: string;         // passed verbatim to the underlying agent (e.g. "haiku")
   timeoutMs?: number;
 }
-export interface AgentResult { artifacts: string[]; }
+export interface AgentResult { artifacts: string[]; resultText?: string }
 
 /** Runs one agent to completion. Output is the files it wrote into artifactDir. */
 export interface AgentProvider {

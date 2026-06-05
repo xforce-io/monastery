@@ -33,12 +33,35 @@ export async function thesisGate(
     `"in" = clearly within the thesis. "out" = conflicts with / outside it. "unclear" = the thesis does not decide.`,
   ].join("\n\n");
 
-  await provider.run({ persona: PERSONA, context, artifactDir, model });
+  const res = await provider.run({ persona: PERSONA, context, artifactDir, model });
 
+  // 1. primary: the agent wrote verdict.json
   const p = join(artifactDir, "verdict.json");
-  if (!existsSync(p)) return null;
-  const parsed = VerdictSchema.safeParse(safeJson(readFileSync(p, "utf8")));
-  return parsed.success ? parsed.data : null;
+  if (existsSync(p)) {
+    const parsed = VerdictSchema.safeParse(safeJson(readFileSync(p, "utf8")));
+    if (parsed.success) return parsed.data;
+  }
+  // 2. fallback: the agent printed the verdict to stdout instead of writing the file
+  if (res.resultText) {
+    const fromText = extractVerdict(res.resultText);
+    if (fromText) return fromText;
+  }
+  return null;
+}
+
+/** Pull a schema-valid verdict object out of free-form text (fenced JSON, prose-wrapped, or bare). */
+function extractVerdict(text: string): ThesisVerdict | null {
+  const candidates: string[] = [];
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) candidates.push(fence[1]);
+  const brace = text.match(/\{[\s\S]*\}/);
+  if (brace) candidates.push(brace[0]);
+  candidates.push(text);
+  for (const c of candidates) {
+    const parsed = VerdictSchema.safeParse(safeJson(c));
+    if (parsed.success) return parsed.data;
+  }
+  return null;
 }
 
 function safeJson(s: string): unknown { try { return JSON.parse(s); } catch { return undefined; } }

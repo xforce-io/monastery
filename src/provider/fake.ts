@@ -6,7 +6,7 @@ import type { AgentConfig, AgentProvider, AgentResult } from "./interface.js";
 /** Test double: writes a fixed set of files (name -> contents) into artifactDir. */
 export class FakeProvider implements AgentProvider {
   public calls: AgentConfig[] = [];
-  constructor(private files: Record<string, string>) {}
+  constructor(private files: Record<string, string>, private resultText?: string) {}
   async run(config: AgentConfig): Promise<AgentResult> {
     this.calls.push(config);
     mkdirSync(config.artifactDir, { recursive: true });
@@ -16,6 +16,6 @@ export class FakeProvider implements AgentProvider {
       writeFileSync(p, body, "utf8");
       artifacts.push(p);
     }
-    return { artifacts };
+    return { artifacts, resultText: this.resultText };
   }
 }

@@ -28,3 +28,15 @@ test("cursor: read missing returns 0, write then read round-trips, disposable", 
   expect(new Store(dir).getCursor("owner/monastery")).toBe(123);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("fail counter: record increments, failCount reads, clear resets, persists", () => {
+  const { store, dir } = tmpStore();
+  expect(store.failCount("o/r", 1)).toBe(0);
+  expect(store.recordFail("o/r", 1)).toBe(1);
+  expect(store.recordFail("o/r", 1)).toBe(2);
+  expect(store.failCount("o/r", 1)).toBe(2);
+  expect(new Store(dir).failCount("o/r", 1)).toBe(2); // persisted
+  store.clearFail("o/r", 1);
+  expect(store.failCount("o/r", 1)).toBe(0);
+  rmSync(dir, { recursive: true, force: true });
+});
