@@ -31,3 +31,43 @@ test("invalid schema => null", async () => {
   expect(v).toBeNull();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("fallback: bare JSON in stdout result when no file written", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({}, '{"verdict":"in","reason":"ok"}');
+  const v = await thesisGate(provider, "haiku", "t", issue, dir);
+  expect(v).toEqual({ verdict: "in", reason: "ok" });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("fallback: fenced ```json block in stdout result", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({}, 'Here is my call:\n```json\n{"verdict":"out","reason":"off"}\n```\n');
+  const v = await thesisGate(provider, "haiku", "t", issue, dir);
+  expect(v).toEqual({ verdict: "out", reason: "off" });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("fallback: prose-wrapped JSON in stdout result", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({}, 'I judge this {"verdict":"unclear","reason":"y"} given the thesis.');
+  const v = await thesisGate(provider, "haiku", "t", issue, dir);
+  expect(v).toEqual({ verdict: "unclear", reason: "y" });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("verdict.json file takes precedence over stdout fallback", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "verdict.json": '{"verdict":"in","reason":"from file"}' }, '{"verdict":"out","reason":"from stdout"}');
+  const v = await thesisGate(provider, "haiku", "t", issue, dir);
+  expect(v).toEqual({ verdict: "in", reason: "from file" });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("neither file nor parseable stdout => null", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({}, "I could not decide.");
+  const v = await thesisGate(provider, "haiku", "t", issue, dir);
+  expect(v).toBeNull();
+  rmSync(dir, { recursive: true, force: true });
+});
