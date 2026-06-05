@@ -75,4 +75,11 @@ export class GhAdapter implements GitHubAdapter {
     const b64 = Buffer.from(content, "utf8").toString("base64");
     await this.run(["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${b64}`]);
   }
+  async openDraftPR(repo: string, head: string, title: string, body: string): Promise<string> {
+    const url = await this.run(
+      ["pr", "create", "--repo", repo, "--head", head, "--draft", "--title", title, "--body-file", "-"],
+      body,
+    );
+    return url.trim();
+  }
 }

@@ -38,3 +38,10 @@ test("ensureLabel records the label; createFile + fileExists round-trip", async 
   expect(await gh.fileExists("o/r", ".monastery/new.md")).toBe(true);
   expect(gh.files[".monastery/new.md"]).toBe("hello");
 });
+
+test("FakeGitHub openDraftPR records the PR and returns a url", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [] });
+  const url = await gh.openDraftPR("o/r", "monastery/fix-1", "t", "b");
+  expect(gh.prs[0]).toEqual({ head: "monastery/fix-1", title: "t", body: "b" });
+  expect(url).toContain("/pull/1");
+});

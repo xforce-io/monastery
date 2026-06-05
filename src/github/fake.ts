@@ -10,6 +10,7 @@ export class FakeGitHub implements GitHubAdapter {
   public closed: number[] = [];
   public ensuredLabels: { name: string; color: string; description: string }[] = [];
   public files: Record<string, string> = {};
+  public prs: { head: string; title: string; body: string }[] = [];
   constructor(private opts: { thesis: string; issues: Issue[]; files?: Record<string, string> }) {
     for (const i of opts.issues) this.issues.set(i.number, { ...i, labels: [...i.labels] });
     if (opts.files) this.files = { ...opts.files };
@@ -38,6 +39,10 @@ export class FakeGitHub implements GitHubAdapter {
   }
   async createFile(_r: string, path: string, content: string, _message: string): Promise<void> {
     this.files[path] = content;
+  }
+  async openDraftPR(_r: string, head: string, title: string, body: string): Promise<string> {
+    this.prs.push({ head, title, body });
+    return `https://github.com/fake/pull/${this.prs.length}`;
   }
   private must(n: number): Issue { const i = this.issues.get(n); if (!i) throw new Error(`no issue ${n}`); return i; }
 }

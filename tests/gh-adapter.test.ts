@@ -43,3 +43,13 @@ test("fileExists is true when api returns a sha, false when it throws", async ()
   const absent = new GhAdapter(async () => { throw new Error("404"); });
   expect(await absent.fileExists("o/r", ".monastery/missing.md")).toBe(false);
 });
+
+test("openDraftPR issues the correct gh argv and returns the trimmed url", async () => {
+  const captured: string[][] = [];
+  const inputs: (string | undefined)[] = [];
+  const gh = new GhAdapter(async (args, input) => { captured.push(args); inputs.push(input); return "https://github.com/o/r/pull/5\n"; });
+  const url = await gh.openDraftPR("o/r", "monastery/fix-1", "monastery: fix #1", "body text");
+  expect(captured[0]).toEqual(["pr", "create", "--repo", "o/r", "--head", "monastery/fix-1", "--draft", "--title", "monastery: fix #1", "--body-file", "-"]);
+  expect(inputs[0]).toBe("body text");
+  expect(url).toBe("https://github.com/o/r/pull/5");
+});
