@@ -7,6 +7,7 @@ import { Store } from "../config/store.js";
 import { GhAdapter } from "../github/gh-adapter.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
+import { initRepo } from "../engine/init.js";
 
 export interface ParsedArgs {
   cmd: string; sub?: string; repo?: string; dryRun?: boolean; json?: boolean;
@@ -15,6 +16,7 @@ export interface ParsedArgs {
 export function parseArgs(argv: string[]): ParsedArgs {
   const [cmd, ...rest] = argv;
   if (cmd === "repos") return { cmd, sub: rest[0], repo: rest[1] };
+  if (cmd === "init") return { cmd, repo: rest[0] };
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
   return { cmd, repo: opt("repo"), dryRun: flag("dry-run"), json: flag("json") };
@@ -28,6 +30,13 @@ async function main(): Promise<void> {
     if (args.sub === "add" && args.repo) store.addRepo(args.repo);
     else if (args.sub === "remove" && args.repo) store.removeRepo(args.repo);
     console.log(store.listRepos().join("\n"));
+    return;
+  }
+
+  if (args.cmd === "init") {
+    if (!args.repo) { console.error("usage: monastery init <owner>/<repo>"); process.exit(2); }
+    const r = await initRepo(new GhAdapter(), args.repo);
+    console.log(`init ${args.repo}: ensured ${r.labels} labels; thesis ${r.thesisCreated ? "scaffolded" : "already present"}`);
     return;
   }
 
