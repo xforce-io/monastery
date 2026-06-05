@@ -2,7 +2,9 @@
   "name": "monastery",
   "version": "0.0.0",
   "type": "module",
-  "bin": { "monastery": "./dist/cli/index.js" },
+  "bin": {
+    "monastery": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
