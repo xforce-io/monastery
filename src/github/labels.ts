@@ -15,6 +15,9 @@ export const NEEDS_APPROVAL = "monastery:needs-approval";
 export const APPROVED = "monastery:approved";
 export const DECLINED = "monastery:declined";
 export const HOLD = "monastery:hold";
+export const TRY_FIX = "monastery:try-fix";
+export const PATCH_PROPOSED = "monastery:patch-proposed";
+export const NEEDS_HUMAN = "monastery:needs-human";
 
 export interface LabelDef { name: string; color: string; description: string; }
 
@@ -34,4 +37,7 @@ export const LABEL_DEFS: LabelDef[] = [
   { name: APPROVED, color: "0E8A16", description: "human approved the proposal" },
   { name: DECLINED, color: "B60205", description: "human declined the proposal" },
   { name: HOLD, color: "5319E7", description: "pause monastery on this item" },
+  { name: TRY_FIX, color: "1D76DB", description: "ask monastery to attempt a fix" },
+  { name: PATCH_PROPOSED, color: "0E8A16", description: "monastery opened a draft PR for this issue" },
+  { name: NEEDS_HUMAN, color: "B60205", description: "monastery couldn't proceed; needs a human" },
 ];

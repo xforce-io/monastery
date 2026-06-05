@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
+import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep } from "../src/engine/issue-step.js";
 
 const fakeFails = () => {
@@ -15,10 +16,11 @@ const fakeFails = () => {
     clearFail: (r: string, n: number) => { m.delete(`${r}#${n}`); },
   };
 };
-const ctx = (gh: FakeGitHub, provider: FakeProvider) => ({
+const ctx = (gh: FakeGitHub, provider: FakeProvider, ws: FakeWorkspace = new FakeWorkspace()) => ({
   repo: "o/r", gh, provider, model: "haiku",
   artifactRoot: mkdtempSync(join(tmpdir(), "monastery-step-")),
   fails: fakeFails(),
+  ws,
 });
 
 test("virtual new + thesis:out -> needs-approval, panel draft", async () => {
@@ -141,5 +143,46 @@ test("triaged + thesis:unclear -> parked (noop, triager not run)", async () => {
   const out = await issueStep(c, 21);
   expect(out).toEqual({ kind: "noop" });
   expect(provider.calls.length).toBe(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("try-fix with changes -> draft PR opened, patch-proposed added, try-fix removed", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 30, title: "bug", body: "broken", labels: ["monastery:try-fix", "type:bug"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "--- a\n+++ b\n@@ fix @@", tests: true });
+  const c = ctx(gh, new FakeProvider({}), ws);
+  const out = await issueStep(c, 30);
+  expect(out.kind).toBe("progressed");
+  expect(ws.cloned[0]).toMatchObject({ repo: "o/r", branch: "monastery/fix-30" });
+  expect(ws.committed).toHaveLength(1);
+  expect(gh.prs[0].head).toBe("monastery/fix-30");
+  expect(gh.prs[0].body).toContain("Closes #30");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:patch-proposed");
+  expect(i.labels).not.toContain("monastery:try-fix");
+  expect(ws.cleaned).toHaveLength(1); // cleanup always runs (finally)
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("try-fix with NO changes -> no PR, transient skip, escalates to needs-human after threshold", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 31, title: "bug", body: "x", labels: ["monastery:try-fix"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "", tests: null });
+  const c = ctx(gh, new FakeProvider({}), ws);
+  await issueStep(c, 31);
+  await issueStep(c, 31);
+  expect(gh.prs).toHaveLength(0);
+  expect((await gh.listOpenIssues("o/r", 0))[0].labels).not.toContain("monastery:needs-human");
+  await issueStep(c, 31); // 3rd -> escalate
+  expect((await gh.listOpenIssues("o/r", 0))[0].labels).toContain("monastery:needs-human");
+  expect(gh.prs).toHaveLength(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("patch-proposed issue is not patched again", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 32, title: "x", body: "y", labels: ["monastery:try-fix", "monastery:patch-proposed", "monastery/state:classified", "thesis:in", "type:bug"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "d", tests: true });
+  const c = ctx(gh, new FakeProvider({}), ws);
+  await issueStep(c, 32);
+  expect(ws.cloned).toHaveLength(0); // override skipped (already proposed); classified -> noop
+  expect(gh.prs).toHaveLength(0);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
