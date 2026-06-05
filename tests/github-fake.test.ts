@@ -45,3 +45,10 @@ test("FakeGitHub openDraftPR records the PR and returns a url", async () => {
   expect(gh.prs[0]).toEqual({ head: "monastery/fix-1", title: "t", body: "b" });
   expect(url).toContain("/pull/1");
 });
+
+test("findPrForBranch returns a url when a PR with that head exists, else null", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [] });
+  expect(await gh.findPrForBranch("o/r", "monastery/fix-1")).toBeNull();
+  await gh.openDraftPR("o/r", "monastery/fix-1", "t", "b");
+  expect(await gh.findPrForBranch("o/r", "monastery/fix-1")).toContain("/pull/1");
+});

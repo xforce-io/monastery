@@ -13,6 +13,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
 
   // Runnable: explicit try-fix, virtual-new, triaged(thesis:in) for classification, or approved-but-not-executed.
   const runnable = open.filter((i) => {
+    if (i.labels.includes(PATCH_PROPOSED) || i.labels.includes(NEEDS_HUMAN)) return false; // parked
     if (i.labels.includes(TRY_FIX) && !i.labels.includes(PATCH_PROPOSED) && !i.labels.includes(NEEDS_HUMAN)) return true;
     const st = macroStateOf(i.labels);
     if (st === "new") return true;

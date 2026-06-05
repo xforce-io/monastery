@@ -28,6 +28,8 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   if (!issue) return { kind: "noop" };
   const state = macroStateOf(issue.labels);
 
+  if (issue.labels.includes(PATCH_PROPOSED) || issue.labels.includes(NEEDS_HUMAN)) return { kind: "noop" }; // parked
+
   if (issue.labels.includes(TRY_FIX) && !issue.labels.includes(PATCH_PROPOSED) && !issue.labels.includes(NEEDS_HUMAN)) {
     return runPatch(ctx, issue);
   }

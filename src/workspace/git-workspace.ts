@@ -50,7 +50,7 @@ export class GitWorkspace implements Workspace {
       "commit", "-m", message,
     ]);
     if (commit.exitCode !== 0) throw new Error(`git commit failed (exit ${commit.exitCode}): ${commit.stdout}`);
-    const push = await this.run("git", ["-C", dir, "push", "-u", "origin", branch]);
+    const push = await this.run("git", ["-C", dir, "push", "-u", "origin", branch, "--force"]);
     if (push.exitCode !== 0) throw new Error(`git push failed (exit ${push.exitCode}): ${push.stdout}`);
   }
 

@@ -14,6 +14,15 @@ const PERSONA = [
 
 export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const branch = `monastery/fix-${issue.number}`;
+
+  // Converge: a prior run may have pushed/opened a PR but failed before labeling. Don't redo the work.
+  const existingPr = await ctx.gh.findPrForBranch(ctx.repo, branch);
+  if (existingPr) {
+    await ctx.gh.addLabel(ctx.repo, issue.number, PATCH_PROPOSED);
+    await ctx.gh.removeLabel(ctx.repo, issue.number, TRY_FIX);
+    return { kind: "progressed", note: existingPr };
+  }
+
   const dir = await ctx.ws.clone(ctx.repo, branch);
   try {
     const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${issue.body}`;

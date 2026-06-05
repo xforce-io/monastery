@@ -21,4 +21,6 @@ export interface GitHubAdapter {
   createFile(repo: string, path: string, content: string, message: string): Promise<void>;
   /** Open a draft PR from `head` to the default branch; returns the PR url. */
   openDraftPR(repo: string, head: string, title: string, body: string): Promise<string>;
+  /** URL of an existing open PR whose head is `branch`, or null. */
+  findPrForBranch(repo: string, branch: string): Promise<string | null>;
 }

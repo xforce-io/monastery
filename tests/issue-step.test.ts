@@ -177,6 +177,30 @@ test("try-fix with NO changes -> no PR, transient skip, escalates to needs-human
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
+test("patch-proposed / needs-human issues are parked (noop, nothing run)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 41, title: "x", body: "y", labels: ["monastery:patch-proposed"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "d" });
+  const provider = new FakeProvider({ "verdict.json": '{"verdict":"in","reason":"x"}' });
+  const c = ctx(gh, provider, ws);
+  const out = await issueStep(c, 41);
+  expect(out).toEqual({ kind: "noop" });
+  expect(provider.calls).toHaveLength(0); // not gated
+  expect(ws.cloned).toHaveLength(0);      // not patched
+});
+
+test("try-fix when a PR already exists for the branch -> converge labels, no re-clone", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 40, title: "x", body: "y", labels: ["monastery:try-fix"], state: "open" }] });
+  await gh.openDraftPR("o/r", "monastery/fix-40", "t", "b"); // prior run opened the PR but failed to label
+  const ws = new FakeWorkspace({ diff: "d", tests: true });
+  const c = ctx(gh, new FakeProvider({}), ws);
+  const out = await issueStep(c, 40);
+  expect(out.kind).toBe("progressed");
+  expect(ws.cloned).toHaveLength(0); // converged without re-cloning
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:patch-proposed");
+  expect(i.labels).not.toContain("monastery:try-fix");
+});
+
 test("patch-proposed issue is not patched again", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 32, title: "x", body: "y", labels: ["monastery:try-fix", "monastery:patch-proposed", "monastery/state:classified", "thesis:in", "type:bug"], state: "open" }] });
   const ws = new FakeWorkspace({ diff: "d", tests: true });

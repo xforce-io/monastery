@@ -28,7 +28,7 @@ test("commitPush commits then pushes the branch", async () => {
   await ws.commitPush("/d", "monastery/fix-1", "fix: x");
   expect(calls).toEqual([
     ["git", "-C", "/d", "-c", "user.name=monastery", "-c", "user.email=monastery@users.noreply.github.com", "commit", "-m", "fix: x"],
-    ["git", "-C", "/d", "push", "-u", "origin", "monastery/fix-1"],
+    ["git", "-C", "/d", "push", "-u", "origin", "monastery/fix-1", "--force"],
   ]);
 });
 

@@ -44,5 +44,9 @@ export class FakeGitHub implements GitHubAdapter {
     this.prs.push({ head, title, body });
     return `https://github.com/fake/pull/${this.prs.length}`;
   }
+  async findPrForBranch(_r: string, branch: string): Promise<string | null> {
+    const idx = this.prs.findIndex((p) => p.head === branch);
+    return idx >= 0 ? `https://github.com/fake/pull/${idx + 1}` : null;
+  }
   private must(n: number): Issue { const i = this.issues.get(n); if (!i) throw new Error(`no issue ${n}`); return i; }
 }

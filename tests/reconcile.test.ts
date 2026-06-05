@@ -78,3 +78,11 @@ test("try-fix issue is runnable (patch); patch-proposed is not", async () => {
   expect(ws.cloned).toHaveLength(1);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+test("patch-proposed issue is parked (not runnable)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: ["monastery:patch-proposed"], state: "open" }] });
+  const c = baseCtx(gh, new FakeProvider({}));
+  const r = await reconcile(c);
+  expect(r.advanced).toBe(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
