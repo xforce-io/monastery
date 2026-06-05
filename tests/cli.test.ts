@@ -18,3 +18,11 @@ test("parses bare `step`", () => {
 test("parses `init o/r`", () => {
   expect(parseArgs(["init", "o/r"])).toEqual({ cmd: "init", repo: "o/r" });
 });
+
+test("parses bare `status`", () => {
+  expect(parseArgs(["status"])).toEqual({ cmd: "status", json: false });
+});
+
+test("parses `status --repo o/r --json`", () => {
+  expect(parseArgs(["status", "--repo", "o/r", "--json"])).toEqual({ cmd: "status", repo: "o/r", json: true });
+});

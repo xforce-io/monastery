@@ -10,6 +10,7 @@ import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
 import { initRepo } from "../engine/init.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
+import { formatStatus, toStatusEntry, type StatusEntry } from "./status.js";
 
 export interface ParsedArgs {
   cmd: string; sub?: string; repo?: string; dryRun?: boolean; json?: boolean;
@@ -21,6 +22,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (cmd === "init") return { cmd, repo: rest[0] };
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
+  if (cmd === "status") return { cmd, repo: opt("repo"), json: flag("json") };
   return { cmd, repo: opt("repo"), dryRun: flag("dry-run"), json: flag("json") };
 }
 
@@ -39,6 +41,18 @@ async function main(): Promise<void> {
     if (!args.repo) { console.error("usage: monastery init <owner>/<repo>"); process.exit(2); }
     const r = await initRepo(new GhAdapter(), args.repo);
     console.log(`init ${args.repo}: ensured ${r.labels} labels; thesis ${r.thesisCreated ? "scaffolded" : "already present"}`);
+    return;
+  }
+
+  if (args.cmd === "status") {
+    const repos = args.repo ? [args.repo] : store.listRepos();
+    const gh = new GhAdapter();
+    const allEntries: StatusEntry[] = [];
+    for (const repo of repos) {
+      const issues = await gh.listOpenIssues(repo, 0);
+      allEntries.push(...issues.map((i) => toStatusEntry(repo, i)));
+    }
+    console.log(args.json ? JSON.stringify(allEntries, null, 2) : formatStatus(allEntries));
     return;
   }
 
