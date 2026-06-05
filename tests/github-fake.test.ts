@@ -1,0 +1,29 @@
+// tests/github-fake.test.ts
+import { expect, test } from "vitest";
+import { FakeGitHub } from "../src/github/fake.js";
+import { stateLabel } from "../src/github/labels.js";
+
+test("labels add/remove are reflected on the issue", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await gh.addLabel("o/r", 1, stateLabel("triaged"));
+  await gh.addLabel("o/r", 1, "thesis:out");
+  await gh.removeLabel("o/r", 1, "thesis:out");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toEqual(["monastery/state:triaged"]);
+});
+
+test("close removes the issue from open list and records the close", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await gh.postComment("o/r", 1, "reason");
+  await gh.closeIssue("o/r", 1);
+  expect(await gh.listOpenIssues("o/r", 0)).toEqual([]);
+  expect(gh.comments[1]).toContain("reason");
+  expect(gh.closed).toContain(1);
+});
+
+test("upsertPanel writes once then edits in place (single panel)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await gh.upsertPanel("o/r", 1, "v1");
+  await gh.upsertPanel("o/r", 1, "v2");
+  expect(gh.panels[1]).toBe("v2");
+});
