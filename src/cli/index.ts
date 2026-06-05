@@ -50,10 +50,9 @@ async function main(): Promise<void> {
     const allEntries: StatusEntry[] = [];
     for (const repo of repos) {
       const issues = await gh.listOpenIssues(repo, 0);
-      allEntries.push(...issues.map(toStatusEntry));
-      if (!args.json) console.log(formatStatus(issues));
+      allEntries.push(...issues.map((i) => toStatusEntry(repo, i)));
     }
-    if (args.json) console.log(JSON.stringify(allEntries, null, 2));
+    console.log(args.json ? JSON.stringify(allEntries, null, 2) : formatStatus(allEntries));
     return;
   }
 

@@ -13,6 +13,7 @@ import {
 const ACTION_LABELS = [NEEDS_APPROVAL, APPROVED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN, HOLD];
 
 export interface StatusEntry {
+  repo: string;
   number: number;
   title: string;
   state: string;
@@ -21,7 +22,7 @@ export interface StatusEntry {
   actions: string[];
 }
 
-export function toStatusEntry(issue: Issue): StatusEntry {
+export function toStatusEntry(repo: string, issue: Issue): StatusEntry {
   const state = macroStateOf(issue.labels);
   const thesisLabel = issue.labels.find((l) => l.startsWith("thesis:"));
   const thesis = thesisLabel ? thesisLabel.slice("thesis:".length) : undefined;
@@ -30,14 +31,13 @@ export function toStatusEntry(issue: Issue): StatusEntry {
   const actions = issue.labels
     .filter((l) => (ACTION_LABELS as string[]).includes(l))
     .map((l) => l.slice("monastery:".length));
-  return { number: issue.number, title: issue.title, state, thesis, type, actions };
+  return { repo, number: issue.number, title: issue.title, state, thesis, type, actions };
 }
 
-export function formatStatus(issues: Issue[]): string {
-  return issues
-    .map((issue) => {
-      const e = toStatusEntry(issue);
-      const parts: string[] = [`#${e.number}`, e.title, `state:${e.state}`];
+export function formatStatus(entries: StatusEntry[]): string {
+  return entries
+    .map((e) => {
+      const parts: string[] = [`${e.repo}#${e.number}`, e.title, `state:${e.state}`];
       if (e.thesis !== undefined) parts.push(`thesis:${e.thesis}`);
       if (e.type !== undefined) parts.push(`type:${e.type}`);
       parts.push(...e.actions);

@@ -27,8 +27,9 @@ const issues: Issue[] = [
   },
 ];
 
-test("toStatusEntry extracts all fields from a fully-labelled issue", () => {
-  expect(toStatusEntry(issues[0])).toEqual({
+test("toStatusEntry extracts all fields incl. repo from a fully-labelled issue", () => {
+  expect(toStatusEntry("o/r", issues[0])).toEqual({
+    repo: "o/r",
     number: 1,
     title: "Fix login bug",
     state: "triaged",
@@ -39,7 +40,8 @@ test("toStatusEntry extracts all fields from a fully-labelled issue", () => {
 });
 
 test("toStatusEntry defaults state to 'new' when no state label is present", () => {
-  expect(toStatusEntry(issues[2])).toEqual({
+  expect(toStatusEntry("o/r", issues[2])).toEqual({
+    repo: "o/r",
     number: 3,
     title: "How to deploy?",
     state: "new",
@@ -50,18 +52,20 @@ test("toStatusEntry defaults state to 'new' when no state label is present", () 
 });
 
 test("toStatusEntry handles try-fix and thesis:unclear", () => {
-  const e = toStatusEntry(issues[1]);
+  const e = toStatusEntry("o/r", issues[1]);
   expect(e.state).toBe("classified");
   expect(e.thesis).toBe("unclear");
   expect(e.type).toBe("feature");
   expect(e.actions).toEqual(["try-fix"]);
 });
 
-test("formatStatus returns one line per issue with human-readable fields", () => {
-  const out = formatStatus(issues);
+test("formatStatus prefixes each line with owner/repo#num so multi-repo entries are unique", () => {
+  // same issue number from two different repos must be distinguishable
+  const out = formatStatus([toStatusEntry("o/a", issues[0]), toStatusEntry("o/b", issues[0])]);
   const lines = out.split("\n");
-  expect(lines).toHaveLength(3);
-  expect(lines[0]).toContain("#1");
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toContain("o/a#1");
+  expect(lines[1]).toContain("o/b#1");
   expect(lines[0]).toContain("Fix login bug");
   expect(lines[0]).toContain("triaged");
   expect(lines[0]).toContain("thesis:in");
@@ -70,14 +74,14 @@ test("formatStatus returns one line per issue with human-readable fields", () =>
 });
 
 test("formatStatus shows 'new' state for unlabelled issue", () => {
-  const out = formatStatus([issues[2]]);
-  expect(out).toContain("#3");
+  const out = formatStatus([toStatusEntry("o/r", issues[2])]);
+  expect(out).toContain("o/r#3");
   expect(out).toContain("How to deploy?");
   expect(out).toContain("new");
 });
 
 test("formatStatus omits thesis and type when absent", () => {
-  const out = formatStatus([issues[2]]);
+  const out = formatStatus([toStatusEntry("o/r", issues[2])]);
   expect(out).not.toContain("thesis:");
   expect(out).not.toContain("type:");
 });
