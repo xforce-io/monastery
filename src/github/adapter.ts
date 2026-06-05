@@ -13,4 +13,10 @@ export interface GitHubAdapter {
   closeIssue(repo: string, num: number): Promise<void>;
   readThesis(repo: string): Promise<string>;
   readPanel(repo: string, num: number): Promise<string>;
+  /** Create or update a label (idempotent). */
+  ensureLabel(repo: string, name: string, color: string, description: string): Promise<void>;
+  /** Does a file exist at this path on the repo's default branch? */
+  fileExists(repo: string, path: string): Promise<boolean>;
+  /** Create a file on the default branch (used to scaffold; caller checks fileExists first). */
+  createFile(repo: string, path: string, content: string, message: string): Promise<void>;
 }
