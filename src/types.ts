@@ -18,7 +18,7 @@ export interface ReconcileResult {
 }
 
 // Macro state machine (encoded as the single-value monastery/state:<x> label).
-export type MacroState = "new" | "triaged" | "needs-approval" | "approved" | "done";
+export type MacroState = "new" | "triaged" | "needs-approval" | "approved" | "classified" | "done";
 
 // thesis-gate verdict.
 export type Verdict = "in" | "out" | "unclear";
