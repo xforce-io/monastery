@@ -53,7 +53,7 @@ async function main(): Promise<void> {
     const results = [];
     for (const repo of repos) {
       const ctx = { repo, gh, provider, model, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace() };
-      results.push(await reconcile(ctx)); // NOTE: --dry-run handled in a follow-up; M1 ships apply-only first
+      results.push(await reconcile(ctx));
     }
     console.log(args.json ? JSON.stringify(results, null, 2) : summarize(results));
     return;

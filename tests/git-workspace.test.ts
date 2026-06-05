@@ -27,9 +27,15 @@ test("commitPush commits then pushes the branch", async () => {
   const ws = new GitWorkspace(run);
   await ws.commitPush("/d", "monastery/fix-1", "fix: x");
   expect(calls).toEqual([
-    ["git", "-C", "/d", "commit", "-m", "fix: x"],
+    ["git", "-C", "/d", "-c", "user.name=monastery", "-c", "user.email=monastery@users.noreply.github.com", "commit", "-m", "fix: x"],
     ["git", "-C", "/d", "push", "-u", "origin", "monastery/fix-1"],
   ]);
+});
+
+test("commitPush throws when git commit fails", async () => {
+  const run = async (file: string, args: string[]) => ({ stdout: "", exitCode: file === "git" && args.includes("commit") ? 1 : 0 });
+  const ws = new GitWorkspace(run);
+  await expect(ws.commitPush("/d", "b", "m")).rejects.toThrow(/git commit failed/);
 });
 
 test("runTests returns null when there is no package.json", async () => {

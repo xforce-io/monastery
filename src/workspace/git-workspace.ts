@@ -30,7 +30,8 @@ export class GitWorkspace implements Workspace {
 
   async runTests(dir: string): Promise<boolean | null> {
     if (!existsSync(join(dir, "package.json"))) return null;
-    await this.run("npm", ["ci"], { cwd: dir });
+    const ci = await this.run("npm", ["ci"], { cwd: dir });
+    if (ci.exitCode !== 0) await this.run("npm", ["install"], { cwd: dir }); // no lockfile / out of sync
     const t = await this.run("npm", ["test"], { cwd: dir });
     return t.exitCode === 0;
   }
@@ -42,8 +43,15 @@ export class GitWorkspace implements Workspace {
   }
 
   async commitPush(dir: string, branch: string, message: string): Promise<void> {
-    await this.run("git", ["-C", dir, "commit", "-m", message]);
-    await this.run("git", ["-C", dir, "push", "-u", "origin", branch]);
+    const commit = await this.run("git", [
+      "-C", dir,
+      "-c", "user.name=monastery",
+      "-c", "user.email=monastery@users.noreply.github.com",
+      "commit", "-m", message,
+    ]);
+    if (commit.exitCode !== 0) throw new Error(`git commit failed (exit ${commit.exitCode}): ${commit.stdout}`);
+    const push = await this.run("git", ["-C", dir, "push", "-u", "origin", branch]);
+    if (push.exitCode !== 0) throw new Error(`git push failed (exit ${push.exitCode}): ${push.stdout}`);
   }
 
   async cleanup(dir: string): Promise<void> { rmSync(dir, { recursive: true, force: true }); }

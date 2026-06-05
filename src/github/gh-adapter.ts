@@ -76,10 +76,20 @@ export class GhAdapter implements GitHubAdapter {
     await this.run(["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${b64}`]);
   }
   async openDraftPR(repo: string, head: string, title: string, body: string): Promise<string> {
-    const url = await this.run(
-      ["pr", "create", "--repo", repo, "--head", head, "--draft", "--title", title, "--body-file", "-"],
-      body,
-    );
-    return url.trim();
+    try {
+      const url = await this.run(
+        ["pr", "create", "--repo", repo, "--head", head, "--draft", "--title", title, "--body-file", "-"],
+        body,
+      );
+      return url.trim();
+    } catch {
+      // A PR for this head branch may already exist (a prior run pushed but failed before labeling).
+      // Return the existing PR's url so the caller's label swap can converge — never double-create.
+      const existing = await this.run(
+        ["pr", "view", head, "--repo", repo, "--json", "url", "--jq", ".url"],
+      ).catch(() => "");
+      if (existing.trim()) return existing.trim();
+      throw new Error(`openDraftPR failed for ${repo} head=${head} and no existing PR was found`);
+    }
   }
 }

@@ -11,7 +11,7 @@ const NEW_ISSUE_BACKOFF_MS = 7_200_000;  // fully idle, only watching for new is
 export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   const open = await ctx.gh.listOpenIssues(ctx.repo, 0);
 
-  // Runnable: virtual-new (no state label) OR approved-but-not-yet-executed.
+  // Runnable: explicit try-fix, virtual-new, triaged(thesis:in) for classification, or approved-but-not-executed.
   const runnable = open.filter((i) => {
     if (i.labels.includes(TRY_FIX) && !i.labels.includes(PATCH_PROPOSED) && !i.labels.includes(NEEDS_HUMAN)) return true;
     const st = macroStateOf(i.labels);

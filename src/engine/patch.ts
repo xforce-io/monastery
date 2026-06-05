@@ -36,6 +36,8 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     const tests = await ctx.ws.runTests(dir);
     await ctx.ws.commitPush(dir, branch, `fix: address #${issue.number}`);
 
+    const MAX_DIFF = 60000;
+    const shownDiff = diff.length > MAX_DIFF ? diff.slice(0, MAX_DIFF) + "\n… [diff truncated; see the PR Files tab]" : diff;
     const testLine = tests === null ? "no test suite detected" : tests ? "tests passing" : "⚠️ tests FAILING";
     const body = [
       `Proposed fix for #${issue.number} (${testLine}).`,
@@ -45,7 +47,7 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       `<details><summary>diff</summary>`,
       ``,
       "```diff",
-      diff.slice(0, 60000),
+      shownDiff,
       "```",
       `</details>`,
       ``,
