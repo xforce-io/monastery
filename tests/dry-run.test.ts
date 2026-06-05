@@ -4,7 +4,7 @@ import { DryRunAdapter } from "../src/github/dry-run.js";
 import { FakeGitHub } from "../src/github/fake.js";
 
 function makeInner() {
-  return new FakeGitHub({ thesis: "# thesis", issues: [{ number: 1, title: "t", body: "", state: "open", labels: [], updatedAt: 0 }] });
+  return new FakeGitHub({ thesis: "# thesis", issues: [{ number: 1, title: "t", body: "", state: "open", labels: [] }] });
 }
 
 test("read methods pass through to inner adapter", async () => {
