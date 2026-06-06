@@ -21,6 +21,8 @@ export class FakeGitHub implements GitHubAdapter {
   public selfLogin = "monastery";
   /** Comments authored by others (humans / peer bots), injected for identity tests, keyed by issue. */
   public authoredComments: Record<number, { body: string; author: string }[]> = {};
+  /** External issues (other repos), injected for cross-repo read tests, keyed by `<owner>/<repo>#<num>`. */
+  public externalIssues: Record<string, Issue> = {};
   /** Branches whose PR was merged via mergePR. */
   public merged: string[] = [];
   constructor(private opts: { thesis: string; issues: Issue[]; files?: Record<string, string> }) {
@@ -29,6 +31,12 @@ export class FakeGitHub implements GitHubAdapter {
   }
   async listOpenIssues(_repo?: string, _sinceMs?: number): Promise<Issue[]> {
     return [...this.issues.values()].filter((i) => i.state === "open").map((i) => ({ ...i, labels: [...i.labels] }));
+  }
+  async getIssue(repo: string, n: number): Promise<Issue | null> {
+    const ext = this.externalIssues[`${repo}#${n}`];
+    if (ext) return { ...ext, labels: [...ext.labels] };
+    const own = this.issues.get(n);
+    return own ? { ...own, labels: [...own.labels] } : null;
   }
   async addLabel(_r: string, n: number, label: string): Promise<void> {
     const i = this.must(n); if (!i.labels.includes(label)) i.labels.push(label);

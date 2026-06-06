@@ -148,6 +148,18 @@ test("active issue: the maintainer is told the state of monastery's open PR (so 
   expect(provider.calls[0].context).toMatch(/state open/);
 });
 
+// --- active: cross-repo read (P0) — the issue's upstream deps are fetched and handed to the agent ---
+
+test("active issue: a `Depends-on:` ref is resolved and the dep's state reaches the maintainer", async () => {
+  const gh = ghWith({ number: 50, title: "x", body: "needs upstream\nDepends-on: owner/other#42", labels: [], state: "open" });
+  gh.externalIssues["owner/other#42"] = { number: 42, title: "upstream fix", body: "", labels: [], state: "closed" };
+  const provider = new FakeProvider(actionsJson([]));
+  await issueStep(ctxWith(gh, provider), 50);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toContain("owner/other#42");
+  expect(ctx).toContain("closed");          // A's agent can see the upstream is resolved
+});
+
 // --- terminal: ignore ---
 
 test("declined issue is terminal: noop, agent never called", async () => {

@@ -18,6 +18,9 @@ export class DryRunAdapter implements GitHubAdapter {
   listOpenIssues(repo: string, sinceMs: number): Promise<Issue[]> {
     return this.inner.listOpenIssues(repo, sinceMs);
   }
+  getIssue(repo: string, num: number): Promise<Issue | null> {
+    return this.inner.getIssue(repo, num);
+  }
   readThesis(repo: string): Promise<string> { return this.inner.readThesis(repo); }
   readPanel(repo: string, num: number): Promise<string> { return this.inner.readPanel(repo, num); }
   fileExists(repo: string, path: string): Promise<boolean> { return this.inner.fileExists(repo, path); }

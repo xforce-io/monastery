@@ -98,7 +98,7 @@
 
 | 期 | 范围 | 新增面 | 价值 |
 |---|---|---|---|
-| **P0** | **身份 + 跨仓读** | `listComments`/`reactions` 带 `user`;发现纳入「我有 stake 的外部 issue」(只读) | A 的 agent 把「我关心的 B#42 状态」当 context 决定 **A 自己仓**的动作。**零新副作用、零 ping-pong、零新注入面**。先到这。 |
+| **P0** ✅ | **身份 + 跨仓读** | `listComments` 带 `author`(#51);issue body 用 `Depends-on: owner/repo#N` 声明 stake → 读其状态喂 context(#52) | A 的 agent 把「我关心的 B#42 状态」当 context 决定 **A 自己仓**的动作。**零新副作用、零 ping-pong、零新注入面**。 |
 | **P1** | **共识核** | spec `panel`(version)+ 带身份的背书 + 共识判定 + 收敛/卡死→召人 | 真正的多方共识。机制=已有积木组合。 |
 | **P2** | **stakeholder 限权** | 非自有仓只放行评论/spec 编辑,代码层禁 gate | 让跨仓发言安全。 |
 

@@ -118,6 +118,19 @@ test("reactions returns [] when none / api fails", async () => {
   expect(await new GhAdapter(async () => { throw new Error("404"); }).reactions("o/r", "1")).toEqual([]);
 });
 
+test("getIssue reads one issue (any repo, open or closed) and maps it to Issue", async () => {
+  const captured: string[][] = [];
+  const json = JSON.stringify({ number: 42, title: "upstream", body: "b", labels: [{ name: "type:bug" }], state: "CLOSED" });
+  const gh = new GhAdapter(async (args) => { captured.push(args); return json; });
+  expect(await gh.getIssue("owner/other", 42)).toEqual({ number: 42, title: "upstream", body: "b", labels: ["type:bug"], state: "closed" });
+  expect(captured[0]).toEqual(["issue", "view", "42", "--repo", "owner/other", "--json", "number,title,body,labels,state"]);
+});
+
+test("getIssue returns null when the issue is missing / inaccessible", async () => {
+  const gh = new GhAdapter(async () => { throw new Error("not found"); });
+  expect(await gh.getIssue("owner/other", 999)).toBeNull();
+});
+
 test("mergePR issues the correct gh argv", async () => {
   const captured: string[][] = [];
   const gh = new GhAdapter(async (args) => { captured.push(args); return ""; });
