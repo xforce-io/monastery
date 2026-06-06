@@ -148,6 +148,22 @@ test("active issue: the maintainer is told the state of monastery's open PR (so 
   expect(provider.calls[0].context).toMatch(/state open/);
 });
 
+// --- active: consensus (P1) — current spec + endorsements + consensus state reach the agent ---
+
+test("active issue: a spec + all parties' endorsements surface as 'consensus reached' to the maintainer", async () => {
+  const gh = ghWith({ number: 60, title: "x", body: "y", labels: [], state: "open" });
+  gh.authoredComments[60] = [
+    { body: "<!--monastery-spec version=1 parties=a-bot,monastery-->\nthe agreed plan", author: "a-bot" },
+    { body: "ok\n<!--monastery-endorse version=1-->", author: "a-bot" },
+    { body: "ok\n<!--monastery-endorse version=1-->", author: "monastery" }, // selfLogin endorses
+  ];
+  const provider = new FakeProvider(actionsJson([]));
+  await issueStep(ctxWith(gh, provider), 60);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toContain("the agreed plan");
+  expect(ctx).toMatch(/consensus[^\\n]*reached|reached.*true|达成/i);
+});
+
 // --- active: cross-repo read (P0) — the issue's upstream deps are fetched and handed to the agent ---
 
 test("active issue: a `Depends-on:` ref is resolved and the dep's state reaches the maintainer", async () => {

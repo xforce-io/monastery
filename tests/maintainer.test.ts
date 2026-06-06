@@ -95,6 +95,35 @@ test("the agent is handed the thesis, issue, and human comments as context", asy
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("the agent accepts spec and endorse actions", async () => {
+  const dir = newDir();
+  const out = await maintainer(
+    new FakeProvider({ "actions.json": '{"actions":[{"kind":"spec","num":7,"body":"plan","parties":["a","b"]},{"kind":"endorse","num":7,"version":1}]}' }),
+    "sonnet", input, dir,
+  );
+  expect(out).toEqual([
+    { kind: "spec", num: 7, body: "plan", parties: ["a", "b"] },
+    { kind: "endorse", num: 7, version: 1 },
+  ]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("consensus state (spec + endorsers + reached) and self identity are surfaced in context", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", {
+    ...input,
+    self: "b-bot",
+    consensus: { spec: { version: 2, parties: ["a-bot", "b-bot"], body: "agreed plan" }, endorsedCurrent: ["a-bot"], reached: false },
+  }, dir);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toContain("b-bot");          // self (so the agent knows who it is / whether it endorsed)
+  expect(ctx).toContain("agreed plan");    // current spec body
+  expect(ctx).toContain("a-bot");          // endorsers so far
+  expect(ctx).toMatch(/version.*2|v2/);    // current version
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("the agent accepts an implement action", async () => {
   const dir = newDir();
   const out = await maintainer(new FakeProvider({ "actions.json": '{"actions":[{"kind":"implement","num":7}]}' }), "sonnet", input, dir);
