@@ -25,7 +25,13 @@ export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, i
     ? parseEndorsements(comments).filter((e) => e.version === spec.version).map((e) => e.by)
     : [];
   const consensus = { spec, endorsedCurrent, reached: consensusReached(comments) };
-  return { thesis, issue, comments, pr, deps, self, consensus };
+  // backlog awareness (ARCHITECTURE §2.3): the other open issues, summarized, so the PM can prioritize.
+  // (Re-listed per item — cheap, and self-contained; thread the open list down only if scale needs it.)
+  const open = await gh.listOpenIssues(repo, 0);
+  const backlog = open
+    .filter((i) => i.number !== issue.number)
+    .map((i) => ({ number: i.number, title: i.title, state: i.state, labels: i.labels }));
+  return { thesis, issue, comments, pr, deps, self, consensus, backlog };
 }
 
 /** Resolve an issue's `Depends-on:` upstream refs to their current state (read-only; missing skipped). */

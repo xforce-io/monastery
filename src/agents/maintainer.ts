@@ -23,16 +23,23 @@ export interface MaintainerInput {
     endorsedCurrent: string[];
     reached: boolean;
   };
+  /** The rest of the open backlog (other issues, summarized) — so the PM can judge what's most worth doing now. */
+  backlog?: { number: number; title: string; state: string; labels: string[] }[];
 }
 
 /** Accept either `{ "actions": [...] }` or a bare `[...]`. */
 const BatchSchema = z.union([ActionsSchema, z.array(ActionSchema).transform((actions) => ({ actions }))]);
 
 const PERSONA = [
-  "You are monastery's maintainer agent for a GitHub repo.",
+  "You are monastery's maintainer agent for a GitHub repo — think of yourself as its PROJECT MANAGER.",
   "You have NO git/gh access. You read one item plus context and PROPOSE a list of actions; the thin shell executes the safe ones.",
   "Your only output is a fixed vocabulary of actions (below). You never run commands, never merge, never close.",
   "Safety is the shell's job, not yours: anything risky you may only PROPOSE — a human approves it.",
+  // PM methodology — how to judge what's most worth doing now (the lever, not a script):
+  "METHODOLOGY: you see THIS item plus the rest of the open <backlog>. Judge whether this item is among the MOST worth advancing now —",
+  "weigh impact × readiness × cost; prefer unblocking dependencies; keep scope tight (one concrete deliverable, never a whole epic).",
+  "The shell examines EVERY open item each tick, so deferring is safe — a lower-priority item comes back; you don't have to do everything now.",
+  "If this item is the most worth advancing AND it's a single concrete change, propose `implement`. Otherwise do the light governance (relabel/reply/panel/spec) and let the heavy work wait for when it's clearly the right call.",
 ].join(" ");
 
 function consensusBlock(input: MaintainerInput): string {
@@ -49,7 +56,7 @@ function consensusBlock(input: MaintainerInput): string {
 }
 
 function buildContext(input: MaintainerInput): string {
-  const { thesis, issue, comments, pr, deps } = input;
+  const { thesis, issue, comments, pr, deps, backlog } = input;
   const commentBlock = comments.length
     ? comments.map((c) => `<comment id="${c.id}" author="${c.author}">\n${c.body}\n</comment>`).join("\n")
     : "(no comments)";
@@ -59,10 +66,14 @@ function buildContext(input: MaintainerInput): string {
   const depBlock = deps && deps.length
     ? deps.map((d) => `- ${d.ref} [${d.state}] ${d.title}`).join("\n")
     : "(none)";
+  const backlogBlock = backlog && backlog.length
+    ? backlog.map((b) => `- #${b.number} ${b.title} [${b.state}]${b.labels.length ? " " + b.labels.join(",") : ""}`).join("\n")
+    : "(no other open issues)";
 
   return [
     `<thesis>\n${thesis}\n</thesis>`,
     `<issue number="${issue.number}" state="${issue.state}" labels="${issue.labels.join(", ")}">\ntitle: ${issue.title}\n\n${issue.body}\n</issue>`,
+    `<backlog>\n${backlogBlock}\n</backlog>`,
     `<comments>\n${commentBlock}\n</comments>`,
     `<pr>\n${prBlock}\n</pr>`,
     `<upstream-dependencies>\n${depBlock}\n</upstream-dependencies>`,

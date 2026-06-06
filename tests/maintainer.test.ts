@@ -95,6 +95,21 @@ test("the agent is handed the thesis, issue, and human comments as context", asy
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("the maintainer is a PM: backlog is surfaced and the persona carries a prioritization methodology", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", {
+    ...input,
+    backlog: [{ number: 9, title: "rival feature", state: "open", labels: ["type:feature"] }],
+  }, dir);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toContain("rival feature");                  // sees the rest of the backlog
+  const persona = provider.calls[0].persona;
+  expect(persona).toMatch(/project manager|PM|prioriti/i); // PM role
+  expect(persona).toMatch(/worth|priorit|defer|backlog/i); // a methodology for what to advance
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("the agent accepts spec and endorse actions", async () => {
   const dir = newDir();
   const out = await maintainer(

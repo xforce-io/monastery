@@ -27,6 +27,20 @@ test("gatherMaintainerContext assembles thesis + comments + pr + deps + self + c
   expect(input.consensus?.reached).toBe(true); // sole party (monastery-bot) endorsed v1
 });
 
+test("gatherMaintainerContext surfaces the backlog (other open issues, summarized, excluding self)", async () => {
+  const issues: Issue[] = [
+    { number: 5, title: "this one", body: "b", labels: [], state: "open" },
+    { number: 7, title: "another", body: "b", labels: ["type:bug"], state: "open" },
+    { number: 9, title: "third", body: "b", labels: [], state: "open" },
+  ];
+  const gh = new FakeGitHub({ thesis: "T", issues });
+  const input = await gatherMaintainerContext(gh, "o/r", issues[0]);
+  expect(input.backlog).toEqual([
+    { number: 7, title: "another", state: "open", labels: ["type:bug"] },
+    { number: 9, title: "third", state: "open", labels: [] },
+  ]); // excludes #5 (self), summarized (no body)
+});
+
 test("gatherMaintainerContext: no pr / no deps / no spec → null pr, empty deps, consensus not reached", async () => {
   const issue: Issue = { number: 6, title: "y", body: "plain", labels: [], state: "open" };
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
