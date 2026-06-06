@@ -106,6 +106,12 @@ export class GhAdapter implements GitHubAdapter {
     ]).catch(() => "[]");
     return JSON.parse(out || "[]") as { id: string; body: string }[];
   }
+  async reactions(repo: string, commentId: string): Promise<string[]> {
+    const out = await this.run([
+      "api", `repos/${repo}/issues/comments/${commentId}/reactions`, "--jq", "[.[].content]",
+    ]).catch(() => "[]");
+    return JSON.parse(out || "[]") as string[];
+  }
   async mergePR(repo: string, branch: string): Promise<void> {
     await this.run(["pr", "merge", branch, "--repo", repo, "--merge"]);
   }
