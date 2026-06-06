@@ -13,9 +13,8 @@ import { executeSafe, doClose, type GatedKind } from "../shell/actions.js";
 import type { FailTracker, RepoPolicy } from "../config/store.js";
 import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
-import { runImplement, branchName } from "./patch.js";
-import { parseDeps } from "./deps.js";
-import { currentSpec, parseEndorsements, consensusReached } from "../shell/consensus.js";
+import { runImplement } from "./patch.js";
+import { gatherMaintainerContext } from "./context.js";
 
 export interface StepCtx {
   repo: string;
@@ -53,23 +52,10 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
 
 /** active: ask the maintainer agent for actions, then execute them (safe ones in-place; implement -> patcher). */
 async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
-  const thesis = await ctx.gh.readThesis(ctx.repo);
-  const comments = await ctx.gh.listComments(ctx.repo, issue.number);
-  // Surface monastery's PR state so the agent won't re-propose implement while a patch PR is open (§8).
-  const branch = branchName(issue.number, issue.title);
-  const prState = await ctx.gh.prState(ctx.repo, branch);
-  const pr = prState ? { branch, state: prState } : null;
-  // Read-only cross-repo awareness (P0): fetch each `Depends-on:` upstream's current state for context.
-  const deps = await resolveDeps(ctx, issue.body);
-  // Multi-party consensus state (P1): current shared spec + endorsements, computed from the comments.
-  const self = await ctx.gh.login();
-  const spec = currentSpec(comments);
-  const endorsedCurrent = spec
-    ? parseEndorsements(comments).filter((e) => e.version === spec.version).map((e) => e.by)
-    : [];
-  const consensus = { spec, endorsedCurrent, reached: consensusReached(comments) };
+  // The context layer (src/engine/context.ts) gathers this item's semantic context from GitHub.
+  const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue);
   const dir = join(ctx.artifactRoot, `${issue.number}`);
-  const actions = await maintainer(ctx.provider, ctx.model, { thesis, issue, comments, pr, deps, self, consensus }, dir);
+  const actions = await maintainer(ctx.provider, ctx.model, input, dir);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.
@@ -101,16 +87,6 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     }
   }
   return actions.length ? { kind: "progressed" } : { kind: "noop" };
-}
-
-/** Resolve an issue's `Depends-on:` upstream refs to their current state (read-only; missing/inaccessible skipped). */
-async function resolveDeps(ctx: StepCtx, body: string): Promise<{ ref: string; state: "open" | "closed"; title: string }[]> {
-  const out: { ref: string; state: "open" | "closed"; title: string }[] = [];
-  for (const { repo, num } of parseDeps(body)) {
-    const dep = await ctx.gh.getIssue(repo, num);
-    if (dep) out.push({ ref: `${repo}#${num}`, state: dep.state, title: dep.title });
-  }
-  return out;
 }
 
 /** awaiting-gate: a gated proposal is parked on the approval panel; act only on a human signal (PROTOCOL §4). */
