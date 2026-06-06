@@ -24,7 +24,14 @@ monastery 是 per-repo 维护者，却把"每个被管仓库自己的约定"焊�
 
 ### 组件 A — Provider surface AGENTS.md
 
-为可单测（`run()` 会 spawn 真实 `claude`，不能在单测里启），把注入抽成**导出的纯 helper**，`run()` 只调用它：
+**抽象层定位**：把 AGENTS.md surface 给 agent 是 **`AgentProvider` 的契约**，但**机制因 provider 而异**（这正是它归 provider 而非引擎的原因）。因此**不加共享接口方法**——若加，codex 的实现就是个空方法，很别扭。改为：
+
+- 在 `src/provider/interface.ts` 的 `AgentProvider.run()` 上加一句**契约注释**：
+  > `run()` 负责把 `artifactDir`（cwd）下目标仓库的 AGENTS.md 规范 surface 给底层 agent（各 provider 各自的方式）。
+- 各 provider 的 `run()` **内部**各自履行：`claude_code` → 写 `CLAUDE.md`（下述 helper）；`codex` → 无需动作（原生读 AGENTS.md）；未来 provider → 它自己的方式。
+- 所以 `surfaceClaudeConventions` 是 **claude_code 专属**（名字带 `Claude`，写的是 `CLAUDE.md`），不在接口上、不在其他 provider 上。
+
+为可单测（`run()` 会 spawn 真实 `claude`，不能在单测里启），把 claude 的注入抽成**导出的纯 helper**，`run()` 只调用它：
 
 `src/provider/claude-code.ts`：
 ```ts
