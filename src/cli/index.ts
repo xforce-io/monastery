@@ -8,12 +8,13 @@ import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
+import { issueStep } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, type StatusEntry } from "./status.js";
 
 export interface ParsedArgs {
-  cmd: string; sub?: string; repo?: string; model?: string; dryRun?: boolean; json?: boolean;
+  cmd: string; sub?: string; repo?: string; model?: string; issue?: string; dryRun?: boolean; json?: boolean;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -23,7 +24,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
   if (cmd === "status") return { cmd, repo: opt("repo"), json: flag("json") };
-  return { cmd, repo: opt("repo"), dryRun: flag("dry-run"), json: flag("json") };
+  return { cmd, repo: opt("repo"), issue: opt("issue"), dryRun: flag("dry-run"), json: flag("json") };
 }
 
 async function main(): Promise<void> {
@@ -66,7 +67,12 @@ async function main(): Promise<void> {
       const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
       const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
       const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace(), now: () => Date.now() };
-      results.push(await reconcile(ctx));
+      if (args.issue) {
+        const out = await issueStep(ctx, Number(args.issue));
+        console.log(`${repo}#${args.issue}: ${out.kind}`);
+      } else {
+        results.push(await reconcile(ctx));
+      }
       if (args.dryRun) {
         const dry = gh as DryRunAdapter;
         if (dry.actions.length === 0) {
@@ -78,7 +84,7 @@ async function main(): Promise<void> {
         }
       }
     }
-    console.log(args.json ? JSON.stringify(results, null, 2) : summarize(results));
+    if (!args.issue) console.log(args.json ? JSON.stringify(results, null, 2) : summarize(results));
     return;
   }
 
