@@ -93,10 +93,22 @@ test("try-fix issue is runnable (patch); patch-proposed is not", async () => {
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
-test("patch-proposed issue is parked (not runnable)", async () => {
+test("patch-proposed with no known PR state -> noop (waits, not advanced)", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: ["monastery:patch-proposed"], state: "open" }] });
-  const c = baseCtx(gh, new FakeProvider({}));
+  const c = baseCtx(gh, new FakeProvider({})); // prStates unset -> prState null -> noop
   const r = await reconcile(c);
   expect(r.advanced).toBe(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("patch-proposed with a closed PR is runnable -> reconciled to declined", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 90, title: "x", body: "y", labels: ["monastery:patch-proposed"], state: "open" }] });
+  gh.prStates["feat/90-x"] = "closed";
+  const c = baseCtx(gh, new FakeProvider({}));
+  const r = await reconcile(c);
+  expect(r.advanced).toBe(1);
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:declined");
+  expect(i.labels).not.toContain("monastery:patch-proposed");
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });

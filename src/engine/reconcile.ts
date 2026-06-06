@@ -15,7 +15,8 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   // (approved -> execute; not-approved -> issueStep checks the approval timeout, else waits on the human).
   const runnable = open.filter((i) => {
     if (i.labels.includes(DECLINED)) return false; // terminal: never re-propose
-    if (i.labels.includes(PATCH_PROPOSED) || i.labels.includes(NEEDS_HUMAN)) return false; // parked
+    if (i.labels.includes(NEEDS_HUMAN)) return false; // parked for a human
+    if (i.labels.includes(PATCH_PROPOSED)) return true; // runnable: reconcile against the PR's outcome
     if (i.labels.includes(TRY_FIX) && !i.labels.includes(PATCH_PROPOSED) && !i.labels.includes(NEEDS_HUMAN)) return true;
     const st = macroStateOf(i.labels);
     if (st === "new") return true;
