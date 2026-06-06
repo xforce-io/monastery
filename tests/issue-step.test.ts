@@ -95,6 +95,7 @@ test("needs-approval past timeout -> auto-skip to declined/done with timeout not
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery/state:done");
   expect(i.labels).not.toContain("monastery:needs-approval");
+  expect(i.labels).toContain("monastery:declined"); // timeout shares the declined terminal state
   expect(gh.panels[52]).toContain("自动跳过");
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });

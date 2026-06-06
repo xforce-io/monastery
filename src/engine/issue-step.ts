@@ -207,8 +207,11 @@ async function approvalWaitOrTimeout(ctx: StepCtx, issue: Issue): Promise<Outcom
   return { kind: "waiting", on: "human" };
 }
 
-/** Idempotent terminal transition: mark done, clear the approval ask, record why in the panel. */
+/** Idempotent terminal transition: stamp declined, mark done, clear the approval ask, record why. */
 async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Promise<Outcome> {
+  // Stamp declined so timeout-skipped and human-declined proposals share one terminal state
+  // (declined + done) — uniformly queryable and excluded from re-proposal. Idempotent.
+  await ctx.gh.addLabel(ctx.repo, issue.number, DECLINED);
   // Add the terminal state label BEFORE removing the prior one (never drop to zero state labels).
   await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
