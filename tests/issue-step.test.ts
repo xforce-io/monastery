@@ -288,9 +288,9 @@ test("try-fix with changes -> draft PR opened, patch-proposed added, try-fix rem
   const c = ctx(gh, new FakeProvider({}), ws, () => 0, scriptedReview([{ findings: [] }]));
   const out = await issueStep(c, 30);
   expect(out.kind).toBe("progressed");
-  expect(ws.cloned[0]).toMatchObject({ repo: "o/r", branch: "monastery/fix-30" });
+  expect(ws.cloned[0]).toMatchObject({ repo: "o/r", branch: "feat/30-bug" });
   expect(ws.committed).toHaveLength(1);
-  expect(gh.prs[0].head).toBe("monastery/fix-30");
+  expect(gh.prs[0].head).toBe("feat/30-bug");
   expect(gh.prs[0].body).toContain("Closes #30");
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:patch-proposed");
@@ -327,7 +327,7 @@ test("patch-proposed / needs-human issues are parked (noop, nothing run)", async
 
 test("try-fix when a PR already exists for the branch -> converge labels, no re-clone", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 40, title: "x", body: "y", labels: ["monastery:try-fix"], state: "open" }] });
-  await gh.openDraftPR("o/r", "monastery/fix-40", "t", "b"); // prior run opened the PR but failed to label
+  await gh.openDraftPR("o/r", "feat/40-x", "t", "b"); // prior run opened the PR but failed to label
   const ws = new FakeWorkspace({ diff: "d", tests: true });
   const c = ctx(gh, new FakeProvider({}), ws);
   const out = await issueStep(c, 40);
