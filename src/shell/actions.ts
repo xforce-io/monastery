@@ -1,6 +1,7 @@
 // src/shell/actions.ts
 import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
+import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
 
 export const GatedKindSchema = z.enum(["close", "merge"]);
 export type GatedKind = z.infer<typeof GatedKindSchema>;
@@ -22,6 +23,11 @@ export const ActionSchema = z.discriminatedUnion("kind", [
   // patcher (runImplement): it writes code in a sandbox clone and opens a human-gated draft PR. The agent
   // still never touches git/gh (constitution §3); the only path to main is a human Merge (§4).
   z.object({ kind: z.literal("implement"), num: z.number() }),
+  // spec / endorse: the multi-party consensus core (#48). `spec` appends a versioned shared spec comment;
+  // `endorse` records this party's agreement to a spec version. Consensus = all parties endorsed the
+  // current version (src/shell/consensus.ts). Both are agent-level, reversible; the merge gate stays the floor.
+  z.object({ kind: z.literal("spec"), num: z.number(), body: z.string().min(1), parties: z.array(z.string()) }),
+  z.object({ kind: z.literal("endorse"), num: z.number(), version: z.number() }),
 ]);
 export type Action = z.infer<typeof ActionSchema>;
 
@@ -59,6 +65,22 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
       await gh.upsertPanel(repo, a.num, `${approvalMarker(a.proposal)}\n${a.draft}`);
       await gh.addLabel(repo, a.num, NEEDS_APPROVAL);
       return;
+    case "spec": {
+      // Append-only versioned shared spec: bump the version only when the body changed (idempotent).
+      const cur = currentSpec(await gh.listComments(repo, a.num));
+      if (cur && cur.body === a.body.trim()) return; // unchanged -> no new version
+      const version = (cur?.version ?? 0) + 1;
+      await gh.postComment(repo, a.num, `${SPEC_MARKER(version, a.parties)}\n${a.body}`);
+      return;
+    }
+    case "endorse": {
+      const self = await gh.login();
+      const already = parseEndorsements(await gh.listComments(repo, a.num))
+        .some((e) => e.version === a.version && e.by === self);
+      if (already) return; // this party already endorsed this version
+      await gh.postComment(repo, a.num, `Endorsed spec v${a.version}.\n\n${ENDORSE_MARKER(a.version)}`);
+      return;
+    }
     case "implement":
       // Not a cheap safe write — it needs the full StepCtx (provider/workspace/self-review). The engine
       // routes `implement` to runImplement; reaching it here is a wiring bug, so fail loudly.

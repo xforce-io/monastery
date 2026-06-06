@@ -36,6 +36,7 @@ export class DryRunAdapter implements GitHubAdapter {
   reactions(repo: string, commentId: string): Promise<string[]> {
     return this.inner.reactions(repo, commentId);
   }
+  login(): Promise<string> { return this.inner.login(); }
   labelEventTime(repo: string, num: number, label: string): Promise<number | null> {
     return this.inner.labelEventTime(repo, num, label);
   }

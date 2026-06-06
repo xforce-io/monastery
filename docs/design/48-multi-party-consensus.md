@@ -26,8 +26,8 @@
 |---|---|---|
 | **owner** | 能 gate/合/关某 repo 的一方 | 该 repo 的 maintainer 权限(派生) |
 | **stakeholder** | 对某 issue 有利益、但只能评论的一方 | issue 的 author / 参与者(派生) |
-| **共享 spec** | issue 上一条双方共编的 sticky:真实需求 + 验收标准 + 商定做法 | `panel` + marker `protocol: spec version=N` |
-| **背书** | required party 发一条带 `version` 的 endorse 标记评论 | `listComments`(带 author):`by=账号`+`version=N` 可验 |
+| **共享 spec** | 双方共编:真实需求 + 验收标准 + 商定做法。**append-only 版本化评论**(每版一条) | `<!--monastery-spec version=N parties=…-->` 评论;当前 spec = 最高版本 |
+| **背书** | required party 发一条带 `version` 的 endorse 标记评论 | `listComments`(带 author):endorser = `comment.author`(#51)+ `version=N` |
 | **共识** | 当前 `version` 被**所有 required party** 背书 | 背书集合 ⊇ required(全派生/可观测) |
 | **required parties** | 必须背书的一方集合 | 默认派生 `issue.author + repo owner`;超出则写进 spec 的 `parties=…`,**改名单本身要重背书** |
 
@@ -35,9 +35,9 @@
 
 ## 3. 机制(★=新增,其余复用)
 
-1. **身份 ★(小)**:`listComments` 与 `reactions` 开始带 `user`。§3 从「monastery vs 人」推广成「**我 vs 其他所有人**」:外壳只排除**自己账号**发的内容,别的 agent 与人一样是对手方。marker 退化为「同账号 bot/人」的兜底。
-2. **共享 spec(复用 panel)**:就是单条 sticky `panel`,marker 加 `protocol: spec version=N`。双方 agent 经 `panel`/`reply` 动作共编;每次实质编辑 `version++`。
-3. **背书 = 带 version 的 endorse 标记评论 ★**:`<!--monastery-endorse version=N by=@acct-->`(复用将扩 `user` 的 `listComments`)。version 显式、`by` 账号可验、原地编辑无歧义——**这点纠正了「背书=reaction」:reaction 绑不到 spec 版本**(panel 原地编辑后,👍 无从知道是哪个 version 时点点的)。`reactions`(#39)仍只用于单方 owner 闸门(无版本)。
+1. **身份 ★(小)**:`listComments` 带 `author`(#51)。§3 从「monastery vs 人」推广成「**我 vs 其他所有人**」:外壳只排除**自己账号**发的内容,别的 agent 与人一样是对手方。marker 退化为「同账号 bot/人」的兜底。
+2. **共享 spec = append-only 版本化评论 ★(细化:不用 sticky panel)**:`spec` 动作 append 一条 `<!--monastery-spec version=N parties=…-->\n<body>`;**body 变才 `version++`(幂等)**。当前 spec = 最高版本评论。比原"单条 sticky+原地编辑"更好:**版本天然清晰、背书按版本对得上、不撞现有 note/approval sticky**。
+3. **背书 = 带 version 的 endorse 标记评论 ★**:`endorse` 动作 post `<!--monastery-endorse version=N-->`,**endorser = `comment.author`(复用 #51,连 `by=` 都不用写)**;同一 party 同一 version 幂等。**这点纠正了「背书=reaction」:reaction 绑不到 spec 版本**。`reactions`(#39)仍只用于单方 owner 闸门(无版本)。
    **背书是 agent 级、人不另设仪式**:agent 的 endorse 只驱动「讨论→实现」这步**可逆**工作(开 draft PR);**不可逆落地仍是 owner 的人 merge(原闸门不变)**。对抗同伴最多骗 agent 开个被人否掉的草稿 PR(噪声,§10)。
 4. **共识判定(纯函数)**:`endorsers(currentVersion) ⊇ requiredParties`。一个无副作用的读取助手即可,无新状态。
 5. **收敛即终点、卡死即召人 ★**:spec 达成共识 → 讨论**正终结** → 进入执行;**N 轮 spec 仍不收敛** → 外壳在双方升 `needs-human`(人**恰在共识卡死时**被召来破局)。这一条同时补掉 §1 的三个活性洞——成本由**收敛**封顶,不靠拍脑袋预算。

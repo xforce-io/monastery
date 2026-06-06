@@ -31,6 +31,8 @@ export interface GitHubAdapter {
   listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]>;
   /** Reaction contents on a comment (e.g. `["+1", "-1"]`) — `+1`/`-1` are the issue approve/decline signals (PROTOCOL §4). */
   reactions(repo: string, commentId: string): Promise<string[]>;
+  /** The login this monastery instance acts as (its own identity) — used to attribute/dedup endorsements. */
+  login(): Promise<string>;
   /** Merge the PR whose head is `branch` (a gated, human-approved action). */
   mergePR(repo: string, branch: string): Promise<void>;
   /** Millisecond timestamp of the most recent `labeled` event for `label`, or null if never labeled. */
