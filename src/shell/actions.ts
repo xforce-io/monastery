@@ -1,15 +1,26 @@
 // src/shell/actions.ts
+import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 
-export type GatedKind = "close" | "merge";
+export const GatedKindSchema = z.enum(["close", "merge"]);
+export type GatedKind = z.infer<typeof GatedKindSchema>;
 
-/** The SAFE actions an agent may propose. The agent NEVER proposes gated executors (see doClose/doMerge). */
-export type Action =
-  | { kind: "reply"; num: number; toCommentId: string; body: string }
-  | { kind: "relabel"; num: number; add: string[]; remove: string[] }
-  | { kind: "panel"; num: number; body: string }
-  | { kind: "openDraftPR"; num: number; branch: string; title: string; body: string }
-  | { kind: "propose"; num: number; proposal: GatedKind; draft: string };
+/**
+ * The SAFE actions an agent may propose — the single source of truth (schema + type, no drift).
+ * The agent NEVER proposes gated executors (doClose/doMerge): they are not in this union (constitution §3).
+ * Gated risk (close/merge) is reachable only via `propose`, which a human then approves (§4).
+ */
+export const ActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("reply"), num: z.number(), toCommentId: z.string().min(1), body: z.string().min(1) }),
+  z.object({ kind: z.literal("relabel"), num: z.number(), add: z.array(z.string()), remove: z.array(z.string()) }),
+  z.object({ kind: z.literal("panel"), num: z.number(), body: z.string().min(1) }),
+  z.object({ kind: z.literal("openDraftPR"), num: z.number(), branch: z.string().min(1), title: z.string().min(1), body: z.string() }),
+  z.object({ kind: z.literal("propose"), num: z.number(), proposal: GatedKindSchema, draft: z.string().min(1) }),
+]);
+export type Action = z.infer<typeof ActionSchema>;
+
+/** A batch of proposed actions (the maintainer agent's output shape). */
+export const ActionsSchema = z.object({ actions: z.array(ActionSchema) });
 
 const NEEDS_APPROVAL = "monastery:needs-approval";
 const replyMarker = (toCommentId: string) => `<!--monastery-reply to=${toCommentId}-->`;
