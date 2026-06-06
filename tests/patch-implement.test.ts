@@ -23,6 +23,7 @@ function ctx(gh: FakeGitHub, ws: FakeWorkspace, review?: StepCtx["review"]): Ste
 }
 const clean: ReviewVerdict = { findings: [] };
 const blocking: ReviewVerdict = { findings: [{ severity: "blocking", title: "no test", detail: "add one" }] };
+const advisory: ReviewVerdict = { findings: [{ severity: "advisory", title: "rename foo", detail: "clearer" }] };
 
 test("happy path: writes a patch in a sandbox, self-review passes, opens a draft PR", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
@@ -46,6 +47,24 @@ test("PR body carries the patcher's author summary in a 本次改动 section", a
   expect(out.kind).toBe("progressed");
   expect(gh.prs[0].body).toContain("## 本次改动");
   expect(gh.prs[0].body).toContain(summary);
+});
+
+test("reviewer's conclusion + advisory go to a separate marked PR comment, NOT the PR body", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const out = await runImplement(ctx(gh, ws, async () => advisory), issue);
+  expect(out.kind).toBe("progressed");
+  // PR body = author's voice only: no 自审/advisory.
+  expect(gh.prs[0].body).not.toMatch(/自审/);
+  expect(gh.prs[0].body).not.toMatch(/advisory/);
+  expect(gh.prs[0].body).toContain("Closes #7"); // author description stays
+  // A single marked review comment on the opened PR (#1) carries the conclusion + advisory.
+  const prComments = gh.comments[1] ?? [];
+  expect(prComments).toHaveLength(1);
+  expect(prComments[0]).toContain("<!--monastery-state");
+  expect(prComments[0]).toMatch(/自审通过/);
+  expect(prComments[0]).toMatch(/advisory/);
+  expect(prComments[0]).toContain("rename foo");
 });
 
 test("idempotent: an open PR for the branch already exists -> converge, do NOT re-run the patcher", async () => {
