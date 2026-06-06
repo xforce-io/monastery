@@ -13,6 +13,7 @@ export function macroStateOf(labels: string[]): MacroState {
 export const THESIS = { in: "thesis:in", out: "thesis:out", unclear: "thesis:unclear" } as const;
 export const NEEDS_APPROVAL = "monastery:needs-approval";
 export const APPROVED = "monastery:approved";
+export const NEEDS_REVISION = "monastery:needs-revision";
 export const DECLINED = "monastery:declined";
 export const HOLD = "monastery:hold";
 export const TRY_FIX = "monastery:try-fix";
@@ -35,6 +36,7 @@ export const LABEL_DEFS: LabelDef[] = [
   { name: stateLabel("done"), color: "C5DEF5", description: "monastery finished with this item" },
   { name: NEEDS_APPROVAL, color: "D93F0B", description: "monastery proposed an outward action; awaiting approval" },
   { name: APPROVED, color: "0E8A16", description: "human approved the proposal" },
+  { name: NEEDS_REVISION, color: "FBCA04", description: "human wants the proposal revised (back to needs-approval)" },
   { name: DECLINED, color: "B60205", description: "human declined the proposal" },
   { name: HOLD, color: "5319E7", description: "pause monastery on this item" },
   { name: TRY_FIX, color: "1D76DB", description: "ask monastery to attempt a fix" },
