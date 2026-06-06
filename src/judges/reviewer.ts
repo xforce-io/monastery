@@ -49,7 +49,22 @@ export async function reviewer(
     if (parsed.success) return parsed.data;
   }
   if (res.resultText) {
-    const parsed = ReviewSchema.safeParse(safeJson(res.resultText));
+    const fromText = extractReview(res.resultText);
+    if (fromText) return fromText;
+  }
+  return null;
+}
+
+/** Pull a schema-valid review object out of free-form text (fenced JSON, prose-wrapped, or bare). */
+function extractReview(text: string): ReviewVerdict | null {
+  const candidates: string[] = [];
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) candidates.push(fence[1]);
+  const brace = text.match(/\{[\s\S]*\}/);
+  if (brace) candidates.push(brace[0]);
+  candidates.push(text);
+  for (const c of candidates) {
+    const parsed = ReviewSchema.safeParse(safeJson(c));
     if (parsed.success) return parsed.data;
   }
   return null;

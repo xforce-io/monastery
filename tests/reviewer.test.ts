@@ -39,3 +39,11 @@ test("invalid schema -> null", async () => {
   expect(v).toBeNull();
   rmSync(d, { recursive: true, force: true });
 });
+
+test("resultText fenced JSON fallback -> parsed", async () => {
+  const d = mkdtempSync(join(tmpdir(), "rev-"));
+  const provider = new FakeProvider({}, "Here is my review:\n```json\n{\"findings\":[{\"severity\":\"advisory\",\"title\":\"nit\",\"detail\":\"x\"}]}\n```");
+  const v = await reviewer(provider, "haiku", { diff: "d", issue }, d);
+  expect(v).toEqual({ findings: [{ severity: "advisory", title: "nit", detail: "x" }] });
+  rmSync(d, { recursive: true, force: true });
+});
