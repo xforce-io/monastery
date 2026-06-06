@@ -7,9 +7,9 @@ import { runStructuredAgent, type StructuredAgentSpec } from "./spec.js";
 
 /** What the maintainer agent gets to look at this tick (all GitHub-observable, read by the shell). */
 export interface MaintainerInput {
-  thesis: string;                              // the repo's scope (.monastery/thesis.md)
-  issue: Issue;                                // the item: number, title, body, labels, state
-  comments: { id: string; body: string }[];   // all comments oldest-first; human ones carry NO marker
+  thesis: string;                                            // the repo's scope (.monastery/thesis.md)
+  issue: Issue;                                              // the item: number, title, body, labels, state
+  comments: { id: string; body: string; author: string }[]; // oldest-first; author = login (identity)
   /** State of monastery's PR for this issue (branch feat/<n>-<slug>), or null if none — so the agent
    *  doesn't re-propose `implement` when a patch PR is already open/awaiting the human's merge. */
   pr?: { branch: string; state: "open" | "merged" | "closed" } | null;
@@ -27,7 +27,7 @@ const PERSONA = [
 
 function buildContext({ thesis, issue, comments, pr }: MaintainerInput): string {
   const commentBlock = comments.length
-    ? comments.map((c) => `<comment id="${c.id}">\n${c.body}\n</comment>`).join("\n")
+    ? comments.map((c) => `<comment id="${c.id}" author="${c.author}">\n${c.body}\n</comment>`).join("\n")
     : "(no comments)";
   const prBlock = pr
     ? `monastery's PR for this issue: branch ${pr.branch}, state ${pr.state}.`
@@ -39,6 +39,7 @@ function buildContext({ thesis, issue, comments, pr }: MaintainerInput): string 
     `<comments>\n${commentBlock}\n</comments>`,
     `<pr>\n${prBlock}\n</pr>`,
     [
+      "IDENTITY: each comment shows its `author` (GitHub login) — use it to address people by who they are.",
       "MARKERS: monastery's own comments/panels carry an HTML marker (`<!--monastery-...-->`); human comments have NONE.",
       "Only `reply` to human (unmarked) comments. Never reply to your own marked comments — that is talking to yourself.",
     ].join(" "),

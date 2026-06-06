@@ -11,7 +11,7 @@ const newDir = () => mkdtempSync(join(tmpdir(), "monastery-maint-"));
 const input: MaintainerInput = {
   thesis: "monastery is a thin governance shell.",
   issue: { number: 7, title: "add dark mode", body: "please", labels: ["type:feature"], state: "open" },
-  comments: [{ id: "1001", body: "any update? (human, no marker)" }],
+  comments: [{ id: "1001", body: "any update? (human, no marker)", author: "alice" }],
 };
 
 test("valid actions.json (object-wrapped) parses to a typed Action[] covering several kinds", async () => {
@@ -89,6 +89,7 @@ test("the agent is handed the thesis, issue, and human comments as context", asy
   expect(ctx).toContain("thin governance shell"); // thesis
   expect(ctx).toContain("add dark mode");          // issue title
   expect(ctx).toContain("1001");                   // human comment id (so it can reply to it)
+  expect(ctx).toContain("alice");                  // comment author (identity: who said it)
   expect(ctx).toContain("implement");              // the implement action is in the vocabulary
   expect(provider.calls[0].persona).toContain("maintainer");
   rmSync(dir, { recursive: true, force: true });

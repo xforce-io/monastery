@@ -25,8 +25,8 @@ export interface GitHubAdapter {
   findPrForBranch(repo: string, branch: string): Promise<string | null>;
   /** State of the PR whose head is `branch`: open | merged | closed; null if none. */
   prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null>;
-  /** All comments on an issue/PR, oldest first. */
-  listComments(repo: string, num: number): Promise<{ id: string; body: string }[]>;
+  /** All comments on an issue/PR, oldest first. `author` is the commenter's login (identity, not marker). */
+  listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]>;
   /** Reaction contents on a comment (e.g. `["+1", "-1"]`) — `+1`/`-1` are the issue approve/decline signals (PROTOCOL §4). */
   reactions(repo: string, commentId: string): Promise<string[]>;
   /** Merge the PR whose head is `branch` (a gated, human-approved action). */

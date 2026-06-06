@@ -45,6 +45,15 @@ test("FakeGitHub openDraftPR records the PR and returns a url", async () => {
   expect(url).toContain("/pull/1");
 });
 
+test("listComments carries author: own posts = selfLogin, injected comments keep their author", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  gh.authoredComments[1] = [{ body: "from a human", author: "alice" }];
+  await gh.postComment("o/r", 1, "from monastery");
+  const comments = await gh.listComments("o/r", 1);
+  expect(comments.find((c) => c.body === "from a human")?.author).toBe("alice");
+  expect(comments.find((c) => c.body === "from monastery")?.author).toBe("monastery"); // default selfLogin
+});
+
 test("reactions: defaults to [], returns injected reaction contents for a comment", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [] });
   expect(await gh.reactions("o/r", "42")).toEqual([]);
