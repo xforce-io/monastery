@@ -65,7 +65,7 @@ async function main(): Promise<void> {
       // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
       const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
       const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
-      const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace(), now: () => Date.now() };
+      const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace(), now: () => Date.now() };
       results.push(await reconcile(ctx));
       if (args.dryRun) {
         const dry = gh as DryRunAdapter;

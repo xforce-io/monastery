@@ -139,6 +139,15 @@ test("active issue: an implement action runs the patcher (sandbox + draft PR), n
   expect(gh.prs[0].body).toContain("Closes #40");
 });
 
+test("dry-run: an implement action is previewed, NOT executed (the patcher never runs / pushes)", async () => {
+  const gh = ghWith({ number: 70, title: "fix it", body: "broken", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "implement", num: 70 }]));
+  const c: StepCtx = { ...ctxWith(gh, provider), ws: new FakeWorkspace({ diff: "patch", tests: true }), dryRun: true };
+  await issueStep(c, 70);
+  expect((c.ws as FakeWorkspace).cloned).toHaveLength(0); // sandbox never cloned -> patcher skipped
+  expect(gh.prs).toHaveLength(0);                          // no PR pushed/opened
+});
+
 test("active issue: the maintainer is told the state of monastery's open PR (so it won't re-implement)", async () => {
   const gh = ghWith({ number: 41, title: "x", body: "y", labels: [], state: "open" });
   await gh.openDraftPR("o/r", "feat/41-x", "t", "b"); // an open PR for this issue's branch

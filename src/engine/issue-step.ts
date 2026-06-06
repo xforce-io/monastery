@@ -33,6 +33,8 @@ export interface StepCtx {
   review?: ReviewFn;
   /** This repo's policy — overrides each agent's spec-default policy at runtime (effectivePolicy). */
   repoPolicy?: RepoPolicy;
+  /** Preview mode: don't execute the heavy patcher (the DryRunAdapter only mocks gh, not the workspace). */
+  dryRun?: boolean;
 }
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
@@ -87,8 +89,10 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // implement is the shell-owned heavy executor (sandbox patcher + human-gated draft PR); the rest are
   // cheap idempotent GitHub writes. The agent never touches git/gh either way (constitution §3).
   for (const a of actions) {
-    if (a.kind === "implement") await runImplement(ctx, issue);
-    else await executeSafe(ctx.gh, ctx.repo, a);
+    if (a.kind === "implement") {
+      if (ctx.dryRun) console.warn(`[dry-run] would implement ${ctx.repo}#${issue.number} (patcher skipped)`);
+      else await runImplement(ctx, issue);
+    } else await executeSafe(ctx.gh, ctx.repo, a);
   }
   return actions.length ? { kind: "progressed" } : { kind: "noop" };
 }
