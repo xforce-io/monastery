@@ -38,7 +38,7 @@ L_account: 遍历 config.repos
 | ✅ | reactions 读 | — | 小 | 低 | `gh.reactions(repo, commentId)`(👍 信号);+ fake/dry-run |
 | ✅ | maintainer agent | 动作词表 | 大 | 中 | `src/judges/maintainer.ts`:读 item+上下文 → `Action[]`(zod);取代两 judge |
 | ✅ | 引擎重写 | 1·2·3 | 大 | 中高 | 三层 step 按协议;wire agent+executeSafe+信号→gated;删 macroState/DISPATCH;patcher 暂 unwired |
-| 5 | **删老 judge** | 3·4 | 小 | 低 | 删 thesis-gate/triager + 其测试;清理 |
+| ✅ | 删老 judge | 3·4 | 小 | 低 | 删 thesis-gate/triager + 其测试 + Verdict 类型 |
 
 > 1·2 小且独立,可先做、各自成 PR。3 是 keystone。4 最大,落地后 5 收尾。
 
@@ -65,7 +65,7 @@ L_account: 遍历 config.repos
 - [x] 2 reactions 读(`gh.reactions`,+1/-1 内容;信号解释留 step4)
 - [x] 3 maintainer agent(`src/judges/maintainer.ts`;`ActionSchema` 同源)
 - [x] 4 引擎重写(reconcile/issue-step 三档;删 macroState/DISPATCH/state:*;patch.ts 暂 unwired)
-- [ ] 5 删老 judge
+- [x] 5 删老 judge(thesis-gate/triager + 测试 + Verdict 类型已删)
 
 ## 关联
 - 原则 `CONSTITUTION.md` · 合约 `PROTOCOL.md` · 架构 `v2-thin-shell.md` · 动作词表 `docs/design/34-action-vocabulary.md`。
