@@ -2,9 +2,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-interface ReposFile { repos: string[]; }
-interface CursorFile { cursors: Record<string, number>; }
-interface FailFile { fails: Record<string, number>; }
+/** Per-repo policy. Non-disposable (lives in config.json). For now only `model`. */
+export interface RepoPolicy { model?: string; }
+interface ConfigFile { repos: Record<string, RepoPolicy>; }
+
+/** Per-repo disposable cache (rebuildable from GitHub). */
+interface CacheFile { cursor: number; fails: Record<number, number>; }
+const EMPTY_CACHE: CacheFile = { cursor: 0, fails: {} };
 
 /** Per-issue consecutive judge-failure counter (operational; disposable — losing it just resets escalation). */
 export interface FailTracker {
@@ -13,46 +17,69 @@ export interface FailTracker {
   clearFail(repo: string, num: number): void;
 }
 
-/** All state here is disposable: rebuildable from GitHub. Only config + perf cursor. */
+/** `<owner>/<repo>` → a filesystem-safe per-repo dir slug. */
+function repoSlug(repo: string): string { return repo.replace(/\//g, "__"); }
+
+/**
+ * Local layout (see docs/LOCAL-LAYOUT.md):
+ *   <root>/config.json                       non-disposable: { repos: { "<o>/<r>": { model } } }
+ *   <root>/repos/<owner>__<repo>/cache.json  disposable: { cursor, fails } — rebuildable from GitHub
+ * Secrets never live here — env/keychain only.
+ */
 export class Store implements FailTracker {
   constructor(private root: string) { mkdirSync(root, { recursive: true }); }
 
-  private read<T>(name: string, fallback: T): T {
-    const p = join(this.root, name);
-    if (!existsSync(p)) return fallback;
-    try { return JSON.parse(readFileSync(p, "utf8")) as T; } catch { return fallback; }
+  private readJson<T>(path: string, fallback: T): T {
+    if (!existsSync(path)) return fallback;
+    try { return JSON.parse(readFileSync(path, "utf8")) as T; } catch { return fallback; }
   }
-  private write(name: string, data: unknown): void {
-    writeFileSync(join(this.root, name), JSON.stringify(data, null, 2), "utf8");
+  private writeJson(path: string, data: unknown): void {
+    writeFileSync(path, JSON.stringify(data, null, 2), "utf8");
   }
 
-  listRepos(): string[] { return this.read<ReposFile>("repos.json", { repos: [] }).repos; }
-  addRepo(repo: string): void {
-    const repos = new Set(this.listRepos()); repos.add(repo);
-    this.write("repos.json", { repos: [...repos] } satisfies ReposFile);
+  // --- config.json (non-disposable) ---
+
+  private configPath(): string { return join(this.root, "config.json"); }
+  private readConfig(): ConfigFile { return this.readJson<ConfigFile>(this.configPath(), { repos: {} }); }
+  private writeConfig(c: ConfigFile): void { this.writeJson(this.configPath(), c); }
+
+  listRepos(): string[] { return Object.keys(this.readConfig().repos); }
+
+  /** Add/update a repo. Idempotent; a `policy` arg overrides, omitting it keeps the existing one. */
+  addRepo(repo: string, policy?: RepoPolicy): void {
+    const c = this.readConfig();
+    c.repos[repo] = policy ?? c.repos[repo] ?? {};
+    this.writeConfig(c);
   }
   removeRepo(repo: string): void {
-    this.write("repos.json", { repos: this.listRepos().filter((r) => r !== repo) } satisfies ReposFile);
+    const c = this.readConfig();
+    if (repo in c.repos) { delete c.repos[repo]; this.writeConfig(c); }
+  }
+  repoModel(repo: string): string | undefined { return this.readConfig().repos[repo]?.model; }
+
+  // --- repos/<slug>/cache.json (disposable) ---
+
+  private cachePath(repo: string): string { return join(this.root, "repos", repoSlug(repo), "cache.json"); }
+  private readCache(repo: string): CacheFile { return this.readJson<CacheFile>(this.cachePath(repo), { ...EMPTY_CACHE, fails: {} }); }
+  private writeCache(repo: string, c: CacheFile): void {
+    const p = this.cachePath(repo);
+    mkdirSync(join(this.root, "repos", repoSlug(repo)), { recursive: true });
+    this.writeJson(p, c);
   }
 
-  getCursor(repo: string): number { return this.read<CursorFile>("cursor.json", { cursors: {} }).cursors[repo] ?? 0; }
+  getCursor(repo: string): number { return this.readCache(repo).cursor; }
   setCursor(repo: string, value: number): void {
-    const f = this.read<CursorFile>("cursor.json", { cursors: {} });
-    f.cursors[repo] = value; this.write("cursor.json", f);
+    const c = this.readCache(repo); c.cursor = value; this.writeCache(repo, c);
   }
 
   recordFail(repo: string, num: number): number {
-    const f = this.read<FailFile>("fails.json", { fails: {} });
-    const k = `${repo}#${num}`;
-    const n = (f.fails[k] ?? 0) + 1;
-    f.fails[k] = n; this.write("fails.json", f); return n;
+    const c = this.readCache(repo);
+    const n = (c.fails[num] ?? 0) + 1;
+    c.fails[num] = n; this.writeCache(repo, c); return n;
   }
-  failCount(repo: string, num: number): number {
-    return this.read<FailFile>("fails.json", { fails: {} }).fails[`${repo}#${num}`] ?? 0;
-  }
+  failCount(repo: string, num: number): number { return this.readCache(repo).fails[num] ?? 0; }
   clearFail(repo: string, num: number): void {
-    const f = this.read<FailFile>("fails.json", { fails: {} });
-    const k = `${repo}#${num}`;
-    if (k in f.fails) { delete f.fails[k]; this.write("fails.json", f); }
+    const c = this.readCache(repo);
+    if (num in c.fails) { delete c.fails[num]; this.writeCache(repo, c); }
   }
 }
