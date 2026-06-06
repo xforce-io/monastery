@@ -23,23 +23,29 @@ export class ClaudeCodeProvider implements AgentProvider {
     const promptFile = join(config.artifactDir, "_prompt.md");
     writeFileSync(promptFile, `${config.persona}\n\n---\n\n${config.context}`, "utf8");
 
-    await execa("claude", ["-p", "--model", config.model, "--output-format", "json"], {
-      cwd: config.artifactDir,
-      inputFile: promptFile,
-      stdout: { file: join(config.artifactDir, "_claude_stdout.json") },
-      stderr: "inherit",
-      timeout: config.timeoutMs ?? 30 * 60_000,
-      cancelSignal: signal,
-      reject: false, // an exit code is not a throw; the shell judges by artifacts
-    });
-
+    // Surface the repo's AGENTS.md to `claude -p` (which reads CLAUDE.md, not AGENTS.md).
+    const cleanup = surfaceClaudeConventions(config.artifactDir);
     let resultText: string | undefined;
-    const stdoutPath = join(config.artifactDir, "_claude_stdout.json");
-    if (existsSync(stdoutPath)) {
-      try {
-        const j = JSON.parse(readFileSync(stdoutPath, "utf8")) as { result?: unknown };
-        if (typeof j.result === "string") resultText = j.result;
-      } catch { /* leave resultText undefined */ }
+    try {
+      await execa("claude", ["-p", "--model", config.model, "--output-format", "json"], {
+        cwd: config.artifactDir,
+        inputFile: promptFile,
+        stdout: { file: join(config.artifactDir, "_claude_stdout.json") },
+        stderr: "inherit",
+        timeout: config.timeoutMs ?? 30 * 60_000,
+        cancelSignal: signal,
+        reject: false, // an exit code is not a throw; the shell judges by artifacts
+      });
+
+      const stdoutPath = join(config.artifactDir, "_claude_stdout.json");
+      if (existsSync(stdoutPath)) {
+        try {
+          const j = JSON.parse(readFileSync(stdoutPath, "utf8")) as { result?: unknown };
+          if (typeof j.result === "string") resultText = j.result;
+        } catch { /* leave resultText undefined */ }
+      }
+    } finally {
+      cleanup(); // remove the injected CLAUDE.md BEFORE artifacts are scanned / the patch is staged
     }
     return { artifacts: scanArtifacts(config.artifactDir), resultText };
   }
