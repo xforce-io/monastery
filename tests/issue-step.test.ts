@@ -78,6 +78,15 @@ test("active issue: persistent agent failure escalates to a human-visible panel"
   expect(gh.panels[10]).toMatch(/human/i);
 });
 
+test("active issue: a per-repo failThreshold override changes when escalation fires", async () => {
+  const gh = ghWith({ number: 11, title: "x", body: "y", labels: [], state: "open" });
+  // default threshold is 3, so a single failure normally stays quiet; override to 1 -> escalate at once.
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({}), { recordFail: () => 1 }),
+    repoPolicy: { agents: { maintainer: { failThreshold: 1 } } } };
+  await issueStep(c, 11);
+  expect(gh.panels[11]).toMatch(/human/i);
+});
+
 // --- awaiting-gate: check the human signal; NEVER call the agent ---
 
 async function awaitingGate(num: number, proposal: "close" | "merge", draft: string): Promise<FakeGitHub> {

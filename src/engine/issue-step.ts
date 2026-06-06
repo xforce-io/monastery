@@ -8,8 +8,9 @@ import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
 import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
 import { maintainer, maintainerSpec } from "../agents/maintainer.js";
+import { effectivePolicy } from "../agents/spec.js";
 import { executeSafe, doClose, type GatedKind } from "../shell/actions.js";
-import type { FailTracker } from "../config/store.js";
+import type { FailTracker, RepoPolicy } from "../config/store.js";
 import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement, branchName } from "./patch.js";
@@ -28,6 +29,8 @@ export interface StepCtx {
   // (defaults to `model`) and an injectable reviewer (defaults to the real judge via provider).
   reviewModel?: string;
   review?: ReviewFn;
+  /** This repo's policy — overrides each agent's spec-default policy at runtime (effectivePolicy). */
+  repoPolicy?: RepoPolicy;
 }
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
@@ -59,11 +62,12 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.
   if (actions === null || actions.some((a) => a.num !== issue.number)) {
     const fails = ctx.fails.recordFail(ctx.repo, issue.number);
-    if (fails >= FAIL_THRESHOLD) {
+    const failThreshold = effectivePolicy(maintainerSpec, ctx.repoPolicy).failThreshold ?? FAIL_THRESHOLD;
+    if (fails >= failThreshold) {
       await ctx.gh.upsertPanel(ctx.repo, issue.number,
         `${NOTE_MARKER}\n⚠️ the maintainer agent has produced no valid actions for ${fails} consecutive ticks — needs a human.`);
     } else {
-      console.warn(`[monastery] maintainer skip ${ctx.repo}#${issue.number} (${fails}/${FAIL_THRESHOLD})`);
+      console.warn(`[monastery] maintainer skip ${ctx.repo}#${issue.number} (${fails}/${failThreshold})`);
     }
     return { kind: "noop" };
   }

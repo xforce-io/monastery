@@ -43,6 +43,24 @@ export interface WorkspaceAgentSpec extends AgentSpec {
   fixPersona?: string;
 }
 
+/** Per-repo overrides of agent policy, keyed by agent name. Lives in config.json's RepoPolicy. */
+export interface PolicyOverrides { agents?: Record<string, Partial<AgentPolicy>> }
+
+/** Merge a per-field override onto a base policy: an override field wins; unset fields keep the base. */
+export function resolvePolicy(base: AgentPolicy, override?: Partial<AgentPolicy>): AgentPolicy {
+  return { ...base, ...stripUndefined(override) };
+}
+
+/** The effective policy for an agent in a repo = its spec defaults with the repo's per-agent override applied. */
+export function effectivePolicy(spec: AgentSpec, repo?: PolicyOverrides): AgentPolicy {
+  return resolvePolicy(spec.policy, repo?.agents?.[spec.name]);
+}
+
+function stripUndefined(o?: Partial<AgentPolicy>): Partial<AgentPolicy> {
+  if (!o) return {};
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+}
+
 export interface RunCtx { provider: AgentProvider; model: string; artifactDir: string }
 
 /**

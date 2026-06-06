@@ -6,10 +6,9 @@ import type { StepCtx } from "./issue-step.js";
 import type { Issue, Outcome } from "../types.js";
 import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../agents/reviewer.js";
 import { patcherSpec } from "../agents/patcher.js";
+import { effectivePolicy } from "../agents/spec.js";
 
-// Operational knobs come from the patcher's spec (the single home; per-repo overrides land here in PR2).
-const PATCH_FAIL_THRESHOLD = patcherSpec.policy.failThreshold ?? 3;
-const REVIEW_MAX_ITERS = patcherSpec.policy.maxIters ?? 3;
+// Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
 const FIX_PERSONA = patcherSpec.fixPersona ?? patcherSpec.persona;
 
@@ -34,9 +33,9 @@ function fixContext(issue: Issue, blocking: ReviewFinding[]): string {
   return `Fix issue #${issue.number} — the reviewer found these BLOCKING problems with your patch:\n\n${items}\n\nResolve every item above.`;
 }
 
-function reviewPanel(blocking: ReviewFinding[]): string {
+function reviewPanel(blocking: ReviewFinding[], iters: number): string {
   const list = blocking.map((b) => `- ${b.title}: ${b.detail}`).join("\n");
-  return `${PATCH_NOTE_MARKER}\n⚠️ 自审在 ${REVIEW_MAX_ITERS} 轮后仍有未解决的 blocking — needs a human：\n${list}`;
+  return `${PATCH_NOTE_MARKER}\n⚠️ 自审在 ${iters} 轮后仍有未解决的 blocking — needs a human：\n${list}`;
 }
 
 function defaultReview(ctx: StepCtx): ReviewFn {
@@ -58,6 +57,9 @@ function defaultReview(ctx: StepCtx): ReviewFn {
  */
 export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
+  const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
+  const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
+  const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
 
   // Converge: an open PR already exists for this branch -> don't re-run the patcher (idempotent, PROTOCOL §7).
   const existingPr = await ctx.gh.findPrForBranch(ctx.repo, branch);
@@ -96,7 +98,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome>
       const blocking = lastVerdict.findings.filter((f) => f.severity === "blocking");
       if (blocking.length === 0) break;                                    // clean -> ship
       if (iter === REVIEW_MAX_ITERS) {                                     // give up -> needs a human, no PR
-        await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking));
+        await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS));
         return { kind: "noop" };
       }
       await ctx.provider.run({ persona: FIX_PERSONA, context: fixContext(issue, blocking), artifactDir: dir, model: ctx.model });

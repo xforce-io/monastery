@@ -31,6 +31,14 @@ test("repos: persisted to config.json at root, survives a fresh Store", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("repoPolicy: returns the full per-repo policy (incl. per-agent overrides), undefined when unset", () => {
+  const { store, dir } = tmpStore();
+  expect(store.repoPolicy("o/r")).toBeUndefined();
+  store.addRepo("o/r", { model: "opus", agents: { maintainer: { failThreshold: 7 } } });
+  expect(store.repoPolicy("o/r")).toEqual({ model: "opus", agents: { maintainer: { failThreshold: 7 } } });
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("repoModel: returns configured per-repo model, undefined when unset", () => {
   const { store, dir } = tmpStore();
   expect(store.repoModel("owner/monastery")).toBeUndefined();
