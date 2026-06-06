@@ -7,11 +7,11 @@ import type { GitHubAdapter } from "../github/adapter.js";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
 import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
-import { maintainer } from "../judges/maintainer.js";
+import { maintainer, maintainerSpec } from "../agents/maintainer.js";
 import { executeSafe, doClose, type GatedKind } from "../shell/actions.js";
 import type { FailTracker } from "../config/store.js";
 import type { Workspace } from "../workspace/workspace.js";
-import type { ReviewFn } from "../judges/reviewer.js";
+import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement, branchName } from "./patch.js";
 
 export interface StepCtx {
@@ -31,7 +31,7 @@ export interface StepCtx {
 }
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
-export const FAIL_THRESHOLD = 3;
+export const FAIL_THRESHOLD = maintainerSpec.policy.failThreshold ?? 3;
 const NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";
 const APPROVAL_MARK = "protocol: approval";
 

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProvider } from "../src/provider/fake.js";
-import { reviewer } from "../src/judges/reviewer.js";
+import { reviewer } from "../src/agents/reviewer.js";
 import type { Issue } from "../src/types.js";
 
 const issue: Issue = { number: 1, title: "t", body: "b", labels: [], state: "open" };
