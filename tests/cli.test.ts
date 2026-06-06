@@ -20,6 +20,11 @@ test("parses bare `step`", () => {
   expect(parseArgs(["step"])).toEqual({ cmd: "step", dryRun: false, json: false });
 });
 
+test("parses `step --repo o/r --issue 5` (single-issue target)", () => {
+  expect(parseArgs(["step", "--repo", "o/r", "--issue", "5"]))
+    .toEqual({ cmd: "step", repo: "o/r", issue: "5", dryRun: false, json: false });
+});
+
 test("parses `init o/r`", () => {
   expect(parseArgs(["init", "o/r"])).toEqual({ cmd: "init", repo: "o/r" });
 });
