@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     const results = [];
     for (const repo of repos) {
       const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
-      const ctx = { repo, gh, provider, model, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace(), now: () => Date.now() };
+      const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace(), now: () => Date.now() };
       results.push(await reconcile(ctx));
       if (args.dryRun) {
         const dry = gh as DryRunAdapter;
