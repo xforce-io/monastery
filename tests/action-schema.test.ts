@@ -1,8 +1,9 @@
 // tests/action-schema.test.ts — the zod schema is the single source of truth for the Action vocabulary.
 import { expect, test } from "vitest";
-import { ActionSchema, ActionsSchema } from "../src/shell/actions.js";
+import { ActionSchema, ActionsSchema, executeSafe } from "../src/shell/actions.js";
+import { FakeGitHub } from "../src/github/fake.js";
 
-test("ActionSchema accepts each safe action kind", () => {
+test("ActionSchema accepts each proposable action kind", () => {
   const valid = [
     { kind: "reply", num: 1, toCommentId: "9", body: "hi" },
     { kind: "relabel", num: 1, add: ["type:bug"], remove: [] },
@@ -10,8 +11,14 @@ test("ActionSchema accepts each safe action kind", () => {
     { kind: "openDraftPR", num: 1, branch: "feat/1-x", title: "t", body: "b" },
     { kind: "propose", num: 1, proposal: "close", draft: "because X" },
     { kind: "propose", num: 1, proposal: "merge", draft: "looks good" },
+    { kind: "implement", num: 1 },
   ];
   for (const a of valid) expect(ActionSchema.safeParse(a).success).toBe(true);
+});
+
+test("executeSafe refuses 'implement' — it is a shell executor (runImplement), not a cheap safe write", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await expect(executeSafe(gh, "o/r", { kind: "implement", num: 1 })).rejects.toThrow(/implement/);
 });
 
 test("ActionSchema rejects unknown kind and gated executors", () => {

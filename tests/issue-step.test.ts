@@ -118,6 +118,27 @@ test("awaiting-gate + no reaction yet: waits on the human, no agent call, no clo
   expect(gh.closed).not.toContain(22);
 });
 
+// --- active: implement routes to the patcher executor, not executeSafe ---
+
+test("active issue: an implement action runs the patcher (sandbox + draft PR), not executeSafe", async () => {
+  const gh = ghWith({ number: 40, title: "fix it", body: "broken", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "implement", num: 40 }]));
+  const c: StepCtx = { ...ctxWith(gh, provider), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 40);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);          // the patcher opened a draft PR
+  expect(gh.prs[0].body).toContain("Closes #40");
+});
+
+test("active issue: the maintainer is told the state of monastery's open PR (so it won't re-implement)", async () => {
+  const gh = ghWith({ number: 41, title: "x", body: "y", labels: [], state: "open" });
+  await gh.openDraftPR("o/r", "feat/41-x", "t", "b"); // an open PR for this issue's branch
+  const provider = new FakeProvider(actionsJson([]));
+  await issueStep(ctxWith(gh, provider), 41);
+  expect(provider.calls[0].context).toContain("feat/41-x");
+  expect(provider.calls[0].context).toMatch(/state open/);
+});
+
 // --- terminal: ignore ---
 
 test("declined issue is terminal: noop, agent never called", async () => {

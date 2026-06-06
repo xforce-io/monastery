@@ -50,6 +50,7 @@ export class FakeGitHub implements GitHubAdapter {
   }
   async openDraftPR(_r: string, head: string, title: string, body: string): Promise<string> {
     this.prs.push({ head, title, body });
+    this.prStates[head] ??= "open"; // keep prState consistent with an opened PR (don't clobber injected states)
     return `https://github.com/fake/pull/${this.prs.length}`;
   }
   async findPrForBranch(_r: string, branch: string): Promise<string | null> {

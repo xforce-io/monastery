@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StepCtx } from "./issue-step.js";
 import type { Issue, Outcome } from "../types.js";
-import { TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
 import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../judges/reviewer.js";
 
 const PATCH_FAIL_THRESHOLD = 3;
+const PATCH_NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";
 
 const BRANCH_SLUG_MAX = 50;
 
@@ -46,7 +46,7 @@ function fixContext(issue: Issue, blocking: ReviewFinding[]): string {
 
 function reviewPanel(blocking: ReviewFinding[]): string {
   const list = blocking.map((b) => `- ${b.title}: ${b.detail}`).join("\n");
-  return `<!--monastery-state\nprotocol: patch\n-->\n⚠️ 自审在 ${REVIEW_MAX_ITERS} 轮后仍有未解决的 blocking — needs a human：\n${list}`;
+  return `${PATCH_NOTE_MARKER}\n⚠️ 自审在 ${REVIEW_MAX_ITERS} 轮后仍有未解决的 blocking — needs a human：\n${list}`;
 }
 
 function defaultReview(ctx: StepCtx): ReviewFn {
@@ -61,16 +61,17 @@ function defaultReview(ctx: StepCtx): ReviewFn {
   };
 }
 
-export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+/**
+ * The shell-owned patcher executor (proposal-driven: the maintainer agent's `implement` action routes here).
+ * Writes code in a sandbox clone, self-reviews, and opens a HUMAN-GATED draft PR. The agent never touches
+ * git/gh — the shell owns clone/push/PR, and the only path to main is a human Merge (constitution §3/§4).
+ */
+export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
 
-  // Converge: a prior run may have pushed/opened a PR but failed before labeling. Don't redo the work.
+  // Converge: an open PR already exists for this branch -> don't re-run the patcher (idempotent, PROTOCOL §7).
   const existingPr = await ctx.gh.findPrForBranch(ctx.repo, branch);
-  if (existingPr) {
-    await ctx.gh.addLabel(ctx.repo, issue.number, PATCH_PROPOSED);
-    await ctx.gh.removeLabel(ctx.repo, issue.number, TRY_FIX);
-    return { kind: "progressed", note: existingPr };
-  }
+  if (existingPr) return { kind: "progressed", note: existingPr };
 
   const dir = await ctx.ws.clone(ctx.repo, branch);
   try {
@@ -84,9 +85,8 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
         console.warn(`[monastery] patcher made no changes ${ctx.repo}#${issue.number} (${fails}/${PATCH_FAIL_THRESHOLD})`);
         return { kind: "noop" };
       }
-      await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
       await ctx.gh.upsertPanel(ctx.repo, issue.number,
-        `<!--monastery-state\nprotocol: patch\n-->\n⚠️ patcher made no changes after ${fails} attempts — needs a human.`);
+        `${PATCH_NOTE_MARKER}\n⚠️ patcher made no changes after ${fails} attempts — needs a human.`);
       return { kind: "noop" };
     }
 
@@ -106,7 +106,6 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       const blocking = lastVerdict.findings.filter((f) => f.severity === "blocking");
       if (blocking.length === 0) break;                                    // clean -> ship
       if (iter === REVIEW_MAX_ITERS) {                                     // give up -> needs a human, no PR
-        await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
         await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking));
         return { kind: "noop" };
       }
@@ -145,8 +144,6 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       `— monastery (draft; review and merge if good).`,
     ].join("\n");
     const url = await ctx.gh.openDraftPR(ctx.repo, branch, `monastery: fix #${issue.number}`, body);
-    await ctx.gh.addLabel(ctx.repo, issue.number, PATCH_PROPOSED);
-    await ctx.gh.removeLabel(ctx.repo, issue.number, TRY_FIX);
     return { kind: "progressed", note: url };
   } finally {
     await ctx.ws.cleanup(dir);

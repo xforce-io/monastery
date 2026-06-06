@@ -89,6 +89,24 @@ test("the agent is handed the thesis, issue, and human comments as context", asy
   expect(ctx).toContain("thin governance shell"); // thesis
   expect(ctx).toContain("add dark mode");          // issue title
   expect(ctx).toContain("1001");                   // human comment id (so it can reply to it)
+  expect(ctx).toContain("implement");              // the implement action is in the vocabulary
   expect(provider.calls[0].persona).toContain("maintainer");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the agent accepts an implement action", async () => {
+  const dir = newDir();
+  const out = await maintainer(new FakeProvider({ "actions.json": '{"actions":[{"kind":"implement","num":7}]}' }), "sonnet", input, dir);
+  expect(out).toEqual([{ kind: "implement", num: 7 }]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("when a monastery PR is already open, the agent is told NOT to re-propose implement", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", { ...input, pr: { branch: "feat/7-dark-mode", state: "open" } }, dir);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toContain("feat/7-dark-mode"); // the open PR's branch is surfaced
+  expect(ctx).toMatch(/open/);               // its state, so the agent won't re-implement
   rmSync(dir, { recursive: true, force: true });
 });
