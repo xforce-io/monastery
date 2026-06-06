@@ -20,9 +20,6 @@ export interface ReconcileResult {
 // Coarse protocol state (PROTOCOL §1): all GitHub-observable. The shell stores no rich state.
 export type ProtocolState = "active" | "awaiting-gate" | "terminal";
 
-// thesis-gate verdict (legacy judge; unwired in v2).
-export type Verdict = "in" | "out" | "unclear";
-
 // An issue as the shell sees it (subset of GitHub's issue).
 export interface Issue {
   number: number;
