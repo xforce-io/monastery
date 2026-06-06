@@ -1,7 +1,11 @@
 // src/engine/patch.ts
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { StepCtx } from "./issue-step.js";
 import type { Issue, Outcome } from "../types.js";
 import { TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
+import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../judges/reviewer.js";
 
 const PATCH_FAIL_THRESHOLD = 3;
 
@@ -11,6 +15,39 @@ const PERSONA = [
   "Do NOT touch git or gh — leave your changes in the working tree.",
   "Make the smallest correct change.",
 ].join(" ");
+
+const REVIEW_MAX_ITERS = 3;
+
+const FIX_PERSONA = [
+  "You are monastery's patcher, addressing review feedback.",
+  "A reviewer flagged BLOCKING issues in your last change. Fix every one by editing files in this repository, then stop.",
+  "Do NOT touch git or gh — leave your changes in the working tree.",
+  "Make the smallest correct change that resolves every blocking item.",
+].join(" ");
+
+function fixContext(issue: Issue, blocking: ReviewFinding[]): string {
+  const items = blocking
+    .map((b, i) => `${i + 1}. [${b.file ?? "?"}${b.line ? ":" + b.line : ""}] ${b.title}\n   ${b.detail}`)
+    .join("\n");
+  return `Fix issue #${issue.number} — the reviewer found these BLOCKING problems with your patch:\n\n${items}\n\nResolve every item above.`;
+}
+
+function reviewPanel(blocking: ReviewFinding[]): string {
+  const list = blocking.map((b) => `- ${b.title}: ${b.detail}`).join("\n");
+  return `<!--monastery-state\nprotocol: patch\n-->\n⚠️ 自审在 ${REVIEW_MAX_ITERS} 轮后仍有未解决的 blocking — needs a human：\n${list}`;
+}
+
+function defaultReview(ctx: StepCtx): ReviewFn {
+  return async (diff, issue) => {
+    // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
+    const reviewDir = mkdtempSync(join(tmpdir(), "monastery-review-"));
+    try {
+      return await reviewer(ctx.provider, ctx.reviewModel ?? ctx.model, { diff, issue }, reviewDir);
+    } finally {
+      rmSync(reviewDir, { recursive: true, force: true });
+    }
+  };
+}
 
 export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const branch = `monastery/fix-${issue.number}`;
@@ -42,16 +79,47 @@ export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     }
 
     ctx.fails.clearFail(ctx.repo, issue.number);
-    const tests = await ctx.ws.runTests(dir);
+    let tests = await ctx.ws.runTests(dir);
     // re-stage AFTER tests so files the test run regenerates (e.g. package-lock.json from npm install) are committed too
     diff = await ctx.ws.stagedDiff(dir);
+
+    // Self-review gate: review the staged diff; fix BLOCKING findings and re-review (<= REVIEW_MAX_ITERS).
+    const review = ctx.review ?? defaultReview(ctx);
+    const fixedTitles: string[] = [];
+    let lastVerdict: ReviewVerdict | null = null;
+    let reviewerFailed = false;
+    for (let iter = 1; iter <= REVIEW_MAX_ITERS; iter++) {
+      lastVerdict = await review(diff, issue);
+      if (!lastVerdict) { reviewerFailed = true; break; }                 // reviewer failed -> conservative pass
+      const blocking = lastVerdict.findings.filter((f) => f.severity === "blocking");
+      if (blocking.length === 0) break;                                    // clean -> ship
+      if (iter === REVIEW_MAX_ITERS) {                                     // give up -> needs a human, no PR
+        await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
+        await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking));
+        return { kind: "noop" };
+      }
+      await ctx.provider.run({ persona: FIX_PERSONA, context: fixContext(issue, blocking), artifactDir: dir, model: ctx.model });
+      fixedTitles.push(...blocking.map((b) => b.title));
+      tests = await ctx.ws.runTests(dir);
+      diff = await ctx.ws.stagedDiff(dir);
+    }
+
     await ctx.ws.commitPush(dir, branch, `fix: address #${issue.number}`);
 
     const MAX_DIFF = 60000;
     const shownDiff = diff.length > MAX_DIFF ? diff.slice(0, MAX_DIFF) + "\n… [diff truncated; see the PR Files tab]" : diff;
     const testLine = tests === null ? "no test suite detected" : tests ? "tests passing" : "⚠️ tests FAILING";
+    const advisories = (lastVerdict?.findings ?? []).filter((f) => f.severity === "advisory");
+    const reviewLine = reviewerFailed
+      ? "⚠️ 自审未能运行（reviewer 失败）——本 PR 未经语义自审。"
+      : fixedTitles.length
+        ? `自审修正：\n${fixedTitles.map((t) => `- ${t}`).join("\n")}`
+        : "自审通过：无 blocking。";
+    const advisoryBlock = advisories.length ? `\n\nadvisory（未阻断）：\n${advisories.map((a) => `- ${a.title}`).join("\n")}` : "";
     const body = [
       `Proposed fix for #${issue.number} (${testLine}).`,
+      ``,
+      `${reviewLine}${advisoryBlock}`,
       ``,
       `Closes #${issue.number}`,
       ``,
