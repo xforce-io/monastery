@@ -100,6 +100,15 @@ export class GhAdapter implements GitHubAdapter {
     const s = out.trim().toLowerCase();
     return s === "open" || s === "merged" || s === "closed" ? s : null;
   }
+  async listComments(repo: string, num: number): Promise<{ id: string; body: string }[]> {
+    const out = await this.run([
+      "api", `repos/${repo}/issues/${num}/comments`, "--jq", "[.[] | {id: (.id|tostring), body}]",
+    ]).catch(() => "[]");
+    return JSON.parse(out || "[]") as { id: string; body: string }[];
+  }
+  async mergePR(repo: string, branch: string): Promise<void> {
+    await this.run(["pr", "merge", branch, "--repo", repo, "--merge"]);
+  }
 
   async openDraftPR(repo: string, head: string, title: string, body: string): Promise<string> {
     try {

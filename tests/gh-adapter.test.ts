@@ -91,3 +91,16 @@ test("prState returns the lowercased PR state, null when absent", async () => {
   expect(await new GhAdapter(async () => "CLOSED").prState("o/r", "x")).toBe("closed");
   expect(await new GhAdapter(async () => "").prState("o/r", "nope")).toBeNull();
 });
+
+test("listComments parses id+body json", async () => {
+  const json = JSON.stringify([{ id: "10", body: "hello" }, { id: "11", body: "world" }]);
+  const gh = new GhAdapter(async () => json);
+  expect(await gh.listComments("o/r", 7)).toEqual([{ id: "10", body: "hello" }, { id: "11", body: "world" }]);
+});
+
+test("mergePR issues the correct gh argv", async () => {
+  const captured: string[][] = [];
+  const gh = new GhAdapter(async (args) => { captured.push(args); return ""; });
+  await gh.mergePR("o/r", "feat/6-x");
+  expect(captured[0]).toEqual(["pr", "merge", "feat/6-x", "--repo", "o/r", "--merge"]);
+});
