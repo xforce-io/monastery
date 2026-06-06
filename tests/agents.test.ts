@@ -45,6 +45,14 @@ test("the patcher is an R&D engineer: both personas carry its methodology (§12)
   }
 });
 
+test("the patcher's fixPersona keeps the summary guidance so a self-reviewed PR's小结 stays compliant (#64)", () => {
+  // runImplement overwrites authorSummary with the fix round's output; fixPersona must still
+  // ask for a bulleted summary printed to stdout (not a file), matching PERSONA.
+  expect(patcherSpec.fixPersona).toMatch(/summary/i);     // finish with a bulleted summary
+  expect(patcherSpec.fixPersona).toMatch(/stdout/i);      // to stdout
+  expect(patcherSpec.fixPersona).toMatch(/not\s+(?:write\s+it\s+)?to\s+a\s+file/i); // not into the diff
+});
+
 test("the reviewer is an architect/QA: the persona carries its judgment criteria (§12)", () => {
   // reviewer=架构/QA: intent, correctness, security, simplicity — and blocking vs advisory.
   const persona = reviewerSpec.persona;

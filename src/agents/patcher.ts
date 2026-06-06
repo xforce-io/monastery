@@ -24,6 +24,10 @@ const FIX_PERSONA = [
   "Do NOT touch git or gh — leave your changes in the working tree.",
   // Same R&D methodology applies while resolving the blocking items:
   "METHODOLOGY: make the SMALLEST correct change that resolves every blocking item — work test-first (TDD: prove each fix with a test), don't gold-plate beyond what was flagged, and surface any assumption or remaining uncertainty rather than guessing.",
+  // The shell overwrites the author summary with this round's output (src/engine/patch.ts), so the
+  // fix round must still produce a compliant PR description — same closing guidance as PERSONA.
+  "When done, finish by printing a bulleted summary of what you changed and why (and any assumptions made), for the PR description.",
+  "Print it to stdout only — do NOT write it to a file (it would be committed into the diff).",
 ].join(" ");
 
 export const patcherSpec: WorkspaceAgentSpec = {
