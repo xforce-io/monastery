@@ -68,7 +68,10 @@ export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome>
   const dir = await ctx.ws.clone(ctx.repo, branch);
   try {
     const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${issue.body}`;
-    await ctx.provider.run({ persona: PERSONA, context, artifactDir: dir, model: ctx.model });
+    const implRes = await ctx.provider.run({ persona: PERSONA, context, artifactDir: dir, model: ctx.model });
+    // The patcher's stdout IS the author summary (what+why). It runs in the worktree, so it can't write a
+    // file (that would land in the diff) — we capture resultText here and render it into the PR body below.
+    let authorSummary = implRes.resultText?.trim() || "";
     let diff = await ctx.ws.stagedDiff(dir);
 
     if (!diff.trim()) {
@@ -101,7 +104,8 @@ export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome>
         await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS));
         return { kind: "noop" };
       }
-      await ctx.provider.run({ persona: FIX_PERSONA, context: fixContext(issue, blocking), artifactDir: dir, model: ctx.model });
+      const fixRes = await ctx.provider.run({ persona: FIX_PERSONA, context: fixContext(issue, blocking), artifactDir: dir, model: ctx.model });
+      if (fixRes.resultText?.trim()) authorSummary = fixRes.resultText.trim();   // keep the summary current with the final diff
       fixedTitles.push(...blocking.map((b) => b.title));
       tests = await ctx.ws.runTests(dir);
       diff = await ctx.ws.stagedDiff(dir);
@@ -119,10 +123,11 @@ export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome>
         ? `自审修正：\n${fixedTitles.map((t) => `- ${t}`).join("\n")}`
         : "自审通过：无 blocking。";
     const advisoryBlock = advisories.length ? `\n\nadvisory（未阻断）：\n${advisories.map((a) => `- ${a.title}`).join("\n")}` : "";
+    const changesBlock = authorSummary ? `## 本次改动\n\n${authorSummary}\n\n` : "";
     const body = [
       `Proposed fix for #${issue.number} (${testLine}).`,
       ``,
-      `${reviewLine}${advisoryBlock}`,
+      `${changesBlock}${reviewLine}${advisoryBlock}`,
       ``,
       `Closes #${issue.number}`,
       ``,
