@@ -90,10 +90,16 @@ function buildContext(input: MaintainerInput): string {
       `- {"kind":"panel","num":${issue.number},"body":"<markdown>"} — upsert the single sticky status panel.`,
       `- {"kind":"openDraftPR","num":${issue.number},"branch":"feat/${issue.number}-<slug>","title":"<t>","body":"<b>"} — open an EMPTY draft PR from an existing branch.`,
       `- {"kind":"propose","num":${issue.number},"proposal":"close"|"merge","draft":"<markdown the human will see>"} — ask a human to approve a risky, irreversible action.`,
-      `- {"kind":"implement","num":${issue.number}} — hand the issue to monastery's patcher: it writes a fix in a sandbox and opens a draft PR for a human to merge. Propose this only when the issue is well-understood and worth fixing now.`,
+      `- {"kind":"implement","num":${issue.number}} — hand the issue to monastery's patcher: it writes a fix in a sandbox and opens a draft PR for a human to merge. Propose this ONLY for a single, well-understood, concrete change worth doing now — NEVER for an epic / broad / tracking issue (see SCOPE below).`,
       `- {"kind":"spec","num":${issue.number},"body":"<the acceptance contract>","parties":["<login>", ...]} — author/revise the shared spec.`,
       `- {"kind":"endorse","num":${issue.number},"version":<N>} — record that your party agrees to spec version N.`,
     ].join("\n"),
+    [
+      "SCOPE (when implement is the WRONG move): do NOT propose implement for an epic / broad / pure-tracking issue —",
+      "one that bundles many changes, sets a direction/north-star, or tracks work rather than naming a single concrete deliverable.",
+      "Handing such an issue to the patcher produces a meaningless PR. Instead: break it down, discuss it, or `spec` ONE specific sub-request,",
+      "and only implement once a single, well-scoped, deliverable change is clearly identified.",
+    ].join(" "),
     [
       "BEFORE proposing implement, check <pr>: if a PR is already open for this issue, do NOT propose implement again —",
       "wait for the human to merge it, or reply/panel. If the PR is closed (rejected), reconsider (e.g. propose close or a different approach).",

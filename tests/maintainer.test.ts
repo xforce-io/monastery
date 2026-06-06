@@ -124,6 +124,19 @@ test("consensus state (spec + endorsers + reached) and self identity are surface
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("the agent is dissuaded from proposing implement on epic / broad / tracking issues", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", input, dir);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toMatch(/epic/i);                       // names the epic/broad case explicitly
+  expect(ctx).toMatch(/broad|tracking|宽泛|跟踪/i);   // and the broad/tracking flavor of it
+  // the guidance ties "don't implement" to the epic/broad case (one block, not two unrelated mentions)
+  const epicBlock = ctx.split("\n\n").find((b) => /epic/i.test(b)) ?? "";
+  expect(epicBlock).toMatch(/implement/i);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("the agent accepts an implement action", async () => {
   const dir = newDir();
   const out = await maintainer(new FakeProvider({ "actions.json": '{"actions":[{"kind":"implement","num":7}]}' }), "sonnet", input, dir);
