@@ -9,22 +9,23 @@
 
 ## 2. 动作集
 
-### 2.1 agent 能提议的（都安全，外壳当场执行）
+### 2.1 agent 能提议的
 ```ts
 type Action =
   | { kind: "reply";       num: number; toCommentId: string; body: string }
   | { kind: "relabel";     num: number; add: string[]; remove: string[] }
   | { kind: "panel";       num: number; body: string }                     // 单条 sticky 状态/草稿
   | { kind: "openDraftPR"; num: number; branch: string; title: string; body: string }
-  | { kind: "propose";     num: number; proposal: GatedKind; draft: string }; // 摆一个待人放行的提议
+  | { kind: "propose";     num: number; proposal: GatedKind; draft: string } // 摆一个待人放行的提议
+  | { kind: "implement";   num: number };                                   // 交外壳 patcher 写码、开 draft PR（#43）
 
 type GatedKind = "close" | "merge";
 ```
-- agent 在 worktree 改文件是其 run 内的事，不是离散 Action。
 - `propose` 是 agent 请求 gated 动作的**唯一**途径——它只能"摆出提议"，碰不到执行。
+- `implement` 不写码本身，它是 agent **请求外壳跑 patcher** 的途径：外壳在沙箱 clone 里跑写码 agent、自审（#22）、开**人合的 draft PR**。agent 始终不碰 git/gh（§3），产物经人 Merge 才进 main（§4）。
 
 ### 2.2 安全分级
-全部 `Action` 都是 **SAFE**（外壳可当场执行）。gated 执行**不在 Action 里**——见 §4。
+`reply`/`relabel`/`panel`/`openDraftPR`/`propose` 都是 **SAFE**（外壳 `executeSafe` 当场执行的廉价幂等 GitHub 写）。`implement` 是**外壳独占的重执行器**——引擎路由到 `runImplement`（`src/engine/patch.ts`），**不**走 `executeSafe`（给它会抛错）；其产物 draft PR 仍受 §4 人闸。gated 执行（doClose/doMerge）**不在 Action 里**——见 §4。
 
 ## 3. `executeSafe`：执行 + 幂等
 

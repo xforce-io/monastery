@@ -11,6 +11,9 @@ export interface MaintainerInput {
   thesis: string;                              // the repo's scope (.monastery/thesis.md)
   issue: Issue;                                // the item: number, title, body, labels, state
   comments: { id: string; body: string }[];   // all comments oldest-first; human ones carry NO marker
+  /** State of monastery's PR for this issue (branch feat/<n>-<slug>), or null if none — so the agent
+   *  doesn't re-propose `implement` when a patch PR is already open/awaiting the human's merge. */
+  pr?: { branch: string; state: "open" | "merged" | "closed" } | null;
 }
 
 /** Accept either `{ "actions": [...] }` or a bare `[...]`. */
@@ -35,15 +38,19 @@ export async function maintainer(
   input: MaintainerInput,
   artifactDir: string,
 ): Promise<Action[] | null> {
-  const { thesis, issue, comments } = input;
+  const { thesis, issue, comments, pr } = input;
   const commentBlock = comments.length
     ? comments.map((c) => `<comment id="${c.id}">\n${c.body}\n</comment>`).join("\n")
     : "(no comments)";
+  const prBlock = pr
+    ? `monastery's PR for this issue: branch ${pr.branch}, state ${pr.state}.`
+    : "monastery has no PR open for this issue.";
 
   const context = [
     `<thesis>\n${thesis}\n</thesis>`,
     `<issue number="${issue.number}" state="${issue.state}" labels="${issue.labels.join(", ")}">\ntitle: ${issue.title}\n\n${issue.body}\n</issue>`,
     `<comments>\n${commentBlock}\n</comments>`,
+    `<pr>\n${prBlock}\n</pr>`,
     [
       "MARKERS: monastery's own comments/panels carry an HTML marker (`<!--monastery-...-->`); human comments have NONE.",
       "Only `reply` to human (unmarked) comments. Never reply to your own marked comments — that is talking to yourself.",
@@ -57,9 +64,14 @@ export async function maintainer(
       `- {"kind":"reply","num":${issue.number},"toCommentId":"<id>","body":"<text>"} — reply to a human comment.`,
       `- {"kind":"relabel","num":${issue.number},"add":["<label>"],"remove":["<label>"]} — maintain display labels.`,
       `- {"kind":"panel","num":${issue.number},"body":"<markdown>"} — upsert the single sticky status panel.`,
-      `- {"kind":"openDraftPR","num":${issue.number},"branch":"feat/${issue.number}-<slug>","title":"<t>","body":"<b>"} — open a draft PR.`,
+      `- {"kind":"openDraftPR","num":${issue.number},"branch":"feat/${issue.number}-<slug>","title":"<t>","body":"<b>"} — open an EMPTY draft PR from an existing branch.`,
       `- {"kind":"propose","num":${issue.number},"proposal":"close"|"merge","draft":"<markdown the human will see>"} — ask a human to approve a risky, irreversible action.`,
+      `- {"kind":"implement","num":${issue.number}} — hand the issue to monastery's patcher: it writes a fix in a sandbox and opens a draft PR for a human to merge. Propose this only when the issue is well-understood and worth fixing now.`,
     ].join("\n"),
+    [
+      "BEFORE proposing implement, check <pr>: if a PR is already open for this issue, do NOT propose implement again —",
+      "wait for the human to merge it, or reply/panel. If the PR is closed (rejected), reconsider (e.g. propose close or a different approach).",
+    ].join(" "),
     [
       `Write ONLY the file actions.json with this exact shape and nothing else:`,
       `{ "actions": [ <action>, ... ] }`,

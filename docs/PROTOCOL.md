@@ -48,6 +48,7 @@
 外壳发现 active item → 调一次 agent
   agent 提议:
     - SAFE 动作(reply/relabel/panel/openDraftPR) → 外壳当场执行
+    - implement → 外壳跑 patcher(沙箱写码+自审)→ 开人合的 draft PR(#43;agent 不碰 git/gh)
     - propose(close|merge) → 外壳摆出提议(审批 panel + needs-approval)→ item 转 awaiting-gate
 人给信号:
     👍 / Merge → 外壳执行 gated 执行器(doClose/doMerge)→ terminal

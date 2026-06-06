@@ -12,6 +12,7 @@ import { executeSafe, doClose, type GatedKind } from "../shell/actions.js";
 import type { FailTracker } from "../config/store.js";
 import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../judges/reviewer.js";
+import { runImplement, branchName } from "./patch.js";
 
 export interface StepCtx {
   repo: string;
@@ -23,8 +24,8 @@ export interface StepCtx {
   ws: Workspace;
   /** Wall clock, injected for testability (real run = Date.now). */
   now: () => number;
-  // Legacy patch-flow fields (src/engine/patch.ts) — unwired from the v2 governance loop, kept until
-  // the patcher's fate is decided in cleanup. The v2 L_item above does not read these.
+  // Patcher self-review knobs (src/engine/patch.ts, reached via an `implement` action): the review model
+  // (defaults to `model`) and an injectable reviewer (defaults to the real judge via provider).
   reviewModel?: string;
   review?: ReviewFn;
 }
@@ -43,12 +44,16 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   return active(ctx, issue);                                  // active
 }
 
-/** active: ask the maintainer agent for actions, then execute the safe ones. */
+/** active: ask the maintainer agent for actions, then execute them (safe ones in-place; implement -> patcher). */
 async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const thesis = await ctx.gh.readThesis(ctx.repo);
   const comments = await ctx.gh.listComments(ctx.repo, issue.number);
+  // Surface monastery's PR state so the agent won't re-propose implement while a patch PR is open (§8).
+  const branch = branchName(issue.number, issue.title);
+  const prState = await ctx.gh.prState(ctx.repo, branch);
+  const pr = prState ? { branch, state: prState } : null;
   const dir = join(ctx.artifactRoot, `${issue.number}`);
-  const actions = await maintainer(ctx.provider, ctx.model, { thesis, issue, comments }, dir);
+  const actions = await maintainer(ctx.provider, ctx.model, { thesis, issue, comments, pr }, dir);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.
@@ -64,7 +69,12 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   }
 
   ctx.fails.clearFail(ctx.repo, issue.number);
-  for (const a of actions) await executeSafe(ctx.gh, ctx.repo, a);
+  // implement is the shell-owned heavy executor (sandbox patcher + human-gated draft PR); the rest are
+  // cheap idempotent GitHub writes. The agent never touches git/gh either way (constitution §3).
+  for (const a of actions) {
+    if (a.kind === "implement") await runImplement(ctx, issue);
+    else await executeSafe(ctx.gh, ctx.repo, a);
+  }
   return actions.length ? { kind: "progressed" } : { kind: "noop" };
 }
 

@@ -6,9 +6,11 @@ export const GatedKindSchema = z.enum(["close", "merge"]);
 export type GatedKind = z.infer<typeof GatedKindSchema>;
 
 /**
- * The SAFE actions an agent may propose — the single source of truth (schema + type, no drift).
+ * The actions an agent may propose — the single source of truth (schema + type, no drift).
  * The agent NEVER proposes gated executors (doClose/doMerge): they are not in this union (constitution §3).
  * Gated risk (close/merge) is reachable only via `propose`, which a human then approves (§4).
+ * Most kinds are cheap, idempotent GitHub writes run by executeSafe; `implement` is the exception —
+ * the engine routes it to the shell-owned patcher executor (runImplement), never executeSafe.
  */
 export const ActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("reply"), num: z.number(), toCommentId: z.string().min(1), body: z.string().min(1) }),
@@ -16,6 +18,10 @@ export const ActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("panel"), num: z.number(), body: z.string().min(1) }),
   z.object({ kind: z.literal("openDraftPR"), num: z.number(), branch: z.string().min(1), title: z.string().min(1), body: z.string() }),
   z.object({ kind: z.literal("propose"), num: z.number(), proposal: GatedKindSchema, draft: z.string().min(1) }),
+  // implement: "this issue is worth fixing — produce a patch PR." The engine routes it to the shell-owned
+  // patcher (runImplement): it writes code in a sandbox clone and opens a human-gated draft PR. The agent
+  // still never touches git/gh (constitution §3); the only path to main is a human Merge (§4).
+  z.object({ kind: z.literal("implement"), num: z.number() }),
 ]);
 export type Action = z.infer<typeof ActionSchema>;
 
@@ -53,6 +59,10 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
       await gh.upsertPanel(repo, a.num, `${approvalMarker(a.proposal)}\n${a.draft}`);
       await gh.addLabel(repo, a.num, NEEDS_APPROVAL);
       return;
+    case "implement":
+      // Not a cheap safe write — it needs the full StepCtx (provider/workspace/self-review). The engine
+      // routes `implement` to runImplement; reaching it here is a wiring bug, so fail loudly.
+      throw new Error("'implement' is a shell executor (runImplement), not an executeSafe action");
   }
 }
 

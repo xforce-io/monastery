@@ -9,12 +9,6 @@ export const THESIS = { in: "thesis:in", out: "thesis:out", unclear: "thesis:unc
 export const NEEDS_APPROVAL = "monastery:needs-approval"; // a gated proposal is parked, awaiting a human signal
 export const DECLINED = "monastery:declined";             // terminal: a proposal was declined
 
-// --- legacy patch-flow labels (src/engine/patch.ts) — unwired from the v2 loop, kept until cleanup ---
-export const HOLD = "monastery:hold";
-export const TRY_FIX = "monastery:try-fix";
-export const PATCH_PROPOSED = "monastery:patch-proposed";
-export const NEEDS_HUMAN = "monastery:needs-human";
-
 export interface LabelDef { name: string; color: string; description: string; }
 
 /** The label set monastery needs on a managed repo (created by `monastery init`). */
