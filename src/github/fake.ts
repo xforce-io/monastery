@@ -17,6 +17,10 @@ export class FakeGitHub implements GitHubAdapter {
   public prStates: Record<string, "open" | "merged" | "closed"> = {};
   /** Injected reaction contents, keyed by commentId -> e.g. ["+1"]. */
   public commentReactions: Record<string, string[]> = {};
+  /** The login this fake "runs as" — author of its own posted comments/panels. */
+  public selfLogin = "monastery";
+  /** Comments authored by others (humans / peer bots), injected for identity tests, keyed by issue. */
+  public authoredComments: Record<number, { body: string; author: string }[]> = {};
   /** Branches whose PR was merged via mergePR. */
   public merged: string[] = [];
   constructor(private opts: { thesis: string; issues: Issue[]; files?: Record<string, string> }) {
@@ -60,11 +64,14 @@ export class FakeGitHub implements GitHubAdapter {
   async prState(_r: string, branch: string): Promise<"open" | "merged" | "closed" | null> {
     return this.prStates[branch] ?? null;
   }
-  async listComments(_r: string, n: number): Promise<{ id: string; body: string }[]> {
-    const out = (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body }));
+  async listComments(_r: string, n: number): Promise<{ id: string; body: string; author: string }[]> {
+    // Others' comments first (chronological-ish), then monastery's own posts, then the sticky panel.
+    const ext = (this.authoredComments[n] ?? []).map((c, i) => ({ id: `ext${i}`, body: c.body, author: c.author }));
+    const own = (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body, author: this.selfLogin }));
+    const out = [...ext, ...own];
     // The sticky panel is a real marked comment on GitHub; surface it here (stable id) so the
     // engine can find it by marker and read its reactions (the approval signal). See reactions().
-    if (this.panels[n] !== undefined) out.push({ id: `panel:${n}`, body: this.panels[n] });
+    if (this.panels[n] !== undefined) out.push({ id: `panel:${n}`, body: this.panels[n], author: this.selfLogin });
     return out;
   }
   async reactions(_r: string, commentId: string): Promise<string[]> {
