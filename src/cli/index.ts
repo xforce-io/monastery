@@ -13,12 +13,12 @@ import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, type StatusEntry } from "./status.js";
 
 export interface ParsedArgs {
-  cmd: string; sub?: string; repo?: string; dryRun?: boolean; json?: boolean;
+  cmd: string; sub?: string; repo?: string; model?: string; dryRun?: boolean; json?: boolean;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const [cmd, ...rest] = argv;
-  if (cmd === "repos") return { cmd, sub: rest[0], repo: rest[1] };
+  if (cmd === "repos") return { cmd, sub: rest[0], repo: rest[1], model: rest[2] };
   if (cmd === "init") return { cmd, repo: rest[0] };
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const store = new Store(join(homedir(), ".monastery"));
 
   if (args.cmd === "repos") {
-    if (args.sub === "add" && args.repo) store.addRepo(args.repo);
+    if (args.sub === "add" && args.repo) store.addRepo(args.repo, args.model ? { model: args.model } : undefined);
     else if (args.sub === "remove" && args.repo) store.removeRepo(args.repo);
     console.log(store.listRepos().join("\n"));
     return;
@@ -60,9 +60,10 @@ async function main(): Promise<void> {
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
     const provider = new ClaudeCodeProvider();
-    const model = process.env.MONASTERY_MODEL ?? "sonnet";
     const results = [];
     for (const repo of repos) {
+      // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
+      const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
       const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
       const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace(), now: () => Date.now() };
       results.push(await reconcile(ctx));

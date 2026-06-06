@@ -11,6 +11,11 @@ test("parses `repos add o/r`", () => {
   expect(parseArgs(["repos", "add", "o/r"])).toEqual({ cmd: "repos", sub: "add", repo: "o/r" });
 });
 
+test("parses `repos add o/r opus` (optional per-repo model)", () => {
+  expect(parseArgs(["repos", "add", "o/r", "opus"]))
+    .toEqual({ cmd: "repos", sub: "add", repo: "o/r", model: "opus" });
+});
+
 test("parses bare `step`", () => {
   expect(parseArgs(["step"])).toEqual({ cmd: "step", dryRun: false, json: false });
 });
