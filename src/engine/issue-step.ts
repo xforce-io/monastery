@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { GitHubAdapter } from "../github/adapter.js";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
-import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
+import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED, NEEDS_REVISION, DECLINED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
 import { thesisGate } from "../judges/thesis-gate.js";
 import { triager } from "../judges/triager.js";
 import type { FailTracker } from "../config/store.js";
@@ -18,15 +18,56 @@ export interface StepCtx {
   artifactRoot: string;
   fails: FailTracker;
   ws: Workspace;
+  /** Wall clock, injected for testability (real run = Date.now). */
+  now: () => number;
 }
 
 const PANEL_PREFIX = "<!--monastery-state\nprotocol: gate\n-->";
 const GATE_FAIL_THRESHOLD = 3;
+/** A needs-approval trace older than this with no human response is auto-skipped (only for timeout-able actions). */
+export const APPROVAL_TIMEOUT_MS = 48 * 3_600_000;
+
+/** A typed proposal awaiting approval. The action decides what "approve" does (see DISPATCH). */
+export type ProposalAction = "close" | "implement";
+
+/** The panel marker monastery stamps on a proposal so the engine knows what kind of approval this is. */
+const APPROVAL_MARKER = (action: ProposalAction): string =>
+  `<!--monastery-state\nprotocol: approval\naction: ${action}\n-->`;
+
+/**
+ * Read a proposal's action from its panel marker.
+ * Legacy panels with no `action:` field default to `close` (back-compat with the original close-only gate).
+ * An explicit but unknown action returns null.
+ */
+export function readProposalAction(panel: string): ProposalAction | null {
+  const marker = panel.match(/<!--monastery-state\n([\s\S]*?)\n-->/);
+  const block = marker ? marker[1] : "";
+  const m = block.match(/^action:\s*(\S+)/m);
+  if (!m) return "close";
+  const action = m[1];
+  return action === "close" || action === "implement" ? action : null;
+}
+
+/** Approve-side handler per action, plus whether an unanswered ask should auto-skip on timeout. */
+interface Dispatch {
+  execute: (ctx: StepCtx, issue: Issue) => Promise<Outcome>;
+  timeout: boolean;
+}
+const DISPATCH: Record<ProposalAction, Dispatch> = {
+  close: { execute: executeClose, timeout: true },       // a close ask is harmless to drop -> #6's 48h auto-skip
+  implement: { execute: executeImplement, timeout: false }, // a design/impl ask must not be silently discarded
+};
 
 export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   const issue = (await ctx.gh.listOpenIssues(ctx.repo, 0)).find((i) => i.number === num);
   if (!issue) return { kind: "noop" };
   const state = macroStateOf(issue.labels);
+
+  if (issue.labels.includes(DECLINED)) {
+    // Terminal: a declined proposal (human or auto-timeout) is never re-proposed.
+    if (state === "done") return { kind: "noop" };
+    return terminalizeDeclined(ctx, issue, "人工拒绝，monastery 不再提议");
+  }
 
   if (issue.labels.includes(PATCH_PROPOSED) || issue.labels.includes(NEEDS_HUMAN)) return { kind: "noop" }; // parked
 
@@ -37,8 +78,13 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   switch (state) {
     case "new":
       return gateNewIssue(ctx, issue);
-    case "needs-approval":
-      return issue.labels.includes(APPROVED) ? executeClose(ctx, issue) : { kind: "waiting", on: "human" };
+    case "needs-approval": {
+      if (issue.labels.includes(NEEDS_REVISION)) return reviseProposal(ctx, issue);
+      const action = readProposalAction(await ctx.gh.readPanel(ctx.repo, issue.number)) ?? "close";
+      const dispatch = DISPATCH[action];
+      if (issue.labels.includes(APPROVED)) return dispatch.execute(ctx, issue);
+      return dispatch.timeout ? approvalWaitOrTimeout(ctx, issue) : { kind: "waiting", on: "human" };
+    }
     case "triaged":
       return issue.labels.includes(THESIS.in) ? triageIssue(ctx, issue) : { kind: "noop" };
     default:
@@ -71,14 +117,11 @@ async function gateNewIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   if (v.verdict === "out") {
     const quotedReason = v.reason.split("\n").map((l) => `> ${l}`).join("\n");
     const draft = [
-      PANEL_PREFIX,
       "**待审提议** — 关闭并回复（移除 `monastery:needs-approval` 改打 `monastery:approved` 即执行）：",
       "",
       quotedReason,
     ].join("\n");
-    await ctx.gh.upsertPanel(ctx.repo, issue.number, draft);
-    await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
-    await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+    await propose(ctx, issue, { action: "close", draft });
   } else {
     if (priorFails >= GATE_FAIL_THRESHOLD) {
       // had escalated; reconcile the panel back to current (resolved) state
@@ -110,6 +153,13 @@ async function triageIssue(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   return { kind: "progressed" };
 }
 
+/** Proposer side: stamp the typed marker + draft into the panel and raise the approval ask. */
+async function propose(ctx: StepCtx, issue: Issue, p: { action: ProposalAction; draft: string }): Promise<void> {
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${APPROVAL_MARKER(p.action)}\n${p.draft}`);
+  await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+  await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+}
+
 async function executeClose(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const panel = await ctx.gh.readPanel(ctx.repo, issue.number);
   const reason = extractDraft(panel) ?? "Closing as out of scope for this repo's thesis.";
@@ -120,6 +170,53 @@ async function executeClose(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // Add the terminal state label BEFORE removing the prior one (never drop to zero labels).
   await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
   await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+  return { kind: "done" };
+}
+
+/**
+ * Approve an `implement` proposal: hand the issue to the patch flow. Idempotent — add the driving
+ * label + new state before clearing the approval ask (never drop to zero state labels). The next
+ * tick's try-fix branch drives the patcher.
+ */
+async function executeImplement(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  await ctx.gh.addLabel(ctx.repo, issue.number, TRY_FIX);
+  await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("classified"));
+  await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+  await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+  return { kind: "progressed" };
+}
+
+/**
+ * Human asked for a revision: clear the revision request (and any stale approval) so the issue sits
+ * back at needs-approval, awaiting a fresh draft. Re-drafting per action (close re-runs the out-draft;
+ * implement is produced by the designer) is out of scope for this gate.
+ */
+async function reviseProposal(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_REVISION);
+  if (issue.labels.includes(APPROVED)) await ctx.gh.removeLabel(ctx.repo, issue.number, APPROVED);
+  return { kind: "progressed" };
+}
+
+/** needs-approval but not yet approved: auto-skip if the trace is stale, else keep waiting on the human. */
+async function approvalWaitOrTimeout(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  const at = await ctx.gh.labelEventTime(ctx.repo, issue.number, NEEDS_APPROVAL);
+  if (at != null && ctx.now() - at >= APPROVAL_TIMEOUT_MS) {
+    const hours = Math.round(APPROVAL_TIMEOUT_MS / 3_600_000);
+    return terminalizeDeclined(ctx, issue, `⏱ ${hours} 小时未审，已自动跳过`);
+  }
+  return { kind: "waiting", on: "human" };
+}
+
+/** Idempotent terminal transition: stamp declined, mark done, clear the approval ask, record why. */
+async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Promise<Outcome> {
+  // Stamp declined so timeout-skipped and human-declined proposals share one terminal state
+  // (declined + done) — uniformly queryable and excluded from re-proposal. Idempotent.
+  await ctx.gh.addLabel(ctx.repo, issue.number, DECLINED);
+  // Add the terminal state label BEFORE removing the prior one (never drop to zero state labels).
+  await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
+  await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+  await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PANEL_PREFIX}\n${note}`);
   return { kind: "done" };
 }
 

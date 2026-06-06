@@ -75,6 +75,18 @@ export class GhAdapter implements GitHubAdapter {
     const b64 = Buffer.from(content, "utf8").toString("base64");
     await this.run(["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${b64}`]);
   }
+  async labelEventTime(repo: string, num: number, label: string): Promise<number | null> {
+    // Read the issue timeline; take the `created_at` of the latest `labeled` event for this label.
+    // Timeline events are chronological, so `last` is the most recent labeling.
+    const out = await this.run([
+      "api", `repos/${repo}/issues/${num}/timeline`, "-f", "per_page=100",
+      "--jq", `[.[] | select(.event=="labeled" and .label.name=="${label}") | .created_at] | last // ""`,
+    ]).catch(() => "");
+    const s = out.trim();
+    if (!s) return null;
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  }
   async findPrForBranch(repo: string, branch: string): Promise<string | null> {
     const out = await this.run(
       ["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url", "--jq", '.[0].url // ""'],
