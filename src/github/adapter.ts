@@ -25,6 +25,10 @@ export interface GitHubAdapter {
   findPrForBranch(repo: string, branch: string): Promise<string | null>;
   /** State of the PR whose head is `branch`: open | merged | closed; null if none. */
   prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null>;
+  /** All comments on an issue/PR, oldest first. */
+  listComments(repo: string, num: number): Promise<{ id: string; body: string }[]>;
+  /** Merge the PR whose head is `branch` (a gated, human-approved action). */
+  mergePR(repo: string, branch: string): Promise<void>;
   /** Millisecond timestamp of the most recent `labeled` event for `label`, or null if never labeled. */
   labelEventTime(repo: string, num: number, label: string): Promise<number | null>;
 }

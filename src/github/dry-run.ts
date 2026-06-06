@@ -27,6 +27,9 @@ export class DryRunAdapter implements GitHubAdapter {
   prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null> {
     return this.inner.prState(repo, branch);
   }
+  listComments(repo: string, num: number): Promise<{ id: string; body: string }[]> {
+    return this.inner.listComments(repo, num);
+  }
   labelEventTime(repo: string, num: number, label: string): Promise<number | null> {
     return this.inner.labelEventTime(repo, num, label);
   }
@@ -52,6 +55,9 @@ export class DryRunAdapter implements GitHubAdapter {
   }
   async createFile(repo: string, path: string, content: string, message: string): Promise<void> {
     this.actions.push({ op: "createFile", repo, args: { path, contentLength: content.length, message } });
+  }
+  async mergePR(repo: string, branch: string): Promise<void> {
+    this.actions.push({ op: "mergePR", repo, args: { branch } });
   }
   async openDraftPR(repo: string, head: string, title: string, body: string): Promise<string> {
     this.actions.push({ op: "openDraftPR", repo, args: { head, title, bodyLength: body.length } });
