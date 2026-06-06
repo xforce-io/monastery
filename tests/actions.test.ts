@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
-import { executeSafe } from "../src/shell/actions.js";
+import { executeSafe, doClose, doMerge } from "../src/shell/actions.js";
 
 const gh = () => new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
 
@@ -48,4 +48,20 @@ test("propose writes an approval panel + needs-approval label", async () => {
   expect(g.panels[1]).toContain("close because X");
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-approval");
+});
+
+test("doClose closes the issue and posts the reason", async () => {
+  const g = gh();
+  await doClose(g, "o/r", 1, "out of scope");
+  expect(g.closed).toContain(1);
+  expect(g.comments[1][0]).toBe("out of scope");
+});
+
+test("doMerge merges the PR; skips if already merged", async () => {
+  const g = gh();
+  await doMerge(g, "o/r", "feat/1-x");
+  expect(g.merged).toEqual(["feat/1-x"]);
+  g.prStates["feat/1-x"] = "merged";
+  await doMerge(g, "o/r", "feat/1-x");
+  expect(g.merged).toEqual(["feat/1-x"]); // already merged -> skipped
 });

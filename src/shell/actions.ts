@@ -44,3 +44,18 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
       return;
   }
 }
+
+/**
+ * GATED executors — shell-only, triggered by a human signal (PR Merge / issue 👍).
+ * NOT in the Action union: there is no code path for the agent to call these (constitution §3, §4).
+ */
+export async function doClose(gh: GitHubAdapter, repo: string, num: number, reason: string): Promise<void> {
+  // Close FIRST: a closed issue leaves the worklist, so this can't re-run and double-post the reason.
+  await gh.closeIssue(repo, num);
+  await gh.postComment(repo, num, reason);
+}
+
+export async function doMerge(gh: GitHubAdapter, repo: string, branch: string): Promise<void> {
+  if ((await gh.prState(repo, branch)) === "merged") return; // idempotent: already merged
+  await gh.mergePR(repo, branch);
+}
