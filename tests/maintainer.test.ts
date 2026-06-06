@@ -102,6 +102,19 @@ test("the agent accepts an implement action", async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("upstream cross-repo dependencies are surfaced in context (state + ref)", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", {
+    ...input,
+    deps: [{ ref: "owner/other#42", state: "closed", title: "upstream fix" }],
+  }, dir);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toContain("owner/other#42");
+  expect(ctx).toContain("closed");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("when a monastery PR is already open, the agent is told NOT to re-propose implement", async () => {
   const dir = newDir();
   const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });

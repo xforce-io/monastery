@@ -13,6 +13,8 @@ export interface MaintainerInput {
   /** State of monastery's PR for this issue (branch feat/<n>-<slug>), or null if none — so the agent
    *  doesn't re-propose `implement` when a patch PR is already open/awaiting the human's merge. */
   pr?: { branch: string; state: "open" | "merged" | "closed" } | null;
+  /** Cross-repo upstream issues this one declares (`Depends-on:`), with their current state (read-only). */
+  deps?: { ref: string; state: "open" | "closed"; title: string }[];
 }
 
 /** Accept either `{ "actions": [...] }` or a bare `[...]`. */
@@ -25,19 +27,24 @@ const PERSONA = [
   "Safety is the shell's job, not yours: anything risky you may only PROPOSE — a human approves it.",
 ].join(" ");
 
-function buildContext({ thesis, issue, comments, pr }: MaintainerInput): string {
+function buildContext({ thesis, issue, comments, pr, deps }: MaintainerInput): string {
   const commentBlock = comments.length
     ? comments.map((c) => `<comment id="${c.id}" author="${c.author}">\n${c.body}\n</comment>`).join("\n")
     : "(no comments)";
   const prBlock = pr
     ? `monastery's PR for this issue: branch ${pr.branch}, state ${pr.state}.`
     : "monastery has no PR open for this issue.";
+  const depBlock = deps && deps.length
+    ? deps.map((d) => `- ${d.ref} [${d.state}] ${d.title}`).join("\n")
+    : "(none)";
 
   return [
     `<thesis>\n${thesis}\n</thesis>`,
     `<issue number="${issue.number}" state="${issue.state}" labels="${issue.labels.join(", ")}">\ntitle: ${issue.title}\n\n${issue.body}\n</issue>`,
     `<comments>\n${commentBlock}\n</comments>`,
     `<pr>\n${prBlock}\n</pr>`,
+    `<upstream-dependencies>\n${depBlock}\n</upstream-dependencies>`,
+    "DEPENDENCIES: an upstream issue marked [open] is NOT yet resolved — don't act as if it's done; wait or reflect that in a reply/panel. [closed] means it's resolved.",
     [
       "IDENTITY: each comment shows its `author` (GitHub login) — use it to address people by who they are.",
       "MARKERS: monastery's own comments/panels carry an HTML marker (`<!--monastery-...-->`); human comments have NONE.",

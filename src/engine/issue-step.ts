@@ -14,6 +14,7 @@ import type { FailTracker, RepoPolicy } from "../config/store.js";
 import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement, branchName } from "./patch.js";
+import { parseDeps } from "./deps.js";
 
 export interface StepCtx {
   repo: string;
@@ -55,8 +56,10 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
   const prState = await ctx.gh.prState(ctx.repo, branch);
   const pr = prState ? { branch, state: prState } : null;
+  // Read-only cross-repo awareness (P0): fetch each `Depends-on:` upstream's current state for context.
+  const deps = await resolveDeps(ctx, issue.body);
   const dir = join(ctx.artifactRoot, `${issue.number}`);
-  const actions = await maintainer(ctx.provider, ctx.model, { thesis, issue, comments, pr }, dir);
+  const actions = await maintainer(ctx.provider, ctx.model, { thesis, issue, comments, pr, deps }, dir);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.
@@ -80,6 +83,16 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     else await executeSafe(ctx.gh, ctx.repo, a);
   }
   return actions.length ? { kind: "progressed" } : { kind: "noop" };
+}
+
+/** Resolve an issue's `Depends-on:` upstream refs to their current state (read-only; missing/inaccessible skipped). */
+async function resolveDeps(ctx: StepCtx, body: string): Promise<{ ref: string; state: "open" | "closed"; title: string }[]> {
+  const out: { ref: string; state: "open" | "closed"; title: string }[] = [];
+  for (const { repo, num } of parseDeps(body)) {
+    const dep = await ctx.gh.getIssue(repo, num);
+    if (dep) out.push({ ref: `${repo}#${num}`, state: dep.state, title: dep.title });
+  }
+  return out;
 }
 
 /** awaiting-gate: a gated proposal is parked on the approval panel; act only on a human signal (PROTOCOL §4). */

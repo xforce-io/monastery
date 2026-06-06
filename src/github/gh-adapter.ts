@@ -26,6 +26,17 @@ export class GhAdapter implements GitHubAdapter {
       labels: i.labels.map((l) => l.name), state: i.state.toLowerCase() as Issue["state"],
     }));
   }
+  async getIssue(repo: string, num: number): Promise<Issue | null> {
+    try {
+      const out = await this.run([
+        "issue", "view", String(num), "--repo", repo, "--json", "number,title,body,labels,state",
+      ]);
+      const i = JSON.parse(out) as { number: number; title: string; body: string; labels: { name: string }[]; state: string };
+      return { number: i.number, title: i.title, body: i.body ?? "", labels: i.labels.map((l) => l.name), state: i.state.toLowerCase() as Issue["state"] };
+    } catch {
+      return null;
+    }
+  }
   async addLabel(repo: string, num: number, label: string): Promise<void> {
     await this.run(["issue", "edit", String(num), "--repo", repo, "--add-label", label]);
   }
