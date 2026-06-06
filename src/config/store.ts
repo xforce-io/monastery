@@ -1,9 +1,13 @@
 // src/config/store.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { PolicyOverrides } from "../agents/spec.js";
 
-/** Per-repo policy. Non-disposable (lives in config.json). For now only `model`. */
-export interface RepoPolicy { model?: string; }
+/**
+ * Per-repo policy. Non-disposable (lives in config.json). `model` is the repo-wide default model;
+ * `agents` overrides individual agents' spec-default policy (the layering: spec default <- per-repo).
+ */
+export interface RepoPolicy extends PolicyOverrides { model?: string; }
 interface ConfigFile { repos: Record<string, RepoPolicy>; }
 
 /** Per-repo disposable cache (rebuildable from GitHub). */
@@ -56,6 +60,8 @@ export class Store implements FailTracker {
     if (repo in c.repos) { delete c.repos[repo]; this.writeConfig(c); }
   }
   repoModel(repo: string): string | undefined { return this.readConfig().repos[repo]?.model; }
+  /** The full per-repo policy (model + per-agent overrides), or undefined if the repo isn't configured. */
+  repoPolicy(repo: string): RepoPolicy | undefined { return this.readConfig().repos[repo]; }
 
   // --- repos/<slug>/cache.json (disposable) ---
 

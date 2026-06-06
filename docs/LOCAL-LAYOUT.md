@@ -26,14 +26,18 @@
 ```json
 {
   "repos": {
-    "xforce-io/monastery": { "model": "opus" },
+    "xforce-io/monastery": {
+      "model": "opus",
+      "agents": { "patcher": { "maxIters": 5 }, "maintainer": { "failThreshold": 1 } }
+    },
     "owner/other": {}
   }
 }
 ```
 
-- `repos`:key 是 `<owner>/<repo>`,value 是 per-repo policy。
-- policy **当前只有 `model`**(传给底层 agent 的模型名);缺省时由 CLI 回退(见下)。policy 是有意留的扩展点,后续 v2 步骤往里加字段。
+- `repos`:key 是 `<owner>/<repo>`,value 是 per-repo policy(`RepoPolicy`)。
+- `model`:仓库级默认模型;缺省时由 CLI 回退(见下)。
+- `agents`(可选):**按 agent 名覆盖各自 spec 默认策略**(`failThreshold`/`maxIters`/`timeoutMs`/`model`)。分层 = **spec 默认 ← per-repo 覆盖**,运行时由 `effectivePolicy(spec, repoPolicy)` 合并(`docs/AGENTS.md`)。不写 `agents` 则全用 spec 默认。
 
 ## `repos/<owner>__<repo>/cache.json`(可丢)
 
