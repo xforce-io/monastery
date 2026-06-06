@@ -60,7 +60,11 @@ export class FakeGitHub implements GitHubAdapter {
     return this.prStates[branch] ?? null;
   }
   async listComments(_r: string, n: number): Promise<{ id: string; body: string }[]> {
-    return (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body }));
+    const out = (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body }));
+    // The sticky panel is a real marked comment on GitHub; surface it here (stable id) so the
+    // engine can find it by marker and read its reactions (the approval signal). See reactions().
+    if (this.panels[n] !== undefined) out.push({ id: `panel:${n}`, body: this.panels[n] });
+    return out;
   }
   async reactions(_r: string, commentId: string): Promise<string[]> {
     return this.commentReactions[commentId] ?? [];

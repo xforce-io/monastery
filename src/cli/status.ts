@@ -1,37 +1,29 @@
 // src/cli/status.ts
-import type { Issue } from "../types.js";
-import {
-  macroStateOf,
-  NEEDS_APPROVAL,
-  APPROVED,
-  HOLD,
-  TRY_FIX,
-  PATCH_PROPOSED,
-  NEEDS_HUMAN,
-} from "../github/labels.js";
+import type { Issue, ProtocolState } from "../types.js";
+import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
 
-const ACTION_LABELS = [NEEDS_APPROVAL, APPROVED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN, HOLD];
+/** Coarse protocol state from the control labels alone (PROTOCOL §1). */
+export function protocolState(issue: Issue): ProtocolState {
+  if (issue.state === "closed" || issue.labels.includes(DECLINED)) return "terminal";
+  if (issue.labels.includes(NEEDS_APPROVAL)) return "awaiting-gate";
+  return "active";
+}
 
 export interface StatusEntry {
   repo: string;
   number: number;
   title: string;
-  state: string;
+  state: ProtocolState;
   thesis: string | undefined;
   type: string | undefined;
-  actions: string[];
 }
 
 export function toStatusEntry(repo: string, issue: Issue): StatusEntry {
-  const state = macroStateOf(issue.labels);
   const thesisLabel = issue.labels.find((l) => l.startsWith("thesis:"));
   const thesis = thesisLabel ? thesisLabel.slice("thesis:".length) : undefined;
   const typeLabel = issue.labels.find((l) => l.startsWith("type:"));
   const type = typeLabel ? typeLabel.slice("type:".length) : undefined;
-  const actions = issue.labels
-    .filter((l) => (ACTION_LABELS as string[]).includes(l))
-    .map((l) => l.slice("monastery:".length));
-  return { repo, number: issue.number, title: issue.title, state, thesis, type, actions };
+  return { repo, number: issue.number, title: issue.title, state: protocolState(issue), thesis, type };
 }
 
 export function formatStatus(entries: StatusEntry[]): string {
@@ -40,7 +32,6 @@ export function formatStatus(entries: StatusEntry[]): string {
       const parts: string[] = [`${e.repo}#${e.number}`, e.title, `state:${e.state}`];
       if (e.thesis !== undefined) parts.push(`thesis:${e.thesis}`);
       if (e.type !== undefined) parts.push(`type:${e.type}`);
-      parts.push(...e.actions);
       return parts.join("  ");
     })
     .join("\n");

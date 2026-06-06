@@ -1,15 +1,14 @@
 // tests/github-fake.test.ts
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
-import { stateLabel } from "../src/github/labels.js";
 
 test("labels add/remove are reflected on the issue", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
-  await gh.addLabel("o/r", 1, stateLabel("triaged"));
+  await gh.addLabel("o/r", 1, "type:bug");
   await gh.addLabel("o/r", 1, "thesis:out");
   await gh.removeLabel("o/r", 1, "thesis:out");
   const [i] = await gh.listOpenIssues("o/r", 0);
-  expect(i.labels).toEqual(["monastery/state:triaged"]);
+  expect(i.labels).toEqual(["type:bug"]);
 });
 
 test("close removes the issue from open list and records the close", async () => {
