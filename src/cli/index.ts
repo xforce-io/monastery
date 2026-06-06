@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
     const provider = new ClaudeCodeProvider();
-    const model = process.env.MONASTERY_MODEL ?? "haiku";
+    const model = process.env.MONASTERY_MODEL ?? "sonnet";
     const results = [];
     for (const repo of repos) {
       const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
