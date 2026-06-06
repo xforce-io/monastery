@@ -9,6 +9,18 @@ import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from 
 
 const PATCH_FAIL_THRESHOLD = 3;
 
+const BRANCH_SLUG_MAX = 50;
+
+export function branchName(issueNumber: number, title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, BRANCH_SLUG_MAX)
+    .replace(/-+$/, "");
+  return slug ? `feat/${issueNumber}-${slug}` : `feat/${issueNumber}`;
+}
+
 const PERSONA = [
   "You are monastery's patcher.",
   "Fix the described GitHub issue by editing files in this repository, then run the test suite.",
@@ -50,7 +62,7 @@ function defaultReview(ctx: StepCtx): ReviewFn {
 }
 
 export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
-  const branch = `monastery/fix-${issue.number}`;
+  const branch = branchName(issue.number, issue.title);
 
   // Converge: a prior run may have pushed/opened a PR but failed before labeling. Don't redo the work.
   const existingPr = await ctx.gh.findPrForBranch(ctx.repo, branch);
