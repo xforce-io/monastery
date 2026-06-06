@@ -16,6 +16,12 @@ const PATCH_NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";
 
 const BRANCH_SLUG_MAX = 50;
 
+/** Parse the PR number from a PR url (`.../pull/N`); null if it doesn't match. */
+function parsePrNumber(url: string): number | null {
+  const m = url.match(/\/pull\/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
 export function branchName(issueNumber: number, title: string): string {
   const slug = title
     .toLowerCase()
@@ -116,20 +122,13 @@ export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome>
     const MAX_DIFF = 60000;
     const shownDiff = diff.length > MAX_DIFF ? diff.slice(0, MAX_DIFF) + "\n… [diff truncated; see the PR Files tab]" : diff;
     const testLine = tests === null ? "no test suite detected" : tests ? "tests passing" : "⚠️ tests FAILING";
-    const advisories = (lastVerdict?.findings ?? []).filter((f) => f.severity === "advisory");
-    const reviewLine = reviewerFailed
-      ? "⚠️ 自审未能运行（reviewer 失败）——本 PR 未经语义自审。"
-      : fixedTitles.length
-        ? `自审修正：\n${fixedTitles.map((t) => `- ${t}`).join("\n")}`
-        : "自审通过：无 blocking。";
-    const advisoryBlock = advisories.length ? `\n\nadvisory（未阻断）：\n${advisories.map((a) => `- ${a.title}`).join("\n")}` : "";
+    // PR body = the AUTHOR's voice only: 本次改动 + 测试状态 + Closes + diff. The reviewer's
+    // conclusion + advisory go to a separate marked comment (below) so "作者做了啥" vs "评审注意啥" stay distinct.
     const changesBlock = authorSummary ? `## 本次改动\n\n${authorSummary}\n\n` : "";
     const body = [
       `Proposed fix for #${issue.number} (${testLine}).`,
       ``,
-      `${changesBlock}${reviewLine}${advisoryBlock}`,
-      ``,
-      `Closes #${issue.number}`,
+      `${changesBlock}Closes #${issue.number}`,
       ``,
       `<details><summary>diff</summary>`,
       ``,
@@ -141,6 +140,20 @@ export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome>
       `— monastery (draft; review and merge if good).`,
     ].join("\n");
     const url = await ctx.gh.openDraftPR(ctx.repo, branch, `monastery: fix #${issue.number}`, body);
+
+    // The REVIEWER's voice = a separate marked comment on the PR (conclusion + advisory only;
+    // blocking never reaches here — it's caught in the fix loop above). Needs the PR number, parsed from the url.
+    const advisories = (lastVerdict?.findings ?? []).filter((f) => f.severity === "advisory");
+    const reviewLine = reviewerFailed
+      ? "⚠️ 自审未能运行（reviewer 失败）——本 PR 未经语义自审。"
+      : fixedTitles.length
+        ? `自审修正：\n${fixedTitles.map((t) => `- ${t}`).join("\n")}`
+        : "自审通过：无 blocking。";
+    const advisoryBlock = advisories.length ? `\n\nadvisory（未阻断）：\n${advisories.map((a) => `- ${a.title}`).join("\n")}` : "";
+    const prNum = parsePrNumber(url);
+    if (prNum !== null) {
+      await ctx.gh.postComment(ctx.repo, prNum, `${PATCH_NOTE_MARKER}\n${reviewLine}${advisoryBlock}`);
+    }
     return { kind: "progressed", note: url };
   } finally {
     await ctx.ws.cleanup(dir);
