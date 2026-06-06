@@ -1,7 +1,7 @@
 # #34 · 动作词表 + 安全分级（薄壳第一块地基）
 
 > Epic: #34（v2 薄治理外壳）· Branch: `feat/34-v2-thin-shell` · 状态：设计已批准，待实现
-> 北极星见 `docs/superpowers/specs/2026-06-06-monastery-v2-thin-shell.md`。本模块是 agent↔外壳的**接口**。孵化期，不顾向后兼容。
+> 北极星见 `docs/ARCHITECTURE.md`。本模块是 agent↔外壳的**接口**。孵化期，不顾向后兼容。
 
 ## 1. 目标
 

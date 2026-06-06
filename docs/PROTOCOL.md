@@ -1,7 +1,7 @@
 # monastery 协议
 
 > 人、agent、外壳三方共享的 **GitHub-可观测契约**(宪法 §7)。外壳强制它,agent 被告知它,人遵循它。
-> 引擎按本协议实现。变更协议前先改本文。配套:`CONSTITUTION.md`(原则)、v2 架构(`superpowers/specs/2026-06-06-monastery-v2-thin-shell.md`)。
+> 引擎按本协议实现。变更协议前先改本文。配套:`CONSTITUTION.md`(原则)、v2 架构(`ARCHITECTURE.md`)。
 
 ## 1. 粗状态(外壳要用的,只有三档)
 

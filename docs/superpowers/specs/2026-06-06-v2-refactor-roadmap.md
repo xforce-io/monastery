@@ -1,6 +1,6 @@
 # v2 重构路线图
 
-> 把"当前代码 → v2 薄壳"串成有序、可追踪的迁移。**实现** `PROTOCOL.md`,**遵循** `CONSTITUTION.md`,**架构**见 `v2-thin-shell.md`。
+> 把"当前代码 → v2 薄壳"串成有序、可追踪的迁移。**实现** `PROTOCOL.md`,**遵循** `CONSTITUTION.md`,**架构**见 `docs/ARCHITECTURE.md`。
 > 这是 v2 转型的执行总图。Epic #34。
 
 ## 0. 终态(v2 长什么样)
@@ -68,5 +68,5 @@ L_account: 遍历 config.repos
 - [x] 5 删老 judge(thesis-gate/triager + 测试 + Verdict 类型已删)
 
 ## 关联
-- 原则 `CONSTITUTION.md` · 合约 `PROTOCOL.md` · 架构 `v2-thin-shell.md` · 动作词表 `docs/design/34-action-vocabulary.md`。
+- 原则 `CONSTITUTION.md` · 合约 `PROTOCOL.md` · 架构 `docs/ARCHITECTURE.md` · 动作词表 `docs/design/34-action-vocabulary.md`。
 - 复用治理:#23(闸门)、#31(PR 检测)、#22(自审)。
