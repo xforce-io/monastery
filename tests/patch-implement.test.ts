@@ -8,7 +8,7 @@ import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { runImplement } from "../src/engine/patch.js";
 import type { StepCtx } from "../src/engine/issue-step.js";
-import type { ReviewVerdict } from "../src/judges/reviewer.js";
+import type { ReviewVerdict } from "../src/agents/reviewer.js";
 import type { Issue } from "../src/types.js";
 
 const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };

@@ -4,9 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StepCtx } from "./issue-step.js";
 import type { Issue, Outcome } from "../types.js";
-import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../judges/reviewer.js";
+import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../agents/reviewer.js";
+import { patcherSpec } from "../agents/patcher.js";
 
-const PATCH_FAIL_THRESHOLD = 3;
+// Operational knobs come from the patcher's spec (the single home; per-repo overrides land here in PR2).
+const PATCH_FAIL_THRESHOLD = patcherSpec.policy.failThreshold ?? 3;
+const REVIEW_MAX_ITERS = patcherSpec.policy.maxIters ?? 3;
+const PERSONA = patcherSpec.persona;
+const FIX_PERSONA = patcherSpec.fixPersona ?? patcherSpec.persona;
+
 const PATCH_NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";
 
 const BRANCH_SLUG_MAX = 50;
@@ -20,22 +26,6 @@ export function branchName(issueNumber: number, title: string): string {
     .replace(/-+$/, "");
   return slug ? `feat/${issueNumber}-${slug}` : `feat/${issueNumber}`;
 }
-
-const PERSONA = [
-  "You are monastery's patcher.",
-  "Fix the described GitHub issue by editing files in this repository, then run the test suite.",
-  "Do NOT touch git or gh — leave your changes in the working tree.",
-  "Make the smallest correct change.",
-].join(" ");
-
-const REVIEW_MAX_ITERS = 3;
-
-const FIX_PERSONA = [
-  "You are monastery's patcher, addressing review feedback.",
-  "A reviewer flagged BLOCKING issues in your last change. Fix every one by editing files in this repository, then stop.",
-  "Do NOT touch git or gh — leave your changes in the working tree.",
-  "Make the smallest correct change that resolves every blocking item.",
-].join(" ");
 
 function fixContext(issue: Issue, blocking: ReviewFinding[]): string {
   const items = blocking

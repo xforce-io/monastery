@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProvider } from "../src/provider/fake.js";
-import { maintainer, type MaintainerInput } from "../src/judges/maintainer.js";
+import { maintainer, type MaintainerInput } from "../src/agents/maintainer.js";
 import type { Action } from "../src/shell/actions.js";
 
 const newDir = () => mkdtempSync(join(tmpdir(), "monastery-maint-"));

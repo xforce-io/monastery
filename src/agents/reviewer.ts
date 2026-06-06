@@ -1,9 +1,8 @@
-// src/judges/reviewer.ts
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+// src/agents/reviewer.ts
 import { z } from "zod";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue } from "../types.js";
+import { runStructuredAgent, type StructuredAgentSpec } from "./spec.js";
 
 const FindingSchema = z.object({
   severity: z.enum(["blocking", "advisory"]),
@@ -19,20 +18,16 @@ export type ReviewVerdict = z.infer<typeof ReviewSchema>;
 /** Injectable reviewer: judges a staged diff against the issue. Returns null on missing/invalid output. */
 export type ReviewFn = (diff: string, issue: Issue) => Promise<ReviewVerdict | null>;
 
+export interface ReviewInput { diff: string; issue: Issue }
+
 const PERSONA = [
   "You are monastery's code reviewer.",
   "Review a proposed patch (a unified diff) against the GitHub issue it claims to resolve.",
   "You have no GitHub access; you only read the input and write one file.",
 ].join(" ");
 
-export async function reviewer(
-  provider: AgentProvider,
-  model: string,
-  input: { diff: string; issue: Issue },
-  artifactDir: string,
-): Promise<ReviewVerdict | null> {
-  const { diff, issue } = input;
-  const context = [
+function buildContext({ diff, issue }: ReviewInput): string {
+  return [
     `<issue number="${issue.number}">\ntitle: ${issue.title}\n\n${issue.body}\n</issue>`,
     `<diff>\n${diff}\n</diff>`,
     `Judge the diff. BLOCKING = a correctness bug, a deviation from the issue's design/acceptance, a test that passes but asserts the wrong thing, or a security problem. ADVISORY = style, naming, or simplification nits.`,
@@ -40,34 +35,26 @@ export async function reviewer(
     `{ "findings": [ { "severity": "blocking" | "advisory", "title": string, "detail": string, "file"?: string, "line"?: number } ] }`,
     `An empty findings array means the patch is good to ship.`,
   ].join("\n\n");
-
-  const res = await provider.run({ persona: PERSONA, context, artifactDir, model });
-
-  const p = join(artifactDir, "review.json");
-  if (existsSync(p)) {
-    const parsed = ReviewSchema.safeParse(safeJson(readFileSync(p, "utf8")));
-    if (parsed.success) return parsed.data;
-  }
-  if (res.resultText) {
-    const fromText = extractReview(res.resultText);
-    if (fromText) return fromText;
-  }
-  return null;
 }
 
-/** Pull a schema-valid review object out of free-form text (fenced JSON, prose-wrapped, or bare). */
-function extractReview(text: string): ReviewVerdict | null {
-  const candidates: string[] = [];
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) candidates.push(fence[1]);
-  const brace = text.match(/\{[\s\S]*\}/);
-  if (brace) candidates.push(brace[0]);
-  candidates.push(text);
-  for (const c of candidates) {
-    const parsed = ReviewSchema.safeParse(safeJson(c));
-    if (parsed.success) return parsed.data;
-  }
-  return null;
-}
+/** The patcher's self-review gate (#22): judges the staged diff before a draft PR is shipped. */
+export const reviewerSpec: StructuredAgentSpec<ReviewInput, ReviewVerdict> = {
+  name: "reviewer",
+  role: "Judge a patcher's staged diff against the issue; flag blocking problems before a PR ships.",
+  persona: PERSONA,
+  sandbox: "artifact-only",
+  policy: {},
+  artifact: "review.json",
+  schema: ReviewSchema,
+  buildContext,
+};
 
-function safeJson(s: string): unknown { try { return JSON.parse(s); } catch { return undefined; } }
+/** Thin wrapper: returns the validated verdict, or null on no schema-valid output. */
+export async function reviewer(
+  provider: AgentProvider,
+  model: string,
+  input: ReviewInput,
+  artifactDir: string,
+): Promise<ReviewVerdict | null> {
+  return runStructuredAgent(reviewerSpec, input, { provider, model, artifactDir });
+}
