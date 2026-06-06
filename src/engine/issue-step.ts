@@ -88,11 +88,17 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   ctx.fails.clearFail(ctx.repo, issue.number);
   // implement is the shell-owned heavy executor (sandbox patcher + human-gated draft PR); the rest are
   // cheap idempotent GitHub writes. The agent never touches git/gh either way (constitution §3).
+  // Each action is fault-isolated: one failing action (e.g. an undefined label) is noise, not a crash
+  // that takes down the tick (constitution §10 — the safety layer always holds, even for a bad agent).
   for (const a of actions) {
-    if (a.kind === "implement") {
-      if (ctx.dryRun) console.warn(`[dry-run] would implement ${ctx.repo}#${issue.number} (patcher skipped)`);
-      else await runImplement(ctx, issue);
-    } else await executeSafe(ctx.gh, ctx.repo, a);
+    try {
+      if (a.kind === "implement") {
+        if (ctx.dryRun) console.warn(`[dry-run] would implement ${ctx.repo}#${issue.number} (patcher skipped)`);
+        else await runImplement(ctx, issue);
+      } else await executeSafe(ctx.gh, ctx.repo, a);
+    } catch (e) {
+      console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${(e as Error).message}`);
+    }
   }
   return actions.length ? { kind: "progressed" } : { kind: "noop" };
 }

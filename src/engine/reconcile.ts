@@ -21,9 +21,14 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   let advanced = 0;
 
   for (const i of batch) {
-    const out = await issueStep(ctx, i.number);
-    if (out.kind === "progressed" || out.kind === "done") advanced++;
-    else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
+    // Per-item fault isolation: one item blowing up must not abort the rest of the tick (constitution §10).
+    try {
+      const out = await issueStep(ctx, i.number);
+      if (out.kind === "progressed" || out.kind === "done") advanced++;
+      else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
+    } catch (e) {
+      console.warn(`[monastery] step ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
+    }
   }
 
   // waiting.human = awaiting-gate items (needs-approval, not declined) across the whole repo — they sit
