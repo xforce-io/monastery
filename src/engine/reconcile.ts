@@ -1,6 +1,7 @@
-// src/engine/reconcile.ts
+// src/engine/reconcile.ts — L_repo (PROTOCOL §6).
+// Each tick: list open items, classify into the three coarse states, step each non-terminal one.
 import type { ReconcileResult, WaitReason } from "../types.js";
-import { macroStateOf, APPROVED, DECLINED, THESIS, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
+import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { issueStep, type StepCtx } from "./issue-step.js";
 
 export const MAX_ITEMS_PER_TICK = 20;
@@ -11,21 +12,11 @@ const NEW_ISSUE_BACKOFF_MS = 7_200_000;  // fully idle, only watching for new is
 export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   const open = await ctx.gh.listOpenIssues(ctx.repo, 0);
 
-  // Runnable: explicit try-fix, virtual-new, triaged(thesis:in) for classification, or needs-approval
-  // (approved -> execute; not-approved -> issueStep checks the approval timeout, else waits on the human).
-  const runnable = open.filter((i) => {
-    if (i.labels.includes(DECLINED)) return false; // terminal: never re-propose
-    if (i.labels.includes(NEEDS_HUMAN)) return false; // parked for a human
-    if (i.labels.includes(PATCH_PROPOSED)) return true; // runnable: reconcile against the PR's outcome
-    if (i.labels.includes(TRY_FIX) && !i.labels.includes(PATCH_PROPOSED) && !i.labels.includes(NEEDS_HUMAN)) return true;
-    const st = macroStateOf(i.labels);
-    if (st === "new") return true;
-    if (st === "triaged" && i.labels.includes(THESIS.in)) return true; // M2: needs classification
-    if (st === "needs-approval") return true;
-    return false;
-  });
-
+  // terminal (declined) is ignored; everything else is stepped. issueStep itself splits the rest into
+  // active (-> agent) vs awaiting-gate (-> signal check) by the needs-approval control label (PROTOCOL §1).
+  const runnable = open.filter((i) => !i.labels.includes(DECLINED));
   const batch = runnable.slice(0, MAX_ITEMS_PER_TICK);
+
   const waiting: Record<WaitReason, number> = { human: 0, peer: 0, ci: 0 };
   let advanced = 0;
 
@@ -35,12 +26,11 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
     else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
   }
 
-  // Count human-waiters across the whole repo (not just this batch) for backoff. This is the single
-  // source for waiting.human (the batch loop skips it above). A declined trace is terminal, not a wait.
+  // waiting.human = awaiting-gate items (needs-approval, not declined) across the whole repo — they sit
+  // until a human signals. This is the single source for waiting.human (the batch loop skips on==human).
   for (const i of open) {
     if (i.labels.includes(DECLINED)) continue;
-    const st = macroStateOf(i.labels);
-    if (st === "needs-approval" && !i.labels.includes(APPROVED)) waiting.human++;
+    if (i.labels.includes(NEEDS_APPROVAL)) waiting.human++;
   }
 
   const idle = advanced === 0;

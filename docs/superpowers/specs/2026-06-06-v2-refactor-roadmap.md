@@ -37,7 +37,7 @@ L_account: 遍历 config.repos
 | ✅ | 本地结构 | — | 小 | 低 | `Store` 重构:`config.json` + `repos/<o__r>/cache.json`;`docs/LOCAL-LAYOUT.md` |
 | ✅ | reactions 读 | — | 小 | 低 | `gh.reactions(repo, commentId)`(👍 信号);+ fake/dry-run |
 | ✅ | maintainer agent | 动作词表 | 大 | 中 | `src/judges/maintainer.ts`:读 item+上下文 → `Action[]`(zod);取代两 judge |
-| 4 | **引擎重写** | 1·2·3 | 大 | 中高 | 三层 step 按协议;wire agent+executeSafe+信号→gated;删 macroState/DISPATCH |
+| ✅ | 引擎重写 | 1·2·3 | 大 | 中高 | 三层 step 按协议;wire agent+executeSafe+信号→gated;删 macroState/DISPATCH;patcher 暂 unwired |
 | 5 | **删老 judge** | 3·4 | 小 | 低 | 删 thesis-gate/triager + 其测试;清理 |
 
 > 1·2 小且独立,可先做、各自成 PR。3 是 keystone。4 最大,落地后 5 收尾。
@@ -64,7 +64,7 @@ L_account: 遍历 config.repos
 - [x] 1 本地结构(`docs/LOCAL-LAYOUT.md`)
 - [x] 2 reactions 读(`gh.reactions`,+1/-1 内容;信号解释留 step4)
 - [x] 3 maintainer agent(`src/judges/maintainer.ts`;`ActionSchema` 同源)
-- [ ] 4 引擎重写
+- [x] 4 引擎重写(reconcile/issue-step 三档;删 macroState/DISPATCH/state:*;patch.ts 暂 unwired)
 - [ ] 5 删老 judge
 
 ## 关联

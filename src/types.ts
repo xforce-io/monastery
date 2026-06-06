@@ -17,10 +17,10 @@ export interface ReconcileResult {
   nextPollMs: number;
 }
 
-// Macro state machine (encoded as the single-value monastery/state:<x> label).
-export type MacroState = "new" | "triaged" | "needs-approval" | "approved" | "classified" | "done";
+// Coarse protocol state (PROTOCOL §1): all GitHub-observable. The shell stores no rich state.
+export type ProtocolState = "active" | "awaiting-gate" | "terminal";
 
-// thesis-gate verdict.
+// thesis-gate verdict (legacy judge; unwired in v2).
 export type Verdict = "in" | "out" | "unclear";
 
 // An issue as the shell sees it (subset of GitHub's issue).

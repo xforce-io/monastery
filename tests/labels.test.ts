@@ -1,19 +1,16 @@
 // tests/labels.test.ts
 import { expect, test } from "vitest";
-import { STATE_PREFIX, stateLabel, macroStateOf, THESIS, NEEDS_APPROVAL, APPROVED } from "../src/github/labels.js";
+import { THESIS, NEEDS_APPROVAL, DECLINED, LABEL_DEFS } from "../src/github/labels.js";
 
-test("stateLabel builds the namespaced single-value label", () => {
-  expect(stateLabel("new")).toBe("monastery/state:new");
-  expect(STATE_PREFIX).toBe("monastery/state:");
-});
-
-test("macroStateOf reads the state label, or 'new' when absent (virtual new)", () => {
-  expect(macroStateOf(["monastery/state:triaged", "thesis:in"])).toBe("triaged");
-  expect(macroStateOf(["thesis:out"])).toBe("new"); // no state label => virtual new
-});
-
-test("action label constants", () => {
+test("control + display label constants", () => {
   expect(THESIS.out).toBe("thesis:out");
   expect(NEEDS_APPROVAL).toBe("monastery:needs-approval");
-  expect(APPROVED).toBe("monastery:approved");
+  expect(DECLINED).toBe("monastery:declined");
+});
+
+test("LABEL_DEFS no longer carries the retired monastery/state:* rich-lifecycle labels (PROTOCOL §2)", () => {
+  expect(LABEL_DEFS.some((d) => d.name.startsWith("monastery/state:"))).toBe(false);
+  // the two control labels the shell routes on are present
+  expect(LABEL_DEFS.some((d) => d.name === NEEDS_APPROVAL)).toBe(true);
+  expect(LABEL_DEFS.some((d) => d.name === DECLINED)).toBe(true);
 });
