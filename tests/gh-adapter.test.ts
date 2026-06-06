@@ -54,6 +54,24 @@ test("openDraftPR issues the correct gh argv and returns the trimmed url", async
   expect(url).toBe("https://github.com/o/r/pull/5");
 });
 
+test("labelEventTime reads the timeline and returns the labeled timestamp in ms", async () => {
+  const captured: string[][] = [];
+  const gh = new GhAdapter(async (args) => { captured.push(args); return "2026-06-06T00:00:00Z\n"; });
+  const t = await gh.labelEventTime("o/r", 7, "monastery:needs-approval");
+  expect(captured[0]).toEqual([
+    "api", "repos/o/r/issues/7/timeline", "-f", "per_page=100",
+    "--jq", `[.[] | select(.event=="labeled" and .label.name=="monastery:needs-approval") | .created_at] | last // ""`,
+  ]);
+  expect(t).toBe(Date.parse("2026-06-06T00:00:00Z"));
+});
+
+test("labelEventTime returns null when the label was never applied or the api fails", async () => {
+  const never = new GhAdapter(async () => "");
+  expect(await never.labelEventTime("o/r", 7, "x")).toBeNull();
+  const failed = new GhAdapter(async () => { throw new Error("404"); });
+  expect(await failed.labelEventTime("o/r", 7, "x")).toBeNull();
+});
+
 test("openDraftPR returns the existing PR url when create fails (already exists)", async () => {
   const gh = new GhAdapter(async (args) => {
     if (args[0] === "pr" && args[1] === "create") throw new Error("a pull request for branch already exists");

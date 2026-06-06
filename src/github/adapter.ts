@@ -23,4 +23,6 @@ export interface GitHubAdapter {
   openDraftPR(repo: string, head: string, title: string, body: string): Promise<string>;
   /** URL of an existing open PR whose head is `branch`, or null. */
   findPrForBranch(repo: string, branch: string): Promise<string | null>;
+  /** Millisecond timestamp of the most recent `labeled` event for `label`, or null if never labeled. */
+  labelEventTime(repo: string, num: number, label: string): Promise<number | null>;
 }

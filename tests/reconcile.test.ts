@@ -12,6 +12,7 @@ const baseCtx = (gh: FakeGitHub, provider: FakeProvider) => ({
   repo: "o/r", gh, provider, model: "haiku", artifactRoot: mkdtempSync(join(tmpdir(), "monastery-rec-")),
   fails: { recordFail: () => 1, failCount: () => 0, clearFail: () => {} },
   ws: new FakeWorkspace(),
+  now: () => 0,
 });
 
 test("processes virtual-new issues and reports advanced count", async () => {
@@ -49,6 +50,19 @@ test("only waiting items => idle true, long backoff", async () => {
   expect(r.advanced).toBe(0);
   expect(r.idle).toBe(true);
   expect(r.nextPollMs).toBeGreaterThanOrEqual(3600_000);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("declined needs-approval is terminal: not runnable, not counted as waiting:human", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "x", body: "y", labels: ["monastery/state:needs-approval", "monastery:needs-approval", "monastery:declined"], state: "open" },
+  ]});
+  const provider = new FakeProvider({}); // must NOT be called
+  const c = baseCtx(gh, provider);
+  const r = await reconcile(c);
+  expect(r.advanced).toBe(0);
+  expect(provider.calls.length).toBe(0);
+  expect(r.waiting.find((w) => w.on === "human")).toBeUndefined(); // declined != waiting
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 

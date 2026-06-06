@@ -16,11 +16,12 @@ const fakeFails = () => {
     clearFail: (r: string, n: number) => { m.delete(`${r}#${n}`); },
   };
 };
-const ctx = (gh: FakeGitHub, provider: FakeProvider, ws: FakeWorkspace = new FakeWorkspace()) => ({
+const ctx = (gh: FakeGitHub, provider: FakeProvider, ws: FakeWorkspace = new FakeWorkspace(), now: () => number = () => 0) => ({
   repo: "o/r", gh, provider, model: "haiku",
   artifactRoot: mkdtempSync(join(tmpdir(), "monastery-step-")),
   fails: fakeFails(),
   ws,
+  now,
 });
 
 test("virtual new + thesis:out -> needs-approval, panel draft", async () => {
@@ -56,6 +57,62 @@ test("needs-approval without approved -> waiting:human (idempotent, gate NOT re-
   const out = await issueStep(c, 3);
   expect(out).toEqual({ kind: "waiting", on: "human" });
   expect(provider.calls.length).toBe(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("declined -> terminalize to state:done, clear approval ask, panel notes the refusal", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 50, title: "x", body: "y", labels: ["monastery/state:needs-approval", "monastery:needs-approval", "monastery:declined"], state: "open" }] });
+  const c = ctx(gh, new FakeProvider({}));
+  const out = await issueStep(c, 50);
+  expect(out).toEqual({ kind: "done" });
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery/state:done");
+  expect(i.labels).not.toContain("monastery:needs-approval");
+  expect(i.labels).not.toContain("monastery/state:needs-approval");
+  expect(gh.panels[50]).toContain("人工拒绝");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("declined already terminalized -> noop (idempotent, never re-proposes)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 51, title: "x", body: "y", labels: ["monastery/state:done", "monastery:declined"], state: "open" }] });
+  const provider = new FakeProvider({ "verdict.json": '{"verdict":"out","reason":"r"}' });
+  const c = ctx(gh, provider);
+  const out = await issueStep(c, 51);
+  expect(out).toEqual({ kind: "noop" });
+  expect(provider.calls.length).toBe(0); // gate not re-run
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("needs-approval past timeout -> auto-skip to declined/done with timeout note", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 52, title: "x", body: "y", labels: ["monastery/state:needs-approval", "monastery:needs-approval"], state: "open" }] });
+  gh.labelTimes["52:monastery:needs-approval"] = 0;          // labeled at t=0
+  const c = ctx(gh, new FakeProvider({}), undefined, () => 48 * 3_600_000); // exactly 48h later
+  const out = await issueStep(c, 52);
+  expect(out).toEqual({ kind: "done" });
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery/state:done");
+  expect(i.labels).not.toContain("monastery:needs-approval");
+  expect(gh.panels[52]).toContain("自动跳过");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("needs-approval not yet past timeout -> still waiting:human, untouched", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 53, title: "x", body: "y", labels: ["monastery/state:needs-approval", "monastery:needs-approval"], state: "open" }] });
+  gh.labelTimes["53:monastery:needs-approval"] = 1000;       // labeled at t=1000
+  const c = ctx(gh, new FakeProvider({}), undefined, () => 1000 + 48 * 3_600_000 - 1); // 1ms short of 48h
+  const out = await issueStep(c, 53);
+  expect(out).toEqual({ kind: "waiting", on: "human" });
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-approval");
+  expect(i.labels).not.toContain("monastery/state:done");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("needs-approval with no recorded label time -> waiting:human (no auto-skip)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 54, title: "x", body: "y", labels: ["monastery/state:needs-approval", "monastery:needs-approval"], state: "open" }] });
+  const c = ctx(gh, new FakeProvider({}), undefined, () => 999 * 3_600_000); // far future, but no labelTime
+  const out = await issueStep(c, 54);
+  expect(out).toEqual({ kind: "waiting", on: "human" });
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 

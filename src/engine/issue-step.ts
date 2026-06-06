@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { GitHubAdapter } from "../github/adapter.js";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
-import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
+import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED, DECLINED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
 import { thesisGate } from "../judges/thesis-gate.js";
 import { triager } from "../judges/triager.js";
 import type { FailTracker } from "../config/store.js";
@@ -18,15 +18,25 @@ export interface StepCtx {
   artifactRoot: string;
   fails: FailTracker;
   ws: Workspace;
+  /** Wall clock, injected for testability (real run = Date.now). */
+  now: () => number;
 }
 
 const PANEL_PREFIX = "<!--monastery-state\nprotocol: gate\n-->";
 const GATE_FAIL_THRESHOLD = 3;
+/** A needs-approval trace older than this with no human response is auto-skipped (per-repo policy may override later). */
+export const APPROVAL_TIMEOUT_MS = 48 * 3_600_000;
 
 export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   const issue = (await ctx.gh.listOpenIssues(ctx.repo, 0)).find((i) => i.number === num);
   if (!issue) return { kind: "noop" };
   const state = macroStateOf(issue.labels);
+
+  if (issue.labels.includes(DECLINED)) {
+    // Terminal: a declined proposal (human or auto-timeout) is never re-proposed.
+    if (state === "done") return { kind: "noop" };
+    return terminalizeDeclined(ctx, issue, "人工拒绝，monastery 不再提议");
+  }
 
   if (issue.labels.includes(PATCH_PROPOSED) || issue.labels.includes(NEEDS_HUMAN)) return { kind: "noop" }; // parked
 
@@ -38,7 +48,8 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
     case "new":
       return gateNewIssue(ctx, issue);
     case "needs-approval":
-      return issue.labels.includes(APPROVED) ? executeClose(ctx, issue) : { kind: "waiting", on: "human" };
+      if (issue.labels.includes(APPROVED)) return executeClose(ctx, issue);
+      return approvalWaitOrTimeout(ctx, issue);
     case "triaged":
       return issue.labels.includes(THESIS.in) ? triageIssue(ctx, issue) : { kind: "noop" };
     default:
@@ -120,6 +131,26 @@ async function executeClose(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // Add the terminal state label BEFORE removing the prior one (never drop to zero labels).
   await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
   await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+  return { kind: "done" };
+}
+
+/** needs-approval but not yet approved: auto-skip if the trace is stale, else keep waiting on the human. */
+async function approvalWaitOrTimeout(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  const at = await ctx.gh.labelEventTime(ctx.repo, issue.number, NEEDS_APPROVAL);
+  if (at != null && ctx.now() - at >= APPROVAL_TIMEOUT_MS) {
+    const hours = Math.round(APPROVAL_TIMEOUT_MS / 3_600_000);
+    return terminalizeDeclined(ctx, issue, `⏱ ${hours} 小时未审，已自动跳过`);
+  }
+  return { kind: "waiting", on: "human" };
+}
+
+/** Idempotent terminal transition: mark done, clear the approval ask, record why in the panel. */
+async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Promise<Outcome> {
+  // Add the terminal state label BEFORE removing the prior one (never drop to zero state labels).
+  await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
+  await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+  await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PANEL_PREFIX}\n${note}`);
   return { kind: "done" };
 }
 
