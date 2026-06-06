@@ -387,6 +387,7 @@ test("try-fix blocking then clean -> one fix run, then PR opened", async () => {
   expect(provider.calls).toHaveLength(2);       // initial edit + one fix run
   expect(provider.calls[1].persona).toContain("addressing review feedback");
   expect(ws.diffCalls).toBe(3);                 // re-stage after tests, then after the fix
+  expect(gh.prs[0].body).toContain("off-by-one"); // the fixed blocking title is listed in the PR body
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 

@@ -1,5 +1,5 @@
 // src/engine/patch.ts
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StepCtx } from "./issue-step.js";
@@ -38,8 +38,15 @@ function reviewPanel(blocking: ReviewFinding[]): string {
 }
 
 function defaultReview(ctx: StepCtx): ReviewFn {
-  return (diff, issue) =>
-    reviewer(ctx.provider, ctx.reviewModel ?? ctx.model, { diff, issue }, mkdtempSync(join(tmpdir(), "monastery-review-")));
+  return async (diff, issue) => {
+    // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
+    const reviewDir = mkdtempSync(join(tmpdir(), "monastery-review-"));
+    try {
+      return await reviewer(ctx.provider, ctx.reviewModel ?? ctx.model, { diff, issue }, reviewDir);
+    } finally {
+      rmSync(reviewDir, { recursive: true, force: true });
+    }
+  };
 }
 
 export async function runPatch(ctx: StepCtx, issue: Issue): Promise<Outcome> {
