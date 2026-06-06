@@ -99,8 +99,8 @@
 | 期 | 范围 | 新增面 | 价值 |
 |---|---|---|---|
 | **P0** ✅ | **身份 + 跨仓读** | `listComments` 带 `author`(#51);issue body 用 `Depends-on: owner/repo#N` 声明 stake → 读其状态喂 context(#52) | A 的 agent 把「我关心的 B#42 状态」当 context 决定 **A 自己仓**的动作。**零新副作用、零 ping-pong、零新注入面**。 |
-| **P1** | **共识核** | spec `panel`(version)+ 带身份的背书 + 共识判定 + 收敛/卡死→召人 | 真正的多方共识。机制=已有积木组合。 |
-| **P2** | **stakeholder 限权** | 非自有仓只放行评论/spec 编辑,代码层禁 gate | 让跨仓发言安全。 |
+| **P1** ✅ | **共识核** | spec/endorse 动作 + 共识判定(#53);wire 进 maintainer/引擎闭环 spec→endorse→共识→implement(#54) | 真正的多方共识。闭环:agent 共编 spec→满意即 endorse→共识达成→propose implement→人 merge。 |
+| **P2** | **跨仓写 + stakeholder 限权 + 卡死→召人** | 让 A 在 B 上 spec/endorse(非自有仓只放行评论/spec/endorse,代码层禁 gate);K 轮不收敛→双方 needs-human | 让跨仓发言安全 + 活性兜底(两 agent ping-pong 在此阶段才出现)。 |
 
 > **先读后写**:跨仓 READ(P0)拿走大部分价值且安全;跨仓 WRITE(P1+)才引入活性/成本/注入,放到配齐收敛机制之后。
 

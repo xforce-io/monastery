@@ -15,6 +15,7 @@ import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement, branchName } from "./patch.js";
 import { parseDeps } from "./deps.js";
+import { currentSpec, parseEndorsements, consensusReached } from "../shell/consensus.js";
 
 export interface StepCtx {
   repo: string;
@@ -58,8 +59,15 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const pr = prState ? { branch, state: prState } : null;
   // Read-only cross-repo awareness (P0): fetch each `Depends-on:` upstream's current state for context.
   const deps = await resolveDeps(ctx, issue.body);
+  // Multi-party consensus state (P1): current shared spec + endorsements, computed from the comments.
+  const self = await ctx.gh.login();
+  const spec = currentSpec(comments);
+  const endorsedCurrent = spec
+    ? parseEndorsements(comments).filter((e) => e.version === spec.version).map((e) => e.by)
+    : [];
+  const consensus = { spec, endorsedCurrent, reached: consensusReached(comments) };
   const dir = join(ctx.artifactRoot, `${issue.number}`);
-  const actions = await maintainer(ctx.provider, ctx.model, { thesis, issue, comments, pr, deps }, dir);
+  const actions = await maintainer(ctx.provider, ctx.model, { thesis, issue, comments, pr, deps, self, consensus }, dir);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.

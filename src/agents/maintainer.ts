@@ -15,6 +15,14 @@ export interface MaintainerInput {
   pr?: { branch: string; state: "open" | "merged" | "closed" } | null;
   /** Cross-repo upstream issues this one declares (`Depends-on:`), with their current state (read-only). */
   deps?: { ref: string; state: "open" | "closed"; title: string }[];
+  /** This monastery instance's own login — so the agent knows who it is and whether IT has endorsed. */
+  self?: string;
+  /** Multi-party consensus state (#48): the current shared spec, who endorsed it, and whether it's unanimous. */
+  consensus?: {
+    spec: { version: number; parties: string[]; body: string } | null;
+    endorsedCurrent: string[];
+    reached: boolean;
+  };
 }
 
 /** Accept either `{ "actions": [...] }` or a bare `[...]`. */
@@ -27,7 +35,21 @@ const PERSONA = [
   "Safety is the shell's job, not yours: anything risky you may only PROPOSE — a human approves it.",
 ].join(" ");
 
-function buildContext({ thesis, issue, comments, pr, deps }: MaintainerInput): string {
+function consensusBlock(input: MaintainerInput): string {
+  const c = input.consensus;
+  if (!c || !c.spec) return `you are ${input.self ?? "(unknown)"}. No shared spec yet — author one with the \`spec\` action when the need is clear.`;
+  const lines = [
+    `you are ${input.self ?? "(unknown)"}.`,
+    `current spec v${c.spec.version}, parties: ${c.spec.parties.join(", ")}.`,
+    `endorsed v${c.spec.version}: ${c.endorsedCurrent.join(", ") || "(none)"}.`,
+    `consensus reached: ${c.reached}.`,
+    `--- spec body ---\n${c.spec.body}`,
+  ];
+  return lines.join("\n");
+}
+
+function buildContext(input: MaintainerInput): string {
+  const { thesis, issue, comments, pr, deps } = input;
   const commentBlock = comments.length
     ? comments.map((c) => `<comment id="${c.id}" author="${c.author}">\n${c.body}\n</comment>`).join("\n")
     : "(no comments)";
@@ -45,6 +67,13 @@ function buildContext({ thesis, issue, comments, pr, deps }: MaintainerInput): s
     `<pr>\n${prBlock}\n</pr>`,
     `<upstream-dependencies>\n${depBlock}\n</upstream-dependencies>`,
     "DEPENDENCIES: an upstream issue marked [open] is NOT yet resolved — don't act as if it's done; wait or reflect that in a reply/panel. [closed] means it's resolved.",
+    `<consensus>\n${consensusBlock(input)}\n</consensus>`,
+    [
+      "CONSENSUS (how things get agreed across parties): the shared SPEC is the acceptance contract — the real need + acceptance criteria + agreed approach.",
+      "Co-author it with `spec` (list the `parties` who must agree — by default the issue's author and this repo's maintainers). Any edit bumps the version and invalidates prior endorsements.",
+      "When the CURRENT spec satisfies your party's need, `endorse` its version. When consensus is reached (every party endorsed the current version), the party that should do the work may `propose implement`.",
+      "Don't keep talking once consensus holds — converge, don't compromise.",
+    ].join(" "),
     [
       "IDENTITY: each comment shows its `author` (GitHub login) — use it to address people by who they are.",
       "MARKERS: monastery's own comments/panels carry an HTML marker (`<!--monastery-...-->`); human comments have NONE.",
@@ -62,6 +91,8 @@ function buildContext({ thesis, issue, comments, pr, deps }: MaintainerInput): s
       `- {"kind":"openDraftPR","num":${issue.number},"branch":"feat/${issue.number}-<slug>","title":"<t>","body":"<b>"} — open an EMPTY draft PR from an existing branch.`,
       `- {"kind":"propose","num":${issue.number},"proposal":"close"|"merge","draft":"<markdown the human will see>"} — ask a human to approve a risky, irreversible action.`,
       `- {"kind":"implement","num":${issue.number}} — hand the issue to monastery's patcher: it writes a fix in a sandbox and opens a draft PR for a human to merge. Propose this only when the issue is well-understood and worth fixing now.`,
+      `- {"kind":"spec","num":${issue.number},"body":"<the acceptance contract>","parties":["<login>", ...]} — author/revise the shared spec.`,
+      `- {"kind":"endorse","num":${issue.number},"version":<N>} — record that your party agrees to spec version N.`,
     ].join("\n"),
     [
       "BEFORE proposing implement, check <pr>: if a PR is already open for this issue, do NOT propose implement again —",
