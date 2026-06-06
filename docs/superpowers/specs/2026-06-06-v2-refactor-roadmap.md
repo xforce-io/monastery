@@ -35,7 +35,7 @@ L_account: 遍历 config.repos
 | ✅ | 动作词表 | — | 中 | 低 | `src/shell/actions.ts`(#36 已合) |
 | ✅ | 协议 spec | — | — | — | `PROTOCOL.md`(#37) |
 | ✅ | 本地结构 | — | 小 | 低 | `Store` 重构:`config.json` + `repos/<o__r>/cache.json`;`docs/LOCAL-LAYOUT.md` |
-| 2 | **reactions 读** | — | 小 | 低 | `gh.reactions(repo, commentId)`(👍 信号);+ fake/dry-run |
+| ✅ | reactions 读 | — | 小 | 低 | `gh.reactions(repo, commentId)`(👍 信号);+ fake/dry-run |
 | 3 | **maintainer agent** | 动作词表 | 大 | 中 | `src/judges/maintainer.ts`:读 item+上下文 → `Action[]`(zod);取代两 judge |
 | 4 | **引擎重写** | 1·2·3 | 大 | 中高 | 三层 step 按协议;wire agent+executeSafe+信号→gated;删 macroState/DISPATCH |
 | 5 | **删老 judge** | 3·4 | 小 | 低 | 删 thesis-gate/triager + 其测试;清理 |
@@ -62,7 +62,7 @@ L_account: 遍历 config.repos
 - [x] 动作词表(#36)
 - [x] 协议(#37)
 - [x] 1 本地结构(`docs/LOCAL-LAYOUT.md`)
-- [ ] 2 reactions 读
+- [x] 2 reactions 读(`gh.reactions`,+1/-1 内容;信号解释留 step4)
 - [ ] 3 maintainer agent
 - [ ] 4 引擎重写
 - [ ] 5 删老 judge

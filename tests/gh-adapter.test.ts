@@ -98,6 +98,21 @@ test("listComments parses id+body json", async () => {
   expect(await gh.listComments("o/r", 7)).toEqual([{ id: "10", body: "hello" }, { id: "11", body: "world" }]);
 });
 
+test("reactions reads a comment's reaction contents (record/replay)", async () => {
+  const captured: string[][] = [];
+  const gh = new GhAdapter(async (args) => { captured.push(args); return JSON.stringify(["+1", "-1", "rocket"]); });
+  const got = await gh.reactions("o/r", "12345");
+  expect(captured[0]).toEqual([
+    "api", "repos/o/r/issues/comments/12345/reactions", "--jq", "[.[].content]",
+  ]);
+  expect(got).toEqual(["+1", "-1", "rocket"]);
+});
+
+test("reactions returns [] when none / api fails", async () => {
+  expect(await new GhAdapter(async () => "[]").reactions("o/r", "1")).toEqual([]);
+  expect(await new GhAdapter(async () => { throw new Error("404"); }).reactions("o/r", "1")).toEqual([]);
+});
+
 test("mergePR issues the correct gh argv", async () => {
   const captured: string[][] = [];
   const gh = new GhAdapter(async (args) => { captured.push(args); return ""; });

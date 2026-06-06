@@ -15,6 +15,8 @@ export class FakeGitHub implements GitHubAdapter {
   public labelTimes: Record<string, number> = {};
   /** Injected PR states, keyed by branch -> "open"|"merged"|"closed". */
   public prStates: Record<string, "open" | "merged" | "closed"> = {};
+  /** Injected reaction contents, keyed by commentId -> e.g. ["+1"]. */
+  public commentReactions: Record<string, string[]> = {};
   /** Branches whose PR was merged via mergePR. */
   public merged: string[] = [];
   constructor(private opts: { thesis: string; issues: Issue[]; files?: Record<string, string> }) {
@@ -59,6 +61,9 @@ export class FakeGitHub implements GitHubAdapter {
   }
   async listComments(_r: string, n: number): Promise<{ id: string; body: string }[]> {
     return (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body }));
+  }
+  async reactions(_r: string, commentId: string): Promise<string[]> {
+    return this.commentReactions[commentId] ?? [];
   }
   async mergePR(_r: string, branch: string): Promise<void> {
     this.merged.push(branch);

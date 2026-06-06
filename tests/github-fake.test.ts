@@ -46,6 +46,13 @@ test("FakeGitHub openDraftPR records the PR and returns a url", async () => {
   expect(url).toContain("/pull/1");
 });
 
+test("reactions: defaults to [], returns injected reaction contents for a comment", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [] });
+  expect(await gh.reactions("o/r", "42")).toEqual([]);
+  gh.commentReactions["42"] = ["+1"];
+  expect(await gh.reactions("o/r", "42")).toEqual(["+1"]);
+});
+
 test("findPrForBranch returns a url when a PR with that head exists, else null", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [] });
   expect(await gh.findPrForBranch("o/r", "monastery/fix-1")).toBeNull();
