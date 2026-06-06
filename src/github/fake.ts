@@ -85,6 +85,7 @@ export class FakeGitHub implements GitHubAdapter {
   async reactions(_r: string, commentId: string): Promise<string[]> {
     return this.commentReactions[commentId] ?? [];
   }
+  async login(): Promise<string> { return this.selfLogin; }
   async mergePR(_r: string, branch: string): Promise<void> {
     this.merged.push(branch);
   }

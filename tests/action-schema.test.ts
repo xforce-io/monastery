@@ -12,6 +12,8 @@ test("ActionSchema accepts each proposable action kind", () => {
     { kind: "propose", num: 1, proposal: "close", draft: "because X" },
     { kind: "propose", num: 1, proposal: "merge", draft: "looks good" },
     { kind: "implement", num: 1 },
+    { kind: "spec", num: 1, body: "draft", parties: ["a-bot", "b-bot"] },
+    { kind: "endorse", num: 1, version: 2 },
   ];
   for (const a of valid) expect(ActionSchema.safeParse(a).success).toBe(true);
 });

@@ -50,6 +50,28 @@ test("propose writes an approval panel + needs-approval label", async () => {
   expect(i.labels).toContain("monastery:needs-approval");
 });
 
+test("spec appends a versioned spec comment; same body is idempotent; changed body bumps the version", async () => {
+  const g = gh();
+  await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "draft v1", parties: ["a-bot", "b-bot"] });
+  const specs1 = (await g.listComments("o/r", 1)).filter((c) => c.body.includes("monastery-spec"));
+  expect(specs1).toHaveLength(1);
+  expect(specs1[0].body).toContain("version=1");
+  expect(specs1[0].body).toContain("parties=a-bot,b-bot");
+  expect(specs1[0].body).toContain("draft v1");
+  await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "draft v1", parties: ["a-bot", "b-bot"] }); // same -> skip
+  expect((await g.listComments("o/r", 1)).filter((c) => c.body.includes("monastery-spec"))).toHaveLength(1);
+  await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "draft v2", parties: ["a-bot", "b-bot"] }); // changed -> v2
+  expect((await g.listComments("o/r", 1)).some((c) => c.body.includes("monastery-spec version=2"))).toBe(true);
+});
+
+test("endorse posts an endorse marker for a version; re-endorsing the same version by self is idempotent", async () => {
+  const g = gh();
+  await executeSafe(g, "o/r", { kind: "endorse", num: 1, version: 2 });
+  expect((await g.listComments("o/r", 1)).filter((c) => c.body.includes("monastery-endorse version=2"))).toHaveLength(1);
+  await executeSafe(g, "o/r", { kind: "endorse", num: 1, version: 2 }); // self already endorsed v2 -> skip
+  expect((await g.listComments("o/r", 1)).filter((c) => c.body.includes("monastery-endorse version=2"))).toHaveLength(1);
+});
+
 test("doClose closes the issue and posts the reason", async () => {
   const g = gh();
   await doClose(g, "o/r", 1, "out of scope");
