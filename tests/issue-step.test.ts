@@ -417,3 +417,37 @@ test("advisory-only review -> no fix, PR body lists advisory", async () => {
   expect(gh.prs[0].body).toContain("rename foo");       // advisory surfaced in PR body
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+test("patch-proposed + PR open -> noop (still waiting)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 80, title: "x", body: "y", labels: ["monastery:patch-proposed"], state: "open" }] });
+  gh.prStates["feat/80-x"] = "open";
+  const c = ctx(gh, new FakeProvider({}));
+  expect(await issueStep(c, 80)).toEqual({ kind: "noop" });
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:patch-proposed"); // untouched
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("patch-proposed + PR closed unmerged -> declined terminal, un-stuck", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 81, title: "x", body: "y", labels: ["monastery:patch-proposed"], state: "open" }] });
+  gh.prStates["feat/81-x"] = "closed";
+  const c = ctx(gh, new FakeProvider({}));
+  expect(await issueStep(c, 81)).toEqual({ kind: "done" });
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:declined");
+  expect(i.labels).toContain("monastery/state:done");
+  expect(i.labels).not.toContain("monastery:patch-proposed");
+  expect(gh.panels[81]).toContain("未合并");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("patch-proposed + PR merged -> state:done, un-stuck", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 82, title: "x", body: "y", labels: ["monastery:patch-proposed"], state: "open" }] });
+  gh.prStates["feat/82-x"] = "merged";
+  const c = ctx(gh, new FakeProvider({}));
+  expect(await issueStep(c, 82)).toEqual({ kind: "done" });
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery/state:done");
+  expect(i.labels).not.toContain("monastery:patch-proposed");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});

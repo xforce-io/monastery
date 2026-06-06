@@ -9,7 +9,7 @@ import { thesisGate } from "../judges/thesis-gate.js";
 import { triager } from "../judges/triager.js";
 import type { FailTracker } from "../config/store.js";
 import type { Workspace } from "../workspace/workspace.js";
-import { runPatch } from "./patch.js";
+import { runPatch, branchName } from "./patch.js";
 
 export interface StepCtx {
   repo: string;
@@ -72,7 +72,8 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
     return terminalizeDeclined(ctx, issue, "人工拒绝，monastery 不再提议");
   }
 
-  if (issue.labels.includes(PATCH_PROPOSED) || issue.labels.includes(NEEDS_HUMAN)) return { kind: "noop" }; // parked
+  if (issue.labels.includes(NEEDS_HUMAN)) return { kind: "noop" }; // parked for a human
+  if (issue.labels.includes(PATCH_PROPOSED)) return reconcilePatchOutcome(ctx, issue);
 
   if (issue.labels.includes(TRY_FIX) && !issue.labels.includes(PATCH_PROPOSED) && !issue.labels.includes(NEEDS_HUMAN)) {
     return runPatch(ctx, issue);
@@ -220,6 +221,32 @@ async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Pr
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
   await ctx.gh.removeLabel(ctx.repo, issue.number, stateLabel("needs-approval"));
   await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PANEL_PREFIX}\n${note}`);
+  return { kind: "done" };
+}
+
+/** A patch-proposed issue: reconcile against its PR's actual outcome. The human merges/closes the PR
+ *  directly (their merge is the approval); monastery only detects the result. */
+async function reconcilePatchOutcome(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  const branch = branchName(issue.number, issue.title);
+  switch (await ctx.gh.prState(ctx.repo, branch)) {
+    case "merged":
+      // Defensive: `Closes #N` usually auto-closes the issue (so we never see it here). Mark done anyway.
+      await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
+      await ctx.gh.removeLabel(ctx.repo, issue.number, PATCH_PROPOSED);
+      return { kind: "done" };
+    case "closed":
+      return terminalizePatchDeclined(ctx, issue);
+    default:
+      return { kind: "noop" }; // open / null -> keep waiting on the human
+  }
+}
+
+/** Human closed the PR unmerged -> the patch is declined; un-stick the issue to a terminal state. */
+async function terminalizePatchDeclined(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  await ctx.gh.addLabel(ctx.repo, issue.number, DECLINED);
+  await ctx.gh.addLabel(ctx.repo, issue.number, stateLabel("done"));
+  await ctx.gh.removeLabel(ctx.repo, issue.number, PATCH_PROPOSED);
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PANEL_PREFIX}\nPR 已关闭未合并 — patch 被拒，monastery 不再处理。`);
   return { kind: "done" };
 }
 

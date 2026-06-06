@@ -93,6 +93,13 @@ export class GhAdapter implements GitHubAdapter {
     ).catch(() => "");
     return out.trim() || null;
   }
+  async prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null> {
+    const out = await this.run(
+      ["pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--json", "state", "--jq", '.[0].state // ""'],
+    ).catch(() => "");
+    const s = out.trim().toLowerCase();
+    return s === "open" || s === "merged" || s === "closed" ? s : null;
+  }
 
   async openDraftPR(repo: string, head: string, title: string, body: string): Promise<string> {
     try {

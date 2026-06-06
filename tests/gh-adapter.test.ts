@@ -81,3 +81,13 @@ test("openDraftPR returns the existing PR url when create fails (already exists)
   const url = await gh.openDraftPR("o/r", "monastery/fix-1", "t", "b");
   expect(url).toBe("https://github.com/o/r/pull/9");
 });
+
+test("prState returns the lowercased PR state, null when absent", async () => {
+  const captured: string[][] = [];
+  const merged = new GhAdapter(async (args) => { captured.push(args); return "MERGED"; });
+  expect(await merged.prState("o/r", "feat/28-x")).toBe("merged");
+  expect(captured[0]).toEqual(["pr", "list", "--repo", "o/r", "--head", "feat/28-x", "--state", "all", "--json", "state", "--jq", '.[0].state // ""']);
+  expect(await new GhAdapter(async () => "OPEN").prState("o/r", "x")).toBe("open");
+  expect(await new GhAdapter(async () => "CLOSED").prState("o/r", "x")).toBe("closed");
+  expect(await new GhAdapter(async () => "").prState("o/r", "nope")).toBeNull();
+});
