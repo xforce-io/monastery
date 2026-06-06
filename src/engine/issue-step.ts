@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { GitHubAdapter } from "../github/adapter.js";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
+import type { ReviewFn } from "../judges/reviewer.js";
 import { macroStateOf, stateLabel, THESIS, NEEDS_APPROVAL, APPROVED, NEEDS_REVISION, DECLINED, TRY_FIX, PATCH_PROPOSED, NEEDS_HUMAN } from "../github/labels.js";
 import { thesisGate } from "../judges/thesis-gate.js";
 import { triager } from "../judges/triager.js";
@@ -20,6 +21,8 @@ export interface StepCtx {
   ws: Workspace;
   /** Wall clock, injected for testability (real run = Date.now). */
   now: () => number;
+  reviewModel?: string;   // model for the reviewer judge (defaults to `model`)
+  review?: ReviewFn;      // injectable reviewer (defaults to the real judge via provider)
 }
 
 const PANEL_PREFIX = "<!--monastery-state\nprotocol: gate\n-->";

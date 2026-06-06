@@ -7,6 +7,7 @@ import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep, readProposalAction } from "../src/engine/issue-step.js";
+import type { ReviewFn, ReviewVerdict } from "../src/judges/reviewer.js";
 
 const approvalPanel = (action: string, draft = "") =>
   `<!--monastery-state\nprotocol: approval\naction: ${action}\n-->\n${draft}`;
@@ -19,13 +20,26 @@ const fakeFails = () => {
     clearFail: (r: string, n: number) => { m.delete(`${r}#${n}`); },
   };
 };
-const ctx = (gh: FakeGitHub, provider: FakeProvider, ws: FakeWorkspace = new FakeWorkspace(), now: () => number = () => 0) => ({
+const ctx = (
+  gh: FakeGitHub,
+  provider: FakeProvider,
+  ws: FakeWorkspace = new FakeWorkspace(),
+  now: () => number = () => 0,
+  review?: ReviewFn,
+) => ({
   repo: "o/r", gh, provider, model: "haiku",
   artifactRoot: mkdtempSync(join(tmpdir(), "monastery-step-")),
   fails: fakeFails(),
   ws,
   now,
+  review,
 });
+
+// Returns a ReviewFn yielding scripted verdicts in order (repeats the last if over-called).
+const scriptedReview = (verdicts: (ReviewVerdict | null)[]): ReviewFn => {
+  let i = 0;
+  return async () => verdicts[Math.min(i++, verdicts.length - 1)];
+};
 
 test("virtual new + thesis:out -> needs-approval, panel draft", async () => {
   const gh = new FakeGitHub({ thesis: "AI maintainer only", issues: [{ number: 1, title: "chat", body: "social chat", labels: [], state: "open" }] });
@@ -271,7 +285,7 @@ test("triaged + thesis:unclear -> parked (noop, triager not run)", async () => {
 test("try-fix with changes -> draft PR opened, patch-proposed added, try-fix removed", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 30, title: "bug", body: "broken", labels: ["monastery:try-fix", "type:bug"], state: "open" }] });
   const ws = new FakeWorkspace({ diff: "--- a\n+++ b\n@@ fix @@", tests: true });
-  const c = ctx(gh, new FakeProvider({}), ws);
+  const c = ctx(gh, new FakeProvider({}), ws, () => 0, scriptedReview([{ findings: [] }]));
   const out = await issueStep(c, 30);
   expect(out.kind).toBe("progressed");
   expect(ws.cloned[0]).toMatchObject({ repo: "o/r", branch: "monastery/fix-30" });
@@ -331,5 +345,74 @@ test("patch-proposed issue is not patched again", async () => {
   await issueStep(c, 32);
   expect(ws.cloned).toHaveLength(0); // override skipped (already proposed); classified -> noop
   expect(gh.prs).toHaveLength(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("try-fix clean review -> draft PR opened, no fix run, diff staged twice", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 70, title: "bug", body: "broken", labels: ["monastery:try-fix"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "--- a\n+++ b\n@@ fix @@", tests: true });
+  const provider = new FakeProvider({});
+  const c = ctx(gh, provider, ws, () => 0, scriptedReview([{ findings: [] }]));
+  const out = await issueStep(c, 70);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);
+  expect(provider.calls).toHaveLength(1); // only the initial edit; no fix run
+  expect(ws.diffCalls).toBe(2);           // re-stage after tests reused for the first review
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("try-fix reviewer fails (null) -> conservative pass, PR opens with a note", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 71, title: "bug", body: "broken", labels: ["monastery:try-fix"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "--- a\n+++ b\n@@ fix @@", tests: true });
+  const c = ctx(gh, new FakeProvider({}), ws, () => 0, scriptedReview([null]));
+  const out = await issueStep(c, 71);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);
+  expect(gh.prs[0].body).toContain("自审未能运行"); // conservative-pass note
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("try-fix blocking then clean -> one fix run, then PR opened", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 72, title: "bug", body: "broken", labels: ["monastery:try-fix"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "--- a\n+++ b\n@@ fix @@", tests: true });
+  const provider = new FakeProvider({});
+  const review = scriptedReview([
+    { findings: [{ severity: "blocking", title: "off-by-one", detail: "loop bound" }] },
+    { findings: [] },
+  ]);
+  const c = ctx(gh, provider, ws, () => 0, review);
+  const out = await issueStep(c, 72);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);
+  expect(provider.calls).toHaveLength(2);       // initial edit + one fix run
+  expect(provider.calls[1].persona).toContain("addressing review feedback");
+  expect(ws.diffCalls).toBe(3);                 // re-stage after tests, then after the fix
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("try-fix review never clean -> needs-human after 3 iters, no PR", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 73, title: "bug", body: "broken", labels: ["monastery:try-fix"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "--- a\n+++ b\n@@ fix @@", tests: true });
+  const blocking = { findings: [{ severity: "blocking" as const, title: "still wrong", detail: "d" }] };
+  const c = ctx(gh, new FakeProvider({}), ws, () => 0, scriptedReview([blocking, blocking, blocking]));
+  const out = await issueStep(c, 73);
+  expect(out).toEqual({ kind: "noop" });
+  expect(gh.prs).toHaveLength(0);                       // never opened a PR
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-human");
+  expect(gh.panels[73]).toContain("still wrong");
+  expect(ws.committed).toHaveLength(0);                 // no push
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("advisory-only review -> no fix, PR body lists advisory", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 74, title: "bug", body: "broken", labels: ["monastery:try-fix"], state: "open" }] });
+  const ws = new FakeWorkspace({ diff: "--- a\n+++ b\n@@ fix @@", tests: true });
+  const review = scriptedReview([{ findings: [{ severity: "advisory", title: "rename foo", detail: "clarity" }] }]);
+  const c = ctx(gh, new FakeProvider({}), ws, () => 0, review);
+  const out = await issueStep(c, 74);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);
+  expect(gh.prs[0].body).toContain("rename foo");       // advisory surfaced in PR body
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
