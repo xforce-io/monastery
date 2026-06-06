@@ -8,6 +8,8 @@ const PERSONA = [
   "Fix the described GitHub issue by editing files in this repository, then run the test suite.",
   "Do NOT touch git or gh — leave your changes in the working tree.",
   "Make the smallest correct change.",
+  "When done, finish by printing a bulleted summary of what you changed and why, for the PR description.",
+  "Print it to stdout only — do NOT write it to a file (it would be committed into the diff).",
 ].join(" ");
 
 const FIX_PERSONA = [

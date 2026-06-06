@@ -36,6 +36,18 @@ test("happy path: writes a patch in a sandbox, self-review passes, opens a draft
   expect(ws.cleaned).toHaveLength(1);                // sandbox cleaned up
 });
 
+test("PR body carries the patcher's author summary in a 本次改动 section", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const summary = "- 改了 foo.ts：修复了空指针\n- 为什么:之前没校验入参";
+  const c = ctx(gh, ws, async () => clean);
+  c.provider = new FakeProvider({}, summary);
+  const out = await runImplement(c, issue);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs[0].body).toContain("## 本次改动");
+  expect(gh.prs[0].body).toContain(summary);
+});
+
 test("idempotent: an open PR for the branch already exists -> converge, do NOT re-run the patcher", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
   await gh.openDraftPR("o/r", "feat/7-fix-the-bug", "t", "b"); // a prior run's PR
