@@ -24,6 +24,9 @@ export class DryRunAdapter implements GitHubAdapter {
   findPrForBranch(repo: string, branch: string): Promise<string | null> {
     return this.inner.findPrForBranch(repo, branch);
   }
+  prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null> {
+    return this.inner.prState(repo, branch);
+  }
   labelEventTime(repo: string, num: number, label: string): Promise<number | null> {
     return this.inner.labelEventTime(repo, num, label);
   }
