@@ -37,12 +37,12 @@ test("active issue: the agent's proposed safe actions are executed", async () =>
   expect(i.labels).toContain("type:bug");
 });
 
-test("active issue: a propose(close) action moves the item to awaiting-gate (panel + needs-approval)", async () => {
+test("active issue: a propose(close) action moves the item to awaiting-gate (approval comment + needs-approval)", async () => {
   const gh = ghWith({ number: 6, title: "x", body: "y", labels: [], state: "open" });
   const provider = new FakeProvider(actionsJson([{ kind: "propose", num: 6, proposal: "close", draft: "out of scope" }]));
   await issueStep(ctxWith(gh, provider), 6);
-  expect(gh.panels[6]).toContain("action: close");
-  expect(gh.panels[6]).toContain("out of scope");
+  expect(gh.comments[6][0]).toContain("action: close");
+  expect(gh.comments[6][0]).toContain("out of scope");
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain(NEEDS_APPROVAL);
 });
@@ -92,24 +92,24 @@ test("active issue: per-repo failThreshold does not swallow structured output fa
 
 async function awaitingGate(num: number, proposal: "close" | "merge", draft: string): Promise<FakeGitHub> {
   const gh = ghWith({ number: num, title: "x", body: "y", labels: [], state: "open" });
-  await executeSafe(gh, "o/r", { kind: "propose", num, proposal, draft }); // sets panel + needs-approval
+  await executeSafe(gh, "o/r", { kind: "propose", num, proposal, draft }); // sets approval comment + needs-approval
   return gh;
 }
 
 test("awaiting-gate + 👍 on a close proposal: shell executes doClose, never calls the agent", async () => {
   const gh = await awaitingGate(20, "close", "closing because X");
-  gh.commentReactions["panel:20"] = ["+1"];
+  gh.commentReactions["0"] = ["+1"];
   const provider = new FakeProvider(actionsJson([{ kind: "relabel", num: 20, add: ["z"], remove: [] }]));
   const out = await issueStep(ctxWith(gh, provider), 20);
   expect(out.kind).toBe("done");
   expect(provider.calls).toHaveLength(0);     // gate path must not call the agent
   expect(gh.closed).toContain(20);
-  expect(gh.comments[20]?.[0]).toBe("closing because X"); // doClose posts the draft as the reason
+  expect(gh.comments[20]).toContain("closing because X"); // doClose posts the draft as the reason
 });
 
 test("awaiting-gate + 👎: declined is stamped, needs-approval cleared, no agent call", async () => {
   const gh = await awaitingGate(21, "close", "closing because X");
-  gh.commentReactions["panel:21"] = ["-1"];
+  gh.commentReactions["0"] = ["-1"];
   const provider = new FakeProvider({});
   const out = await issueStep(ctxWith(gh, provider), 21);
   expect(out.kind).toBe("done");
@@ -237,30 +237,30 @@ test("awaiting-gate issue: entry is parked", async () => {
 test("awaiting-gate approved merge: still waits for the human to click Merge, entry stays parked", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
   await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "merge", draft: "ship it" });
-  gh.commentReactions["panel:1"] = ["+1"]; // approved, but a merge is finalized by the human on the PR
+  gh.commentReactions["0"] = ["+1"]; // approved, but a merge is finalized by the human on the PR
   const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
   expect(out.kind).toBe("waiting");
   expect(out.entry).toMatchObject({ number: 1, priority: "parked" });
 });
 
-// --- #88: implement is human-gated — it opens an approval panel, the patcher runs only after 👍 ---
+// --- #88: implement is human-gated — it opens an approval comment, the patcher runs only after 👍 ---
 
-test("#88: implement opens an approval gate (panel + needs-approval), does NOT run the patcher", async () => {
+test("#88: implement opens an approval gate (approval comment + needs-approval), does NOT run the patcher", async () => {
   const gh = ghWith({ number: 50, title: "fix it", body: "broken", labels: [], state: "open" });
   const provider = new FakeProvider(actionsJson([{ kind: "implement", num: 50, draft: "## Plan: refactor X" }]));
   const out = await issueStep(ctxWith(gh, provider), 50);
   expect(out.kind).toBe("progressed");
   expect(gh.prs).toHaveLength(0);                        // patcher did NOT run — no code written
-  expect(gh.panels[50]).toContain("action: implement");  // approval gate opened instead
-  expect(gh.panels[50]).toContain("## Plan: refactor X");
+  expect(gh.comments[50][0]).toContain("action: implement");  // approval gate opened instead
+  expect(gh.comments[50][0]).toContain("## Plan: refactor X");
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain(NEEDS_APPROVAL);
 });
 
-test("#88: the patcher runs only after a human 👍 on the implement approval panel", async () => {
+test("#88: the patcher runs only after a human 👍 on the implement approval comment", async () => {
   const gh = ghWith({ number: 51, title: "fix it", body: "broken", labels: [], state: "open" });
   await proposeGate(gh, "o/r", 51, "implement", "## Plan"); // gate already open (needs-approval + panel)
-  gh.commentReactions["panel:51"] = ["+1"];                // human endorsed
+  gh.commentReactions["0"] = ["+1"];                // human endorsed
   const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
   const out = await issueStep(c, 51);
   expect(out.kind).toBe("progressed");
@@ -281,7 +281,7 @@ test("#88: no 👍 on the implement panel → still waiting on the human, patche
 test("#88: approved implement consumes the gate — clears needs-approval, rewrites panel, no re-run", async () => {
   const gh = ghWith({ number: 60, title: "fix it", body: "broken", labels: [], state: "open" });
   await proposeGate(gh, "o/r", 60, "implement", "## Plan");
-  gh.commentReactions["panel:60"] = ["+1"];
+  gh.commentReactions["0"] = ["+1"];
   const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
   const out1 = await issueStep(c, 60);
   expect(out1.kind).toBe("progressed");
@@ -298,21 +298,21 @@ test("#88: approved implement consumes the gate — clears needs-approval, rewri
 
 // --- #88 review fix: stale-reaction guard — a 👍 from before the gate must not approve it ---
 
-test("#88: a 👍 left BEFORE the implement gate was opened does NOT approve it (stale-reaction guard)", async () => {
+test("#88: a 👍 left on an older gate comment does NOT approve the latest implement gate", async () => {
   const gh = ghWith({ number: 80, title: "fix it", body: "broken", labels: [], state: "open" });
-  gh.commentReactions["panel:80"] = ["+1"];
-  gh.reactionAt["panel:80"] = 0;                            // 👍 created early (e.g. on an earlier note state)
-  await proposeGate(gh, "o/r", 80, "implement", "## Plan"); // gate written now → panel updatedAt > 0
+  await proposeGate(gh, "o/r", 80, "close", "old close gate");
+  gh.commentReactions["0"] = ["+1"];                        // 👍 on the old gate comment
+  await proposeGate(gh, "o/r", 80, "implement", "## Plan"); // latest gate is a fresh comment (id "1")
   const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
   const out = await issueStep(c, 80);
-  expect(out.kind).toBe("waiting");        // stale 👍 ignored — still awaiting a fresh endorsement
+  expect(out.kind).toBe("waiting");        // old 👍 ignored — still awaiting a fresh endorsement
   expect(gh.prs).toHaveLength(0);          // patcher did NOT run
 });
 
 test("#88: a 👍 made AFTER the gate was opened approves it (fresh reaction)", async () => {
   const gh = ghWith({ number: 81, title: "fix it", body: "broken", labels: [], state: "open" });
   await proposeGate(gh, "o/r", 81, "implement", "## Plan"); // gate first
-  gh.commentReactions["panel:81"] = ["+1"];                // default timestamp = now (post-dates the gate)
+  gh.commentReactions["0"] = ["+1"];                // reaction on the latest gate comment
   const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
   const out = await issueStep(c, 81);
   expect(out.kind).toBe("progressed");

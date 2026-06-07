@@ -40,12 +40,14 @@ test("openDraftPR opens once; skips when a PR already exists", async () => {
   expect(g.prs).toHaveLength(1); // findPrForBranch found it -> skipped
 });
 
-test("propose writes an approval panel + needs-approval label", async () => {
+test("propose posts a fresh approval gate comment + needs-approval label", async () => {
   const g = gh();
   await executeSafe(g, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "close because X" });
-  expect(g.panels[1]).toContain("protocol: approval");
-  expect(g.panels[1]).toContain("action: close");
-  expect(g.panels[1]).toContain("close because X");
+  expect(g.panels[1]).toBeUndefined();
+  expect(g.comments[1]).toHaveLength(1);
+  expect(g.comments[1][0]).toContain("protocol: approval");
+  expect(g.comments[1][0]).toContain("action: close");
+  expect(g.comments[1][0]).toContain("close because X");
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-approval");
 });
@@ -95,12 +97,13 @@ test("implement action accepts an optional draft (the human-facing plan)", () =>
   expect(ActionSchema.parse({ kind: "implement", num: 1 })).toEqual({ kind: "implement", num: 1 });
 });
 
-test("proposeGate(implement) opens an approval panel (action: implement) + needs-approval", async () => {
+test("proposeGate(implement) posts an approval gate comment (action: implement) + needs-approval", async () => {
   const g = gh();
   await proposeGate(g, "o/r", 1, "implement", "## Plan: refactor X");
-  expect(g.panels[1]).toContain("protocol: approval");
-  expect(g.panels[1]).toContain("action: implement");
-  expect(g.panels[1]).toContain("## Plan: refactor X");
+  expect(g.comments[1]).toHaveLength(1);
+  expect(g.comments[1][0]).toContain("protocol: approval");
+  expect(g.comments[1][0]).toContain("action: implement");
+  expect(g.comments[1][0]).toContain("## Plan: refactor X");
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-approval");
 });

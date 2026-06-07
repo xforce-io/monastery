@@ -89,10 +89,10 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   for (const a of actions) {
     try {
       if (a.kind === "implement") {
-        // #88: implement is human-gated. The agent only PROPOSES — open an approval panel + needs-approval;
+        // #88: implement is human-gated. The agent only PROPOSES — open an approval comment + needs-approval;
         // the patcher (runImplement) runs only after a real human 👍 next tick (awaitingGate). The agent
         // can never self-approve its own implementation (closes the consensus self-endorse hole).
-        const draft = a.draft ?? `Proposed implement for #${issue.number}. 👍 this panel to let monastery write a draft PR.`;
+        const draft = a.draft ?? `Proposed implement for #${issue.number}. 👍 this approval comment to let monastery write a draft PR.`;
         if (ctx.dryRun) console.warn(`[dry-run] would propose implement ${ctx.repo}#${issue.number} (awaiting human 👍)`);
         else await proposeGate(ctx.gh, ctx.repo, issue.number, "implement", draft);
       } else await executeSafe(ctx.gh, ctx.repo, a);
@@ -104,26 +104,25 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   return actions.length ? { kind: "progressed", entry } : { kind: "noop", entry };
 }
 
-/** awaiting-gate: a gated proposal is parked on the approval panel; act only on a human signal (PROTOCOL §4). */
+/** awaiting-gate: a gated proposal is parked on the newest approval comment; act only on a human signal (PROTOCOL §4). */
 async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const parked = {
     number: issue.number, title: issue.title, priority: "parked" as const, rationale: "awaiting human approval",
   };
   const comments = await ctx.gh.listComments(ctx.repo, issue.number);
-  const panel = comments.find((c) => c.body.includes(APPROVAL_MARK));
-  if (!panel) return { kind: "waiting", on: "human", entry: parked }; // needs-approval but no panel: inconsistent, wait
+  const gate = comments
+    .filter((c) => c.body.includes(APPROVAL_MARK))
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (!gate) return { kind: "waiting", on: "human", entry: parked }; // needs-approval but no approval comment: inconsistent, wait
 
-  const reactions = await ctx.gh.reactions(ctx.repo, panel.id);
-  // #88: the sticky panel is reused across states, so a 👍/👎 left BEFORE this gate was (re)written must
-  // not count — only reactions that post-date the panel's last edit are valid for the current gate.
-  const fresh = reactions.filter((r) => r.at >= panel.updatedAt);
-  if (fresh.some((r) => r.content === "-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
-  if (!fresh.some((r) => r.content === "+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
+  const reactions = await ctx.gh.reactions(ctx.repo, gate.id);
+  if (reactions.includes("-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
+  if (!reactions.includes("+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
 
   // Approved (👍). Execute the gated action the panel proposed.
-  const kind = approvalKind(panel.body);
+  const kind = approvalKind(gate.body);
   if (kind === "close") {
-    const reason = stripMarkers(panel.body) || "已批准，关闭。";
+    const reason = stripMarkers(gate.body) || "已批准，关闭。";
     await doClose(ctx.gh, ctx.repo, issue.number, reason); // closes first -> idempotent, leaves the open list
     return { kind: "done" };
   }
@@ -153,7 +152,7 @@ async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Pr
   return { kind: "done" };
 }
 
-/** Read the proposed gated kind from the approval panel marker (`action: close|merge`). */
+/** Read the proposed gated kind from the approval comment marker (`action: close|merge|implement`). */
 function approvalKind(body: string): GatedKind | null {
   const m = body.match(/^action:\s*(close|merge|implement)\s*$/m);
   return m ? (m[1] as GatedKind) : null;

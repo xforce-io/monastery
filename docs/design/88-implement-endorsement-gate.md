@@ -33,7 +33,7 @@ The shell **no longer runs the patcher directly**; it opens an approval gate, re
 existing `propose` machinery:
 
 - `GatedKind` gains `"implement"`; the `implement` action carries `draft`.
-- `active()`: on `implement` → `upsertPanel(approvalMarker("implement") + draft)` +
+- `active()`: on `implement` → `postComment(approvalMarker("implement") + draft)` +
   `needs-approval` label → issue enters **awaiting-gate**. Outcome = `waiting{on:"approval"}`.
 - `awaitingGate()`: reads `action: implement` marker + a **real human 👍** → `runImplement`;
   👎 → declined (existing path).
@@ -45,7 +45,7 @@ existing `propose` machinery:
 
 - Remove the "consensusReached → maintainer directly implements" path. The maintainer prompt
   changes from "consensus reached → implement" to "judge implement → **propose** implement
-  (opens an approval panel, waits for the human's 👍)".
+  (posts a fresh approval comment, waits for the human's 👍)".
 - `spec`/`endorse` remain usable for multi-party design discussion, but an agent-authored
   `endorse` is **no longer an implement trigger** — the only trigger is a real 👍.
 
@@ -91,7 +91,7 @@ type Outcome =
 | File | Change |
 |---|---|
 | `src/types.ts` | `Outcome` `reason`/widened `waiting.on` |
-| `src/shell/actions.ts` | `GatedKind` += `implement`; `implement` action += `draft`; `approvalMarker` already generic; gate open via panel+needs-approval |
+| `src/shell/actions.ts` | `GatedKind` += `implement`; `implement` action += `draft`; `approvalMarker` already generic; gate open via fresh approval comment + needs-approval |
 | `src/engine/issue-step.ts` | `active()` implement → open gate (NOT runImplement); `awaitingGate()` `implement`+👍 → runImplement; thread `reason` through every Outcome |
 | `src/agents/maintainer.ts` | prompt: implement is now "propose, needs human 👍"; drop "consensus reached → implement" |
 | `src/engine/reconcile.ts` | `summarize` with explanations + awaiting-approval list; carry `reason` |
@@ -116,7 +116,7 @@ type Outcome =
 
 ## Acceptance
 
-- maintainer judging implement → opens an approval panel + `needs-approval`, Outcome
+- maintainer judging implement → posts a fresh approval comment + `needs-approval`, Outcome
   `waiting{on:"approval"}`, output explains "awaiting your endorsement". No code is written yet.
 - human 👍 the panel → next tick runs `runImplement`.
 - agent-authored spec/endorse cannot pass implement without a real 👍.

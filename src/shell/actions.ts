@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
 
-// Human-gated actions, reachable only via an approval panel + a human 👍 (PROTOCOL §4).
+// Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
 // `implement` joins close/merge (issue #88): the agent may PROPOSE a patch, but the patcher
 // (runImplement) only runs after a real human endorses it — the agent can never self-approve.
 export const GatedKindSchema = z.enum(["close", "merge", "implement"]);
@@ -91,12 +91,12 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
 }
 
 /**
- * Open the approval gate (PROTOCOL §4): upsert the single sticky panel carrying the action marker
- * (so a human's 👍 routes to the right gated executor next tick) + the needs-approval control label
+ * Open the approval gate (PROTOCOL §4): post a fresh approval comment carrying the action marker
+ * (so old reactions on a reused sticky panel cannot approve a new gate) + the needs-approval control label
  * (so the item moves to awaiting-gate). Shared by `propose` (close/merge) and `implement` (#88).
  */
 export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string): Promise<void> {
-  await gh.upsertPanel(repo, num, `${approvalMarker(proposal)}\n${draft}`);
+  await gh.postComment(repo, num, `${approvalMarker(proposal)}\n${draft}`);
   await gh.addLabel(repo, num, NEEDS_APPROVAL);
 }
 

@@ -92,7 +92,7 @@ test("prState returns the lowercased PR state, null when absent", async () => {
   expect(await new GhAdapter(async () => "").prState("o/r", "nope")).toBeNull();
 });
 
-test("listComments parses id+body+author+updatedAt json (identity + #88 gate-time)", async () => {
+test("listComments parses id+body+author+updatedAt json (identity + newest gate ordering)", async () => {
   const captured: string[][] = [];
   const json = JSON.stringify([
     { id: "10", body: "hello", author: "alice", updatedAt: "2020-01-01T00:00:00.000Z" },
@@ -106,21 +106,14 @@ test("listComments parses id+body+author+updatedAt json (identity + #88 gate-tim
   expect(captured[0]).toContain("[.[] | {id: (.id|tostring), body, author: .user.login, updatedAt: .updated_at}]");
 });
 
-test("reactions reads a comment's reaction contents + created time (record/replay)", async () => {
+test("reactions reads a comment's reaction contents (record/replay)", async () => {
   const captured: string[][] = [];
-  const json = JSON.stringify([
-    { content: "+1", at: "2020-01-01T00:00:00.000Z" },
-    { content: "-1", at: "2020-01-02T00:00:00.000Z" },
-  ]);
-  const gh = new GhAdapter(async (args) => { captured.push(args); return json; });
+  const gh = new GhAdapter(async (args) => { captured.push(args); return JSON.stringify(["+1", "-1", "rocket"]); });
   const got = await gh.reactions("o/r", "12345");
   expect(captured[0]).toEqual([
-    "api", "repos/o/r/issues/comments/12345/reactions", "--jq", "[.[] | {content, at: .created_at}]",
+    "api", "repos/o/r/issues/comments/12345/reactions", "--jq", "[.[].content]",
   ]);
-  expect(got).toEqual([
-    { content: "+1", at: Date.parse("2020-01-01T00:00:00.000Z") },
-    { content: "-1", at: Date.parse("2020-01-02T00:00:00.000Z") },
-  ]);
+  expect(got).toEqual(["+1", "-1", "rocket"]);
 });
 
 test("reactions returns [] when none / api fails", async () => {

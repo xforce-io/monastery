@@ -41,10 +41,10 @@ export function formatStatus(entries: StatusEntry[]): string {
 export function explainOutcome(out: Outcome): string {
   switch (out.kind) {
     case "progressed": return out.note ? `progressed (${out.note})` : "progressed";
-    case "waiting":    return out.on === "human" ? "awaiting your 👍 on the approval panel" : `waiting on ${out.on}`;
+    case "waiting":    return out.on === "human" ? "awaiting your 👍 on the approval comment" : `waiting on ${out.on}`;
     case "done":       return "done (terminal)";
     case "noop":
-      if (out.entry?.priority === "parked") return "awaiting your 👍 on the approval panel";
+      if (out.entry?.priority === "parked") return "awaiting your 👍 on the approval comment";
       if (out.entry?.rationale) return out.entry.rationale;
       return "nothing to do this tick";
   }
