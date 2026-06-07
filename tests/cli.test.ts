@@ -46,7 +46,7 @@ test("parses `step --repo o/r --force-stale-lock`", () => {
     .toEqual({ cmd: "step", repo: "o/r", dryRun: false, json: false, forceStaleLock: true });
 });
 
-test("stepRepos skips a locked repo, runs the rest, and reports exit code 1", async () => {
+test("stepRepos skips a locked repo, runs the rest, and reports exit code 4 (lock conflict)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "monastery-steprepos-"));
   const lock = new StepLock(dir);
   // Hold the lock on o/a with a live pid so acquire() fails fast for it.
@@ -67,8 +67,8 @@ test("stepRepos skips a locked repo, runs the rest, and reports exit code 1", as
   expect(ran).toEqual(["o/b"]);
   // structured repo_locked error emitted for the locked repo.
   expect(errs.some((e) => e.includes("repo_locked") && e.includes("o/a"))).toBe(true);
-  // a lock conflict surfaces as a non-zero exit code.
-  expect(exitCode).toBe(1);
+  // a lock conflict surfaces as exit code 4 (distinct from runtime/usage/agent errors).
+  expect(exitCode).toBe(4);
 
   held();
   rmSync(dir, { recursive: true, force: true });
