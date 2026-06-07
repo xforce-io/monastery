@@ -160,5 +160,8 @@ function approvalKind(body: string): GatedKind | null {
 
 /** The human-facing draft = the panel body with monastery markers stripped. */
 function stripMarkers(body: string): string {
-  return body.replace(/<!--monastery-state[\s\S]*?-->\s*/g, "").trim();
+  return body
+    .replace(/<!--monastery-state[\s\S]*?-->\s*/g, "")
+    .replace(/^⏳ \*\*NEEDS YOUR APPROVAL\*\*[^\n]*\n*/m, "") // drop the #90 approval banner from the human draft
+    .trim();
 }

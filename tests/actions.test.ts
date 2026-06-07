@@ -125,3 +125,17 @@ test("relabel cannot remove a control label either (e.g. clearing declined to re
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:declined");             // shell-owned: agent can't remove it
 });
+
+// --- #90: approval gate carries a VISIBLE banner so a human can spot the comment to 👍 ---
+
+test("proposeGate adds a visible NEEDS-APPROVAL banner (not just the hidden HTML marker)", async () => {
+  const g = gh();
+  await proposeGate(g, "o/r", 1, "implement", "## Plan: do the thing");
+  const approval = g.comments[1].at(-1)!; // proposeGate posts a fresh approval comment
+  // visible to a human browsing the issue:
+  expect(approval).toContain("NEEDS YOUR APPROVAL");
+  expect(approval).toContain("👍");                  // tells them what to do
+  // still machine-readable for awaitingGate + still carries the draft:
+  expect(approval).toContain("action: implement");
+  expect(approval).toContain("## Plan: do the thing");
+});
