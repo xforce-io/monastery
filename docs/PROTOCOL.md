@@ -10,7 +10,7 @@
 | 状态 | 含义 | GitHub 编码 |
 |---|---|---|
 | **active** | open、不在等放行 | open 且无未决 gate → 外壳调 agent |
-| **awaiting-gate** | 有 gated 提议,等人放行 | `monastery:needs-approval` + 审批 panel(`action: <kind>`) |
+| **awaiting-gate** | 有 gated 提议,等人放行 | `monastery:needs-approval` + 最新审批评论(`action: <kind>`) |
 | **terminal** | 完结 | issue closed / `monastery:declined` / PR merged |
 
 **富语义状态(in/out、bug/feature、设计/开发到哪了)外壳不存**——agent 每 tick 看 GitHub 现推(宪法 §8)。
@@ -26,9 +26,9 @@
 
 | marker | 用途 |
 |---|---|
-| `<!--monastery-state ...-->` | monastery 的单条 sticky panel(状态/草稿/审批提议) |
+| `<!--monastery-state ...-->` | monastery 的 marker；note 用单条 sticky panel，approval gate 用新评论 |
 | `<!--monastery-reply to=<id>-->` | 对某条人类评论的回复 |
-| 审批 panel:`protocol: approval` + `action: close\|merge` | 一个待放行的 gated 提议 |
+| 审批评论:`protocol: approval` + `action: close\|merge\|implement` | 一个待放行的 gated 提议 |
 
 **铁律:monastery 发的每条评论都带 marker。人类评论 = 无 marker。** 外壳/agent 据此排除自己,绝不自问自答。
 
@@ -37,7 +37,7 @@
 | 信号 | 怎么做 | 外壳 |
 |---|---|---|
 | **PR 通过** | 你直接在 GitHub 点 **Merge** | merge 即动作;`Closes #N` 自动关 issue。外壳检测到 merged → 落 terminal(#31) |
-| **issue 提议通过** | 在审批 panel 评论上加 **👍** | 外壳执行提议的 gated 动作(`doClose`)→ terminal |
+| **issue 提议通过** | 在最新审批评论上加 **👍** | 外壳执行提议的 gated 动作(`doClose`/`implement`) |
 | **拒绝** | close PR 未合 / issue 提议上 👎 或打 `declined` | 外壳 → terminal(declined,#31 / `terminalizeDeclined`) |
 
 > 原生 PR Approve 用不了(owner 账号不能 approve 自己的 PR),故 issue 走 👍、PR 走 Merge。
@@ -49,7 +49,7 @@
   agent 提议:
     - SAFE 动作(reply/relabel/panel/openDraftPR) → 外壳当场执行
     - implement → 外壳跑 patcher(沙箱写码+自审)→ 开人合的 draft PR(#43;agent 不碰 git/gh)
-    - propose(close|merge) → 外壳摆出提议(审批 panel + needs-approval)→ item 转 awaiting-gate
+    - propose(close|merge) / implement → 外壳摆出提议(新审批评论 + needs-approval)→ item 转 awaiting-gate
 人给信号:
     👍 / Merge → 外壳执行 gated 执行器(doClose/doMerge)→ terminal
     拒绝       → terminal(declined)

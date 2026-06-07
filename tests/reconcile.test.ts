@@ -72,7 +72,7 @@ test("awaiting-gate with no signal: idle, waiting:human, long backoff, agent NOT
 test("awaiting-gate with 👍 advances via doClose (no agent), then leaves the open list", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
   await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "because X" });
-  gh.commentReactions["panel:1"] = ["+1"];
+  gh.commentReactions["0"] = ["+1"];
   const provider = new FakeProvider({});
   const c = baseCtx(gh, provider);
   const r = await reconcile(c);

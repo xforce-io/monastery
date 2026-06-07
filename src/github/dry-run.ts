@@ -42,7 +42,7 @@ export class DryRunAdapter implements GitHubAdapter {
   getPrChecks(repo: string, prNumber: number): Promise<"pass" | "fail" | "pending"> {
     return this.inner.getPrChecks(repo, prNumber);
   }
-  listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]> {
+  listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]> {
     return this.inner.listComments(repo, num);
   }
   reactions(repo: string, commentId: string): Promise<string[]> {

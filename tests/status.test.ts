@@ -1,6 +1,6 @@
 // tests/status.test.ts
 import { expect, test } from "vitest";
-import { formatStatus, toStatusEntry, protocolState } from "../src/cli/status.js";
+import { formatStatus, toStatusEntry, protocolState, explainOutcome } from "../src/cli/status.js";
 import type { Issue } from "../src/types.js";
 
 const issues: Issue[] = [
@@ -47,4 +47,23 @@ test("formatStatus shows 'active' state for an unlabelled issue and omits thesis
   expect(out).toContain("active");
   expect(out).not.toContain("thesis:");
   expect(out).not.toContain("type:");
+});
+
+// --- #88: human-readable explanation for a single-issue step outcome ---
+
+test("explainOutcome: each outcome gets a human-readable line; awaiting-👍 is explicit", () => {
+  expect(explainOutcome({ kind: "progressed" })).toBe("progressed");
+  expect(explainOutcome({ kind: "progressed", note: "PR #9" })).toContain("PR #9");
+  expect(explainOutcome({ kind: "waiting", on: "human" })).toContain("👍");
+  expect(explainOutcome({ kind: "waiting", on: "ci" })).toContain("ci");
+  expect(explainOutcome({ kind: "done" })).toContain("terminal");
+  expect(explainOutcome({ kind: "noop" })).toBe("nothing to do this tick");
+  expect(explainOutcome({
+    kind: "noop",
+    entry: { number: 1, title: "x", priority: "parked", rationale: "awaiting human approval" },
+  })).toContain("👍"); // parked = waiting on your endorsement
+  expect(explainOutcome({
+    kind: "noop",
+    entry: { number: 1, title: "x", priority: "later", rationale: "no valid output" },
+  })).toContain("no valid output");
 });

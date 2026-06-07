@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
-import { executeSafe, doClose, doMerge } from "../src/shell/actions.js";
+import { executeSafe, doClose, doMerge, proposeGate, ActionSchema } from "../src/shell/actions.js";
 
 const gh = () => new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
 
@@ -40,12 +40,14 @@ test("openDraftPR opens once; skips when a PR already exists", async () => {
   expect(g.prs).toHaveLength(1); // findPrForBranch found it -> skipped
 });
 
-test("propose writes an approval panel + needs-approval label", async () => {
+test("propose posts a fresh approval gate comment + needs-approval label", async () => {
   const g = gh();
   await executeSafe(g, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "close because X" });
-  expect(g.panels[1]).toContain("protocol: approval");
-  expect(g.panels[1]).toContain("action: close");
-  expect(g.panels[1]).toContain("close because X");
+  expect(g.panels[1]).toBeUndefined();
+  expect(g.comments[1]).toHaveLength(1);
+  expect(g.comments[1][0]).toContain("protocol: approval");
+  expect(g.comments[1][0]).toContain("action: close");
+  expect(g.comments[1][0]).toContain("close because X");
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-approval");
 });
@@ -86,4 +88,22 @@ test("doMerge merges the PR; skips if already merged", async () => {
   g.prStates["feat/1-x"] = "merged";
   await doMerge(g, "o/r", "feat/1-x");
   expect(g.merged).toEqual(["feat/1-x"]); // already merged -> skipped
+});
+
+// --- #88: implement is a gated action (needs a human 👍 before runImplement) ---
+
+test("implement action accepts an optional draft (the human-facing plan)", () => {
+  expect(ActionSchema.parse({ kind: "implement", num: 1, draft: "## Plan" })).toEqual({ kind: "implement", num: 1, draft: "## Plan" });
+  expect(ActionSchema.parse({ kind: "implement", num: 1 })).toEqual({ kind: "implement", num: 1 });
+});
+
+test("proposeGate(implement) posts an approval gate comment (action: implement) + needs-approval", async () => {
+  const g = gh();
+  await proposeGate(g, "o/r", 1, "implement", "## Plan: refactor X");
+  expect(g.comments[1]).toHaveLength(1);
+  expect(g.comments[1][0]).toContain("protocol: approval");
+  expect(g.comments[1][0]).toContain("action: implement");
+  expect(g.comments[1][0]).toContain("## Plan: refactor X");
+  const [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-approval");
 });

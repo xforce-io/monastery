@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseArgs, stepRepos } from "../src/cli/index.js";
+import { parseArgs, stepRepos, summarize } from "../src/cli/index.js";
 import { StepLock } from "../src/config/step-lock.js";
 
 test("parses `step --repo o/r --dry-run --json`", () => {
@@ -46,7 +46,7 @@ test("parses `step --repo o/r --force-stale-lock`", () => {
     .toEqual({ cmd: "step", repo: "o/r", dryRun: false, json: false, forceStaleLock: true });
 });
 
-test("stepRepos skips a locked repo, runs the rest, and reports exit code 1", async () => {
+test("stepRepos skips a locked repo, runs the rest, and reports exit code 4 (lock conflict)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "monastery-steprepos-"));
   const lock = new StepLock(dir);
   // Hold the lock on o/a with a live pid so acquire() fails fast for it.
@@ -67,8 +67,8 @@ test("stepRepos skips a locked repo, runs the rest, and reports exit code 1", as
   expect(ran).toEqual(["o/b"]);
   // structured repo_locked error emitted for the locked repo.
   expect(errs.some((e) => e.includes("repo_locked") && e.includes("o/a"))).toBe(true);
-  // a lock conflict surfaces as a non-zero exit code.
-  expect(exitCode).toBe(1);
+  // a lock conflict surfaces as exit code 4 (distinct from runtime/usage/agent errors).
+  expect(exitCode).toBe(4);
 
   held();
   rmSync(dir, { recursive: true, force: true });
@@ -115,4 +115,13 @@ test("formatBacklog renders header + ranked lines with priority, rationale, bloc
   expect(out).toContain("[later] #1 a");
   expect(out).toContain("blocked: o/r#9");
   expect(out).toContain("fails: 2");
+});
+
+test("summarize surfaces awaiting-your-👍 count when a repo has items blocked on the human (#88)", () => {
+  const r = (repo: string, awaiting: number) => ({
+    repo, advanced: 0, idle: true, nextPollMs: 60000,
+    waiting: awaiting > 0 ? [{ on: "human" as const, count: awaiting }] : [],
+  });
+  expect(summarize([r("o/a", 2)])).toContain("awaiting-your-👍=2");
+  expect(summarize([r("o/b", 0)])).not.toContain("awaiting-your-👍");
 });

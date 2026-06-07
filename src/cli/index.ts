@@ -11,8 +11,10 @@ import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
 import { issueStep } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
+import { StructuredAgentError } from "../agents/spec.js";
+import type { ReconcileResult } from "../types.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
-import { formatStatus, toStatusEntry, type StatusEntry } from "./status.js";
+import { formatStatus, toStatusEntry, explainOutcome, type StatusEntry } from "./status.js";
 import { formatBacklog } from "./backlog.js";
 import type { BacklogSnapshot } from "../types.js";
 
@@ -85,7 +87,7 @@ async function main(): Promise<void> {
         const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
         if (args.issue) {
           const out = await issueStep(ctx, Number(args.issue));
-          console.log(`${repo}#${args.issue}: ${out.kind}`);
+          console.log(`${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`);
         } else {
           results.push(await reconcile(ctx));
         }
@@ -107,7 +109,7 @@ async function main(): Promise<void> {
   }
 
   console.error(`unknown command: ${args.cmd}`);
-  process.exit(1);
+  process.exit(2); // usage error
 }
 
 export interface StepReposDeps {
@@ -123,7 +125,7 @@ export interface StepReposDeps {
 /**
  * Step each repo under its own lock. A repo locked by a live process is skipped
  * (fail-fast, no provider/GitHub work) and reported, but does NOT abort the whole
- * batch — the remaining repos still run. Returns 1 if any repo was lock-conflicted,
+ * batch — the remaining repos still run. Returns exit code 4 if any repo was lock-conflicted,
  * else 0. The lock is always released after a repo's work finishes or throws.
  */
 export async function stepRepos(deps: StepReposDeps): Promise<number> {
@@ -141,7 +143,7 @@ export async function stepRepos(deps: StepReposDeps): Promise<number> {
           err(`[monastery] repo ${e.repo} is already being stepped by pid ${e.pid} since ${e.startedAt}`);
           err(`[monastery] refusing concurrent run; retry later or use --force-stale-lock only if the prior process is gone`);
         }
-        exitCode = 1;
+        exitCode = 4; // repo lock conflict — distinct code so cron/scripts can retry vs. alert
         continue;
       }
       throw e;
@@ -155,11 +157,19 @@ export async function stepRepos(deps: StepReposDeps): Promise<number> {
   return exitCode;
 }
 
-function summarize(results: { repo: string; advanced: number; idle: boolean; nextPollMs: number }[]): string {
-  return results.map((r) => `${r.repo}: advanced=${r.advanced} idle=${r.idle} next=${Math.round(r.nextPollMs / 1000)}s`).join("\n");
+export function summarize(results: ReconcileResult[]): string {
+  return results.map((r) => {
+    const awaiting = r.waiting.find((w) => w.on === "human")?.count ?? 0;
+    const base = `${r.repo}: advanced=${r.advanced} idle=${r.idle} next=${Math.round(r.nextPollMs / 1000)}s`;
+    return awaiting > 0 ? `${base} awaiting-your-👍=${awaiting}` : base; // #88: surface items blocked on you
+  }).join("\n");
 }
 
 // Only run when invoked as the binary (not when imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((e) => { console.error(e); process.exit(1); });
+  main().catch((e) => {
+    console.error(e);
+    // Exit-code taxonomy: 1 runtime, 2 usage, 3 agent structured-output failure, 4 repo lock.
+    process.exit(e instanceof StructuredAgentError ? 3 : 1);
+  });
 }

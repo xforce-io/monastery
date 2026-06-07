@@ -92,15 +92,18 @@ test("prState returns the lowercased PR state, null when absent", async () => {
   expect(await new GhAdapter(async () => "").prState("o/r", "nope")).toBeNull();
 });
 
-test("listComments parses id+body+author json (identity: stop being authorship-blind)", async () => {
+test("listComments parses id+body+author+updatedAt json (identity + newest gate ordering)", async () => {
   const captured: string[][] = [];
-  const json = JSON.stringify([{ id: "10", body: "hello", author: "alice" }, { id: "11", body: "world", author: "monastery-bot" }]);
+  const json = JSON.stringify([
+    { id: "10", body: "hello", author: "alice", updatedAt: "2020-01-01T00:00:00.000Z" },
+    { id: "11", body: "world", author: "monastery-bot", updatedAt: "2020-01-02T00:00:00.000Z" },
+  ]);
   const gh = new GhAdapter(async (args) => { captured.push(args); return json; });
   expect(await gh.listComments("o/r", 7)).toEqual([
-    { id: "10", body: "hello", author: "alice" },
-    { id: "11", body: "world", author: "monastery-bot" },
+    { id: "10", body: "hello", author: "alice", updatedAt: Date.parse("2020-01-01T00:00:00.000Z") },
+    { id: "11", body: "world", author: "monastery-bot", updatedAt: Date.parse("2020-01-02T00:00:00.000Z") },
   ]);
-  expect(captured[0]).toContain("[.[] | {id: (.id|tostring), body, author: .user.login}]");
+  expect(captured[0]).toContain("[.[] | {id: (.id|tostring), body, author: .user.login, updatedAt: .updated_at}]");
 });
 
 test("reactions reads a comment's reaction contents (record/replay)", async () => {

@@ -17,6 +17,11 @@ export class FakeGitHub implements GitHubAdapter {
   public prStates: Record<string, "open" | "merged" | "closed"> = {};
   /** Injected reaction contents, keyed by commentId -> e.g. ["+1"]. */
   public commentReactions: Record<string, string[]> = {};
+  /** Last-write time for posted comments, keyed by issue then zero-based comment index. */
+  public commentUpdatedAt: Record<number, number[]> = {};
+  /** Panel last-write time (monotonic counter), bumped by upsertPanel. */
+  public panelUpdatedAt: Record<number, number> = {};
+  private clock = 0;
   /** The login this fake "runs as" — author of its own posted comments/panels. */
   public selfLogin = "monastery";
   /** Comments authored by others (humans / peer bots), injected for identity tests, keyed by issue. */
@@ -52,9 +57,10 @@ export class FakeGitHub implements GitHubAdapter {
   async removeLabel(_r: string, n: number, label: string): Promise<void> {
     const i = this.must(n); i.labels = i.labels.filter((l) => l !== label);
   }
-  async upsertPanel(_r: string, n: number, body: string): Promise<void> { this.panels[n] = body; }
+  async upsertPanel(_r: string, n: number, body: string): Promise<void> { this.panels[n] = body; this.panelUpdatedAt[n] = ++this.clock; }
   async postComment(_r: string, n: number, body: string): Promise<void> {
     (this.comments[n] ??= []).push(body);
+    (this.commentUpdatedAt[n] ??= []).push(++this.clock);
   }
   async closeIssue(_r: string, n: number): Promise<void> { this.must(n).state = "closed"; this.closed.push(n); }
   async readThesis(): Promise<string> { return this.opts.thesis; }
@@ -92,14 +98,14 @@ export class FakeGitHub implements GitHubAdapter {
   async getPrChecks(_r: string, prNumber: number): Promise<"pass" | "fail" | "pending"> {
     return this.prChecksByPr[prNumber] ?? "pending";
   }
-  async listComments(_r: string, n: number): Promise<{ id: string; body: string; author: string }[]> {
+  async listComments(_r: string, n: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]> {
     // Others' comments first (chronological-ish), then monastery's own posts, then the sticky panel.
-    const ext = (this.authoredComments[n] ?? []).map((c, i) => ({ id: `ext${i}`, body: c.body, author: c.author }));
-    const own = (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body, author: this.selfLogin }));
+    const ext = (this.authoredComments[n] ?? []).map((c, i) => ({ id: `ext${i}`, body: c.body, author: c.author, updatedAt: 0 }));
+    const own = (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body, author: this.selfLogin, updatedAt: this.commentUpdatedAt[n]?.[i] ?? 0 }));
     const out = [...ext, ...own];
-    // The sticky panel is a real marked comment on GitHub; surface it here (stable id) so the
-    // engine can find it by marker and read its reactions (the approval signal). See reactions().
-    if (this.panels[n] !== undefined) out.push({ id: `panel:${n}`, body: this.panels[n], author: this.selfLogin });
+    // The sticky panel is a real marked comment on GitHub; surface it here (stable id) so readers
+    // that scan marked comments see the same shape as the real adapter.
+    if (this.panels[n] !== undefined) out.push({ id: `panel:${n}`, body: this.panels[n], author: this.selfLogin, updatedAt: this.panelUpdatedAt[n] ?? 0 });
     return out;
   }
   async reactions(_r: string, commentId: string): Promise<string[]> {

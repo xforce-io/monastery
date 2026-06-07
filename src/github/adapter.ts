@@ -35,9 +35,10 @@ export interface GitHubAdapter {
   listPrReviews(repo: string, prNumber: number): Promise<{ author: string; state: string; body: string }[]>;
   /** Aggregate check status for a PR: all pass → "pass"; any fail → "fail"; else → "pending". */
   getPrChecks(repo: string, prNumber: number): Promise<"pass" | "fail" | "pending">;
-  /** All comments on an issue/PR, oldest first. `author` is the commenter's login (identity, not marker). */
-  listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]>;
-  /** Reaction contents on a comment (e.g. `["+1", "-1"]`) — `+1`/`-1` are the issue approve/decline signals (PROTOCOL §4). */
+  /** All comments on an issue/PR, oldest first. `author` is the commenter's login (identity, not marker).
+   *  `updatedAt` is the comment's last-edit time (epoch ms), used to choose the newest approval gate. */
+  listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]>;
+  /** Reaction contents on a comment (`+1`/`-1` = approve/decline, PROTOCOL §4). */
   reactions(repo: string, commentId: string): Promise<string[]>;
   /** The login this monastery instance acts as (its own identity) — used to attribute/dedup endorsements. */
   login(): Promise<string>;

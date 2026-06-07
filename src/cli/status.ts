@@ -1,5 +1,5 @@
 // src/cli/status.ts
-import type { Issue, ProtocolState } from "../types.js";
+import type { Issue, ProtocolState, Outcome } from "../types.js";
 import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
 
 /** Coarse protocol state from the control labels alone (PROTOCOL §1). */
@@ -35,4 +35,17 @@ export function formatStatus(entries: StatusEntry[]): string {
       return parts.join("  ");
     })
     .join("\n");
+}
+
+/** One-line human-readable explanation of a single-issue step Outcome (#88). */
+export function explainOutcome(out: Outcome): string {
+  switch (out.kind) {
+    case "progressed": return out.note ? `progressed (${out.note})` : "progressed";
+    case "waiting":    return out.on === "human" ? "awaiting your 👍 on the approval comment" : `waiting on ${out.on}`;
+    case "done":       return "done (terminal)";
+    case "noop":
+      if (out.entry?.priority === "parked") return "awaiting your 👍 on the approval comment";
+      if (out.entry?.rationale) return out.entry.rationale;
+      return "nothing to do this tick";
+  }
 }

@@ -133,7 +133,7 @@ function buildContext(input: MaintainerInput): string {
       `- {"kind":"panel","num":${issue.number},"body":"<markdown>"} — upsert the single sticky status panel.`,
       `- {"kind":"openDraftPR","num":${issue.number},"branch":"feat/${issue.number}-<slug>","title":"<t>","body":"<b>"} — open an EMPTY draft PR from an existing branch.`,
       `- {"kind":"propose","num":${issue.number},"proposal":"close"|"merge","draft":"<markdown the human will see>"} — ask a human to approve a risky, irreversible action.`,
-      `- {"kind":"implement","num":${issue.number}} — hand the issue to monastery's patcher: it writes a fix in a sandbox and opens a draft PR for a human to merge. Propose this ONLY for a single, well-understood, concrete change worth doing now — NEVER for an epic / broad / tracking issue (see SCOPE below).`,
+      `- {"kind":"implement","num":${issue.number},"draft":"<a short plan the human reviews>"} — PROPOSE implementing this issue. The shell posts a fresh approval comment with your draft + needs-approval; ONLY after a real human 👍 does the patcher write a sandbox fix and open a draft PR. You CANNOT self-approve (a spec/endorse you author never counts as the human's 👍). Propose this ONLY for a single, well-understood, concrete change worth doing now — NEVER for an epic / broad / tracking issue (see SCOPE below).`,
       `- {"kind":"spec","num":${issue.number},"body":"<the acceptance contract>","parties":["<login>", ...]} — author/revise the shared spec.`,
       `- {"kind":"endorse","num":${issue.number},"version":<N>} — record that your party agrees to spec version N.`,
     ].join("\n"),
