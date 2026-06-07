@@ -8,6 +8,7 @@ import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
 import { executeSafe, type Action } from "../src/shell/actions.js";
+import { StructuredAgentError } from "../src/agents/spec.js";
 import type { Issue } from "../src/types.js";
 
 const NEEDS_APPROVAL = "monastery:needs-approval";
@@ -62,29 +63,29 @@ test("active issue: actions targeting a different issue are rejected wholesale (
   expect(i.labels).not.toContain("type:bug");
 });
 
-test("active issue: agent failure (no output) is a transient skip below threshold; no GitHub write", async () => {
+test("active issue: structured agent failure fails fast with diagnostics; no GitHub write", async () => {
   const gh = ghWith({ number: 9, title: "x", body: "y", labels: [], state: "open" });
   let recorded = 0;
-  const out = await issueStep(ctxWith(gh, new FakeProvider({}), { recordFail: () => ++recorded }), 9);
-  expect(out.kind).toBe("noop");
-  expect(recorded).toBe(1);
+  await expect(issueStep(ctxWith(gh, new FakeProvider({}), { recordFail: () => ++recorded }), 9))
+    .rejects.toBeInstanceOf(StructuredAgentError);
+  expect(recorded).toBe(0);
   expect(gh.panels[9]).toBeUndefined(); // no escalation yet
 });
 
-test("active issue: persistent agent failure escalates to a human-visible panel", async () => {
+test("active issue: persistent structured output failure is not downgraded to a panel/noop", async () => {
   const gh = ghWith({ number: 10, title: "x", body: "y", labels: [], state: "open" });
-  const out = await issueStep(ctxWith(gh, new FakeProvider({}), { recordFail: () => FAIL_THRESHOLD }), 10);
-  expect(out.kind).toBe("noop");
-  expect(gh.panels[10]).toMatch(/human/i);
+  await expect(issueStep(ctxWith(gh, new FakeProvider({}), { recordFail: () => FAIL_THRESHOLD }), 10))
+    .rejects.toBeInstanceOf(StructuredAgentError);
+  expect(gh.panels[10]).toBeUndefined();
 });
 
-test("active issue: a per-repo failThreshold override changes when escalation fires", async () => {
+test("active issue: per-repo failThreshold does not swallow structured output failures", async () => {
   const gh = ghWith({ number: 11, title: "x", body: "y", labels: [], state: "open" });
   // default threshold is 3, so a single failure normally stays quiet; override to 1 -> escalate at once.
   const c: StepCtx = { ...ctxWith(gh, new FakeProvider({}), { recordFail: () => 1 }),
     repoPolicy: { agents: { maintainer: { failThreshold: 1 } } } };
-  await issueStep(c, 11);
-  expect(gh.panels[11]).toMatch(/human/i);
+  await expect(issueStep(c, 11)).rejects.toBeInstanceOf(StructuredAgentError);
+  expect(gh.panels[11]).toBeUndefined();
 });
 
 // --- awaiting-gate: check the human signal; NEVER call the agent ---

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProvider } from "../src/provider/fake.js";
 import { maintainer, type MaintainerInput } from "../src/agents/maintainer.js";
+import { StructuredAgentError } from "../src/agents/spec.js";
 import type { Action } from "../src/shell/actions.js";
 
 const newDir = () => mkdtempSync(join(tmpdir(), "monastery-maint-"));
@@ -44,20 +45,19 @@ test("an empty actions array is valid (explicitly: nothing to do this tick)", as
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("missing file and no stdout => null (failed to produce output)", async () => {
+test("missing file and no stdout => structured failure", async () => {
   const dir = newDir();
-  const out = await maintainer(new FakeProvider({}), "sonnet", input, dir);
-  expect(out).toBeNull();
+  await expect(maintainer(new FakeProvider({}), "sonnet", input, dir))
+    .rejects.toMatchObject({ failure: { reason: "missing_artifact" } });
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("an invalid action poisons the batch => null (no partial execution)", async () => {
+test("an invalid action poisons the batch => structured failure (no partial execution)", async () => {
   const dir = newDir();
-  const out = await maintainer(
+  await expect(maintainer(
     new FakeProvider({ "actions.json": '{"actions":[{"kind":"relabel","num":7,"add":[],"remove":[]},{"kind":"doClose","num":7}]}' }),
     "sonnet", input, dir,
-  );
-  expect(out).toBeNull();
+  )).rejects.toBeInstanceOf(StructuredAgentError);
   rmSync(dir, { recursive: true, force: true });
 });
 
