@@ -181,3 +181,32 @@ test("when a monastery PR is already open, the agent is told NOT to re-propose i
   expect(ctx).toMatch(/open/);               // its state, so the agent won't re-implement
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("PR url/isDraft/comments/reviews/checks are surfaced in the <pr> context block", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", {
+    ...input,
+    pr: {
+      branch: "feat/7-dark-mode",
+      state: "open",
+      url: "https://github.com/o/r/pull/10",
+      number: 10,
+      title: "dark mode",
+      body: "PR body text",
+      isDraft: true,
+      comments: [{ id: "c1", body: "please fix the styling", author: "alice" }],
+      reviews: [{ author: "bob", state: "REQUEST_CHANGES", body: "needs work" }],
+      checks: "fail",
+    },
+  }, dir);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toContain("https://github.com/o/r/pull/10"); // PR url
+  expect(ctx).toContain("isDraft: true");                  // draft state
+  expect(ctx).toContain("please fix the styling");         // PR comment body
+  expect(ctx).toContain("alice");                          // PR comment author
+  expect(ctx).toContain("REQUEST_CHANGES");                // review state
+  expect(ctx).toContain("needs work");                     // review body
+  expect(ctx).toContain("fail");                           // checks status
+  rmSync(dir, { recursive: true, force: true });
+});

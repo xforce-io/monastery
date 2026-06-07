@@ -25,6 +25,14 @@ export class FakeGitHub implements GitHubAdapter {
   public externalIssues: Record<string, Issue> = {};
   /** Branches whose PR was merged via mergePR. */
   public merged: string[] = [];
+  /** PR details (number, url, title, body, isDraft) by branch name, for tests. */
+  public prDetailsByBranch: Record<string, { number: number; url: string; title: string; body: string; isDraft: boolean }> = {};
+  /** PR conversation comments by PR number, for tests. */
+  public prCommentsByPr: Record<number, { id: string; body: string; author: string }[]> = {};
+  /** PR reviews by PR number, for tests. */
+  public prReviewsByPr: Record<number, { author: string; state: string; body: string }[]> = {};
+  /** PR check status by PR number, for tests. */
+  public prChecksByPr: Record<number, "pass" | "fail" | "pending"> = {};
   constructor(private opts: { thesis: string; issues: Issue[]; files?: Record<string, string> }) {
     for (const i of opts.issues) this.issues.set(i.number, { ...i, labels: [...i.labels] });
     if (opts.files) this.files = { ...opts.files };
@@ -71,6 +79,18 @@ export class FakeGitHub implements GitHubAdapter {
   }
   async prState(_r: string, branch: string): Promise<"open" | "merged" | "closed" | null> {
     return this.prStates[branch] ?? null;
+  }
+  async getPrDetails(_r: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean } | null> {
+    return this.prDetailsByBranch[branch] ?? null;
+  }
+  async listPrComments(_r: string, prNumber: number): Promise<{ id: string; body: string; author: string }[]> {
+    return this.prCommentsByPr[prNumber] ?? [];
+  }
+  async listPrReviews(_r: string, prNumber: number): Promise<{ author: string; state: string; body: string }[]> {
+    return this.prReviewsByPr[prNumber] ?? [];
+  }
+  async getPrChecks(_r: string, prNumber: number): Promise<"pass" | "fail" | "pending"> {
+    return this.prChecksByPr[prNumber] ?? "pending";
   }
   async listComments(_r: string, n: number): Promise<{ id: string; body: string; author: string }[]> {
     // Others' comments first (chronological-ish), then monastery's own posts, then the sticky panel.
