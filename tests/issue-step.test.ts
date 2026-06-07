@@ -7,7 +7,7 @@ import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
-import { executeSafe, type Action } from "../src/shell/actions.js";
+import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
 import type { Issue } from "../src/types.js";
 
@@ -129,17 +129,8 @@ test("awaiting-gate + no reaction yet: waits on the human, no agent call, no clo
   expect(gh.closed).not.toContain(22);
 });
 
-// --- active: implement routes to the patcher executor, not executeSafe ---
-
-test("active issue: an implement action runs the patcher (sandbox + draft PR), not executeSafe", async () => {
-  const gh = ghWith({ number: 40, title: "fix it", body: "broken", labels: [], state: "open" });
-  const provider = new FakeProvider(actionsJson([{ kind: "implement", num: 40 }]));
-  const c: StepCtx = { ...ctxWith(gh, provider), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
-  const out = await issueStep(c, 40);
-  expect(out.kind).toBe("progressed");
-  expect(gh.prs).toHaveLength(1);          // the patcher opened a draft PR
-  expect(gh.prs[0].body).toContain("Closes #40");
-});
+// --- active: implement is human-gated (#88) — opening the gate vs. running the patcher after 👍 is
+//     covered by the "#88:" tests above. Here we only assert dry-run never touches the patcher. ---
 
 test("dry-run: an implement action is previewed, NOT executed (the patcher never runs / pushes)", async () => {
   const gh = ghWith({ number: 70, title: "fix it", body: "broken", labels: [], state: "open" });
@@ -250,4 +241,37 @@ test("awaiting-gate approved merge: still waits for the human to click Merge, en
   const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
   expect(out.kind).toBe("waiting");
   expect(out.entry).toMatchObject({ number: 1, priority: "parked" });
+});
+
+// --- #88: implement is human-gated — it opens an approval panel, the patcher runs only after 👍 ---
+
+test("#88: implement opens an approval gate (panel + needs-approval), does NOT run the patcher", async () => {
+  const gh = ghWith({ number: 50, title: "fix it", body: "broken", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "implement", num: 50, draft: "## Plan: refactor X" }]));
+  const out = await issueStep(ctxWith(gh, provider), 50);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(0);                        // patcher did NOT run — no code written
+  expect(gh.panels[50]).toContain("action: implement");  // approval gate opened instead
+  expect(gh.panels[50]).toContain("## Plan: refactor X");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
+test("#88: the patcher runs only after a human 👍 on the implement approval panel", async () => {
+  const gh = ghWith({ number: 51, title: "fix it", body: "broken", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 51, "implement", "## Plan"); // gate already open (needs-approval + panel)
+  gh.commentReactions["panel:51"] = ["+1"];                // human endorsed
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 51);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);                  // NOW the patcher ran -> draft PR
+  expect(gh.prs[0].body).toContain("Closes #51");
+});
+
+test("#88: no 👍 on the implement panel → still waiting on the human, patcher does not run", async () => {
+  const gh = ghWith({ number: 52, title: "fix it", body: "broken", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 52, "implement", "## Plan");
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 52);
+  expect(out.kind).toBe("waiting");
+  expect(gh.prs).toHaveLength(0);                  // no endorsement -> no code
 });

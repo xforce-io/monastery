@@ -9,7 +9,7 @@ import type { Issue, Outcome } from "../types.js";
 import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
 import { maintainer, maintainerSpec } from "../agents/maintainer.js";
 import { effectivePolicy } from "../agents/spec.js";
-import { executeSafe, doClose, type GatedKind } from "../shell/actions.js";
+import { executeSafe, doClose, proposeGate, type GatedKind } from "../shell/actions.js";
 import type { FailTracker, RepoPolicy, BacklogWriter } from "../config/store.js";
 import { deriveEntry } from "./backlog.js";
 import type { Workspace } from "../workspace/workspace.js";
@@ -89,8 +89,12 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   for (const a of actions) {
     try {
       if (a.kind === "implement") {
-        if (ctx.dryRun) console.warn(`[dry-run] would implement ${ctx.repo}#${issue.number} (patcher skipped)`);
-        else await runImplement(ctx, issue);
+        // #88: implement is human-gated. The agent only PROPOSES — open an approval panel + needs-approval;
+        // the patcher (runImplement) runs only after a real human 👍 next tick (awaitingGate). The agent
+        // can never self-approve its own implementation (closes the consensus self-endorse hole).
+        const draft = a.draft ?? `Proposed implement for #${issue.number}. 👍 this panel to let monastery write a draft PR.`;
+        if (ctx.dryRun) console.warn(`[dry-run] would propose implement ${ctx.repo}#${issue.number} (awaiting human 👍)`);
+        else await proposeGate(ctx.gh, ctx.repo, issue.number, "implement", draft);
       } else await executeSafe(ctx.gh, ctx.repo, a);
     } catch (e) {
       console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${(e as Error).message}`);
@@ -120,6 +124,10 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     await doClose(ctx.gh, ctx.repo, issue.number, reason); // closes first -> idempotent, leaves the open list
     return { kind: "done" };
   }
+  if (kind === "implement") {
+    // #88: the human endorsed (👍) the implement proposal — NOW run the patcher (sandbox + draft PR).
+    return runImplement(ctx, issue);
+  }
   // PROTOCOL §4: a merge is approved by the human clicking Merge on the PR directly (which closes the
   // issue via `Closes #N` -> terminal). The shell does not merge from an issue 👍. Keep waiting.
   // Still open + needs-approval, so it stays parked in the backlog.
@@ -136,7 +144,7 @@ async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Pr
 
 /** Read the proposed gated kind from the approval panel marker (`action: close|merge`). */
 function approvalKind(body: string): GatedKind | null {
-  const m = body.match(/^action:\s*(close|merge)\s*$/m);
+  const m = body.match(/^action:\s*(close|merge|implement)\s*$/m);
   return m ? (m[1] as GatedKind) : null;
 }
 
