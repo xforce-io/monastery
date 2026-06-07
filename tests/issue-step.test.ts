@@ -156,7 +156,7 @@ test("active issue: the maintainer is told the state of monastery's open PR (so 
   const provider = new FakeProvider(actionsJson([]));
   await issueStep(ctxWith(gh, provider), 41);
   expect(provider.calls[0].context).toContain("feat/41-x");
-  expect(provider.calls[0].context).toMatch(/state open/);
+  expect(provider.calls[0].context).toMatch(/state: open/);
 });
 
 // --- active: a single failing action must not crash the tick (CONSTITUTION §10: failure = noise) ---
