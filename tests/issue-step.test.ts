@@ -343,6 +343,102 @@ test("#90: pendingApprovals excludes an issue whose gate is already 👍'd", asy
   expect(await pendingApprovals(gh, "o/r")).toEqual([]);
 });
 
+// --- #97: a parked gate responds to a NEW human comment — back to active (execution still reaction-gated) ---
+
+test("#97: a new unanswered human comment under the gate sends it back to active (no agent call here)", async () => {
+  const gh = ghWith({ number: 100, title: "x", body: "y", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 100, "implement", "## Plan"); // gate = own comment id "0"
+  gh.authoredComments[100] = [{ body: "wait, why ApiProvider here?", author: "xforce-io", updatedAt: 100 }]; // human, newer, unanswered
+  const c = ctxWith(gh, new FakeProvider({}));
+  const out = await issueStep(c, 100);
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL); // demoted → active next tick
+  expect(i.labels).not.toContain(DECLINED);       // NOT terminal
+  expect(gh.panels[100]).toContain("protocol: note");
+  expect((c.provider as FakeProvider).calls).toHaveLength(0); // awaiting-gate never calls the agent itself
+});
+
+test("#97: a human comment OLDER than the gate does NOT invalidate it (termination guard)", async () => {
+  const gh = ghWith({ number: 101, title: "x", body: "y", labels: [], state: "open" });
+  gh.authoredComments[101] = [{ body: "earlier discussion", author: "xforce-io", updatedAt: 0 }]; // predates the gate
+  await proposeGate(gh, "o/r", 101, "implement", "## Plan"); // gate posted after → newer than the comment
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 101);
+  expect(out.kind).toBe("waiting");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
+test("#97: a human comment the agent already replied to does NOT re-invalidate the gate", async () => {
+  const gh = ghWith({ number: 102, title: "x", body: "y", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 102, "implement", "## Plan");
+  gh.authoredComments[102] = [{ body: "question?", author: "xforce-io", updatedAt: 100 }]; // id ext0, newer
+  await gh.postComment("o/r", 102, "answer\n\n<!--monastery-reply to=ext0-->"); // already answered
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 102);
+  expect(out.kind).toBe("waiting");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
+test("#97: a monastery (marked) comment newer than the gate does NOT invalidate it (only human comments count)", async () => {
+  const gh = ghWith({ number: 103, title: "x", body: "y", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 103, "implement", "## Plan");
+  await gh.postComment("o/r", 103, "<!--monastery-state\nprotocol: note\n-->\nmonastery's own note"); // marked, newer
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 103);
+  expect(out.kind).toBe("waiting");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
+test("#97: an approved gate (👍) is NOT intercepted by a later human comment — it still executes", async () => {
+  const gh = ghWith({ number: 104, title: "fix", body: "y", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 104, "implement", "## Plan");
+  gh.commentReactions["0"] = ["+1"];
+  gh.authoredComments[104] = [{ body: "late question", author: "xforce-io", updatedAt: 100 }]; // newer, unanswered
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 104);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1); // 👍 honored; the later comment did not block execution
+});
+
+// --- #97 validation: replay issue #91's REAL state — the human's last comment must re-open the gate ---
+// Mirrors github.com/xforce-io/monastery/issues/91 at validation time: an endorsed spec v1, an implement
+// gate stamped at v1 (so #95 staleness is NEUTRAL — isolating #97), then the maintainer's real last human
+// comment landing AFTER the gate. The whole point of #97: that comment alone re-opens the design.
+const ISSUE_91_LAST_HUMAN_COMMENT = "ApiProvider 配置在哪里进行，如果没有配置，fallback 逻辑是什么";
+
+function mirror91(withLastHumanComment: boolean): FakeGitHub {
+  const gh = ghWith({ number: 91, title: "Judgment agents structured output", body: "…", labels: [], state: "open" });
+  // spec v1 (monastery-marked, older). proposeGate below will stamp the gate at this version.
+  gh.authoredComments[91] = [
+    { body: `${SPEC_MARKER(1, ["xforce-io"])}\nSpec v1 — Structured Output via API`, author: "xforce-io", updatedAt: 1 },
+  ];
+  return gh;
+}
+
+test("#97 validation (issue #91): the maintainer's real last human comment re-opens the parked gate", async () => {
+  const gh = mirror91(true);
+  await proposeGate(gh, "o/r", 91, "implement", "## 实现计划 — ApiProvider"); // gate stamped at spec v1 → #95 neutral
+  // the real last human comment on #91, landing after the gate, unanswered:
+  gh.authoredComments[91].push({ body: ISSUE_91_LAST_HUMAN_COMMENT, author: "xforce-io", updatedAt: 100 });
+  const c = ctxWith(gh, new FakeProvider({}));
+  const out = await issueStep(c, 91);
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL);            // gate re-opened → active next tick
+  expect(i.labels).not.toContain(DECLINED);                  // not killed
+  expect(gh.panels[91]).toContain("protocol: note");         // panel rewritten to a note
+  expect(gh.prs).toHaveLength(0);                            // execution NOT triggered (still reaction-gated)
+  expect((c.provider as FakeProvider).calls).toHaveLength(0); // gate branch itself never runs the agent
+});
+
+test("#97 validation (issue #91): WITHOUT that last human comment, the same gate stays parked (it's the comment that did it)", async () => {
+  const gh = mirror91(false);
+  await proposeGate(gh, "o/r", 91, "implement", "## 实现计划 — ApiProvider"); // same gate, no new human comment
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 91);
+  expect(out.kind).toBe("waiting");                          // nothing new → still waiting on the human
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
 // --- #95: approval-gate staleness — a newer spec / a 👀 reaction invalidates a parked implement gate ---
 
 test("#95: proposeGate stamps the current spec version into the implement gate marker", async () => {
