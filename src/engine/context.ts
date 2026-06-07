@@ -6,7 +6,7 @@ import type { Issue } from "../types.js";
 import type { MaintainerInput } from "../agents/maintainer.js";
 import { branchName } from "./patch.js";
 import { parseDeps } from "./deps.js";
-import { currentSpec, parseEndorsements, consensusReached } from "../shell/consensus.js";
+import { currentSpec, consensusReached } from "../shell/consensus.js";
 
 /** Gather everything the maintainer needs for one item, from the resource layer. */
 export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, issue: Issue): Promise<MaintainerInput> {
@@ -34,10 +34,12 @@ export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, i
   // multi-party consensus state: current shared spec + endorsements (P1).
   const self = await gh.login();
   const spec = currentSpec(comments);
+  // Endorsement = a 👍 reaction on the spec comment (forge-proof, #92), NOT an endorse comment whose
+  // author == owner is forgeable by the agent. Parties who reacted 👍 are the real endorsers.
   const endorsedCurrent = spec
-    ? parseEndorsements(comments).filter((e) => e.version === spec.version).map((e) => e.by)
+    ? [...new Set((await gh.reactions(repo, spec.id)).filter((r) => r.content === "+1").map((r) => r.author))]
     : [];
-  const consensus = { spec, endorsedCurrent, reached: consensusReached(comments) };
+  const consensus = { spec, endorsedCurrent, reached: consensusReached(spec, endorsedCurrent) };
   // backlog awareness (ARCHITECTURE §2.3): the other open issues, summarized, so the PM can prioritize.
   // (Re-listed per item — cheap, and self-contained; thread the open list down only if scale needs it.)
   const open = await gh.listOpenIssues(repo, 0);

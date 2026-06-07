@@ -12,8 +12,9 @@ test("gatherMaintainerContext assembles thesis + comments + pr + deps + self + c
   gh.prStates["feat/5-x"] = "open"; // monastery's PR for this issue
   gh.authoredComments[5] = [
     { body: "<!--monastery-spec version=1 parties=monastery-bot-->\nthe plan", author: "monastery-bot" },
-    { body: "ok\n<!--monastery-endorse version=1-->", author: "monastery-bot" },
   ];
+  gh.commentReactions["ext0"] = ["+1"];        // a 👍 on the spec comment — endorsement (#92)
+  gh.reactionAuthor["ext0"] = "monastery-bot"; // by the sole party
 
   const input = await gatherMaintainerContext(gh, "o/r", issue);
 
@@ -24,7 +25,20 @@ test("gatherMaintainerContext assembles thesis + comments + pr + deps + self + c
   expect(input.pr).toEqual({ branch: "feat/5-x", state: "open" });
   expect(input.deps).toEqual([{ ref: "owner/up#9", state: "closed", title: "upstream" }]);
   expect(input.consensus?.spec?.version).toBe(1);
-  expect(input.consensus?.reached).toBe(true); // sole party (monastery-bot) endorsed v1
+  expect(input.consensus?.reached).toBe(true); // sole party 👍'd the spec (reaction-based, #92)
+});
+
+test("#92: a self-endorse COMMENT does NOT reach consensus — only a 👍 reaction on the spec counts", async () => {
+  const issue: Issue = { number: 5, title: "x", body: "y", labels: [], state: "open" };
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  gh.selfLogin = "monastery-bot";
+  gh.authoredComments[5] = [
+    { body: "<!--monastery-spec version=1 parties=monastery-bot-->\nplan", author: "monastery-bot" },
+    { body: "Endorsed.\n<!--monastery-endorse version=1-->", author: "monastery-bot" }, // forgeable
+  ];
+  // NO 👍 reaction on the spec comment.
+  const input = await gatherMaintainerContext(gh, "o/r", issue);
+  expect(input.consensus?.reached).toBe(false); // self-endorse comment doesn't count; needs a real 👍
 });
 
 test("gatherMaintainerContext surfaces the backlog (other open issues, summarized, excluding self)", async () => {

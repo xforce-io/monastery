@@ -106,14 +106,14 @@ test("listComments parses id+body+author+updatedAt json (identity + newest gate 
   expect(captured[0]).toContain("[.[] | {id: (.id|tostring), body, author: .user.login, updatedAt: .updated_at}]");
 });
 
-test("reactions reads a comment's reaction contents (record/replay)", async () => {
+test("reactions reads a comment's reaction contents + author (record/replay)", async () => {
   const captured: string[][] = [];
-  const gh = new GhAdapter(async (args) => { captured.push(args); return JSON.stringify(["+1", "-1", "rocket"]); });
+  const gh = new GhAdapter(async (args) => { captured.push(args); return JSON.stringify([{ content: "+1", author: "alice" }, { content: "-1", author: "bob" }]); });
   const got = await gh.reactions("o/r", "12345");
   expect(captured[0]).toEqual([
-    "api", "repos/o/r/issues/comments/12345/reactions", "--jq", "[.[].content]",
+    "api", "repos/o/r/issues/comments/12345/reactions", "--jq", "[.[] | {content, author: .user.login}]",
   ]);
-  expect(got).toEqual(["+1", "-1", "rocket"]);
+  expect(got).toEqual([{ content: "+1", author: "alice" }, { content: "-1", author: "bob" }]);
 });
 
 test("reactions returns [] when none / api fails", async () => {

@@ -1,27 +1,27 @@
-// tests/consensus.test.ts — consensus is computed from append-only versioned spec + endorse comments.
+// tests/consensus.test.ts — consensus: versioned spec comments + endorsement via 👍 reaction (#92).
 import { expect, test } from "vitest";
 import { currentSpec, parseEndorsements, consensusReached } from "../src/shell/consensus.js";
 
-const specComment = (version: number, parties: string[], body: string, author = "a-bot") =>
-  ({ body: `<!--monastery-spec version=${version} parties=${parties.join(",")}-->\n${body}`, author });
-const endorseComment = (version: number, author: string) =>
-  ({ body: `looks good\n<!--monastery-endorse version=${version}-->`, author });
+const specComment = (version: number, parties: string[], body: string, author = "a-bot", id = `spec${version}`) =>
+  ({ id, body: `<!--monastery-spec version=${version} parties=${parties.join(",")}-->\n${body}`, author });
+const endorseComment = (version: number, author: string, id = `end${version}-${author}`) =>
+  ({ id, body: `looks good\n<!--monastery-endorse version=${version}-->`, author });
 
-test("currentSpec = the highest-version spec comment (parsed: version, parties, body)", () => {
+test("currentSpec = the highest-version spec comment (version, parties, body, id)", () => {
   const comments = [
-    specComment(1, ["a-bot", "b-bot"], "first draft"),
-    { body: "a human comment", author: "alice" },
-    specComment(2, ["a-bot", "b-bot"], "revised draft"),
+    specComment(1, ["a-bot", "b-bot"], "first draft", "a-bot", "s1"),
+    { id: "h1", body: "a human comment", author: "alice" },
+    specComment(2, ["a-bot", "b-bot"], "revised draft", "a-bot", "s2"),
   ];
-  expect(currentSpec(comments)).toEqual({ version: 2, parties: ["a-bot", "b-bot"], body: "revised draft" });
-  expect(currentSpec([{ body: "no spec here", author: "x" }])).toBeNull();
+  expect(currentSpec(comments)).toEqual({ version: 2, parties: ["a-bot", "b-bot"], body: "revised draft", id: "s2" });
+  expect(currentSpec([{ id: "x", body: "no spec here", author: "x" }])).toBeNull();
 });
 
-test("parseEndorsements: endorser identity is the comment AUTHOR (reuses #51), version from the marker", () => {
+test("parseEndorsements (still used by the endorse action's dedup): identity is the comment author", () => {
   const comments = [
     endorseComment(2, "a-bot"),
-    endorseComment(1, "b-bot"), // stale version
-    { body: "no marker", author: "alice" },
+    endorseComment(1, "b-bot"),
+    { id: "h", body: "no marker", author: "alice" },
   ];
   expect(parseEndorsements(comments)).toEqual([
     { version: 2, by: "a-bot" },
@@ -29,16 +29,16 @@ test("parseEndorsements: endorser identity is the comment AUTHOR (reuses #51), v
   ]);
 });
 
-test("consensusReached = every party of the CURRENT spec has endorsed its version", () => {
-  const base = [specComment(2, ["a-bot", "b-bot"], "agreed plan")];
-  expect(consensusReached(base)).toBe(false);                                   // nobody endorsed
-  expect(consensusReached([...base, endorseComment(2, "a-bot")])).toBe(false);  // only one party
-  expect(consensusReached([...base, endorseComment(2, "a-bot"), endorseComment(2, "b-bot")])).toBe(true);
-  // an endorsement of an OLD version doesn't count toward the current one
-  expect(consensusReached([...base, endorseComment(2, "a-bot"), endorseComment(1, "b-bot")])).toBe(false);
+test("consensusReached = every party of the spec is among the endorsers (from spec 👍 reactions, #92)", () => {
+  const spec = currentSpec([specComment(2, ["a-bot", "b-bot"], "agreed plan")]);
+  expect(consensusReached(spec, [])).toBe(false);                    // nobody endorsed
+  expect(consensusReached(spec, ["a-bot"])).toBe(false);             // only one party
+  expect(consensusReached(spec, ["a-bot", "b-bot"])).toBe(true);     // both parties 👍'd the spec
+  expect(consensusReached(spec, ["a-bot", "b-bot", "x"])).toBe(true); // extra endorsers are harmless
 });
 
 test("consensusReached is false when there is no spec, or the spec lists no parties", () => {
-  expect(consensusReached([endorseComment(1, "a-bot")])).toBe(false);            // no spec
-  expect(consensusReached([specComment(1, [], "plan"), endorseComment(1, "a-bot")])).toBe(false); // no parties
+  expect(consensusReached(null, ["a-bot"])).toBe(false);                          // no spec
+  const noParties = currentSpec([specComment(1, [], "plan")]);
+  expect(consensusReached(noParties, ["a-bot"])).toBe(false);                     // no parties
 });

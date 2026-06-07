@@ -39,7 +39,7 @@ export interface GitHubAdapter {
    *  `updatedAt` is the comment's last-edit time (epoch ms), used to choose the newest approval gate. */
   listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]>;
   /** Reaction contents on a comment (`+1`/`-1` = approve/decline, PROTOCOL §4). */
-  reactions(repo: string, commentId: string): Promise<string[]>;
+  reactions(repo: string, commentId: string): Promise<{ content: string; author: string }[]>;
   /** The login this monastery instance acts as (its own identity) — used to attribute/dedup endorsements. */
   login(): Promise<string>;
   /** Merge the PR whose head is `branch` (a gated, human-approved action). */

@@ -17,6 +17,8 @@ export class FakeGitHub implements GitHubAdapter {
   public prStates: Record<string, "open" | "merged" | "closed"> = {};
   /** Injected reaction contents, keyed by commentId -> e.g. ["+1"]. */
   public commentReactions: Record<string, string[]> = {};
+  /** Who authored each comment's reactions (per commentId); default = selfLogin. For consensus tests (#92). */
+  public reactionAuthor: Record<string, string> = {};
   /** Last-write time for posted comments, keyed by issue then zero-based comment index. */
   public commentUpdatedAt: Record<number, number[]> = {};
   /** Panel last-write time (monotonic counter), bumped by upsertPanel. */
@@ -108,8 +110,9 @@ export class FakeGitHub implements GitHubAdapter {
     if (this.panels[n] !== undefined) out.push({ id: `panel:${n}`, body: this.panels[n], author: this.selfLogin, updatedAt: this.panelUpdatedAt[n] ?? 0 });
     return out;
   }
-  async reactions(_r: string, commentId: string): Promise<string[]> {
-    return this.commentReactions[commentId] ?? [];
+  async reactions(_r: string, commentId: string): Promise<{ content: string; author: string }[]> {
+    const author = this.reactionAuthor[commentId] ?? this.selfLogin;
+    return (this.commentReactions[commentId] ?? []).map((content) => ({ content, author }));
   }
   async login(): Promise<string> { return this.selfLogin; }
   async mergePR(_r: string, branch: string): Promise<void> {

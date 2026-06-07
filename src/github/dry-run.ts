@@ -45,7 +45,7 @@ export class DryRunAdapter implements GitHubAdapter {
   listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]> {
     return this.inner.listComments(repo, num);
   }
-  reactions(repo: string, commentId: string): Promise<string[]> {
+  reactions(repo: string, commentId: string): Promise<{ content: string; author: string }[]> {
     return this.inner.reactions(repo, commentId);
   }
   login(): Promise<string> { return this.inner.login(); }

@@ -107,3 +107,21 @@ test("proposeGate(implement) posts an approval gate comment (action: implement) 
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-approval");
 });
+
+// --- #92: agent cannot touch shell-owned control labels via relabel (can't fake approval/declined) ---
+
+test("relabel rejects shell-owned control labels (needs-approval / declined), keeps display labels", async () => {
+  const g = gh();
+  await executeSafe(g, "o/r", { kind: "relabel", num: 1, add: ["monastery:needs-approval", "type:bug"], remove: [] });
+  const [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("type:bug");                       // display label applied
+  expect(i.labels).not.toContain("monastery:needs-approval");   // control label rejected
+});
+
+test("relabel cannot remove a control label either (e.g. clearing declined to resurrect an issue)", async () => {
+  const g = gh();
+  await g.addLabel("o/r", 1, "monastery:declined");
+  await executeSafe(g, "o/r", { kind: "relabel", num: 1, add: [], remove: ["monastery:declined"] });
+  const [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:declined");             // shell-owned: agent can't remove it
+});
