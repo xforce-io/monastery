@@ -275,3 +275,23 @@ test("#88: no 👍 on the implement panel → still waiting on the human, patche
   expect(out.kind).toBe("waiting");
   expect(gh.prs).toHaveLength(0);                  // no endorsement -> no code
 });
+
+// --- #88 review fix: approved implement must consume the gate (clear needs-approval, rewrite panel) ---
+
+test("#88: approved implement consumes the gate — clears needs-approval, rewrites panel, no re-run", async () => {
+  const gh = ghWith({ number: 60, title: "fix it", body: "broken", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 60, "implement", "## Plan");
+  gh.commentReactions["panel:60"] = ["+1"];
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out1 = await issueStep(c, 60);
+  expect(out1.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);                       // patcher ran, draft PR opened
+  const [i1] = await gh.listOpenIssues("o/r", 0);
+  expect(i1.labels).not.toContain(NEEDS_APPROVAL);      // gate consumed
+  expect(gh.panels[60]).toContain("protocol: note");    // panel is now a plain note, not an approval gate
+  expect(gh.panels[60]).not.toContain("action: implement");
+  // next tick: issue is active again (no needs-approval); empty actions → no duplicate runImplement
+  const c2 = { ...ctxWith(gh, new FakeProvider(actionsJson([]))), ws: new FakeWorkspace() };
+  await issueStep(c2, 60);
+  expect(gh.prs).toHaveLength(1);                        // still one PR — no re-run loop
+});

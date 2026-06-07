@@ -125,8 +125,16 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     return { kind: "done" };
   }
   if (kind === "implement") {
-    // #88: the human endorsed (👍) the implement proposal — NOW run the patcher (sandbox + draft PR).
-    return runImplement(ctx, issue);
+    // #88: the human endorsed (👍) the implement proposal — run the patcher (sandbox + draft PR).
+    const out = await runImplement(ctx, issue);
+    // Consume the gate on success: clear needs-approval + rewrite the panel to a plain note, so the item
+    // doesn't re-enter awaitingGate on the stale 👍 every tick (which would re-count as advanced forever).
+    if (out.kind === "progressed") {
+      await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+      await ctx.gh.upsertPanel(ctx.repo, issue.number,
+        `${NOTE_MARKER}\n✅ implement approved — draft PR opened${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`);
+    }
+    return out;
   }
   // PROTOCOL §4: a merge is approved by the human clicking Merge on the PR directly (which closes the
   // issue via `Closes #N` -> terminal). The shell does not merge from an issue 👍. Keep waiting.
