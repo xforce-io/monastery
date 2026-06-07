@@ -18,6 +18,7 @@ export interface AgentPolicy {
   timeoutMs?: number;
   failThreshold?: number; // consecutive no-valid-output ticks before escalating to a human
   maxIters?: number;      // bounded self-correction loops (e.g. the patcher's review rounds)
+  repairAttempts?: number; // structured artifact repair attempts; capped at 2 so ticks stay bounded
 }
 
 /** Identity shared by every agent, structured or workspace-mutating. */
@@ -63,31 +64,122 @@ function stripUndefined(o?: Partial<AgentPolicy>): Partial<AgentPolicy> {
 
 export interface RunCtx { provider: AgentProvider; model: string; artifactDir: string }
 
+export type StructuredAgentFailureReason =
+  | "missing_artifact"
+  | "invalid_json"
+  | "schema_invalid"
+  | "provider_failed";
+
+export interface StructuredAgentFailure {
+  reason: StructuredAgentFailureReason;
+  agent: string;
+  artifactPath: string;
+  parseError?: string;
+  schemaError?: string;
+  providerError?: string;
+  repairAttempts: number;
+}
+
+export class StructuredAgentError extends Error {
+  constructor(public readonly failure: StructuredAgentFailure) {
+    super(formatFailure(failure));
+    this.name = "StructuredAgentError";
+  }
+}
+
 /**
- * Run a structured agent: prompt -> schema-valid artifact (or stdout fallback) -> typed output, or null.
- * One place for the "run -> read file -> validate -> fall back to resultText -> null" shape that every
- * structured judge used to re-implement.
+ * Run a structured agent: prompt -> schema-valid artifact (or stdout fallback) -> typed output.
+ * Invalid JSON and schema-invalid artifacts get a bounded repair attempt, then fail fast with diagnostics.
  */
 export async function runStructuredAgent<In, Out>(
   spec: StructuredAgentSpec<In, Out>,
   input: In,
   ctx: RunCtx,
 ): Promise<Out | null> {
-  const context = spec.buildContext(input);
-  const res = await ctx.provider.run({ persona: spec.persona, context, artifactDir: ctx.artifactDir, model: ctx.model });
-
-  // 1. primary: the agent wrote its artifact file
+  const baseContext = spec.buildContext(input);
+  const maxRetries = Math.min(spec.policy.repairAttempts ?? 1, 2);
+  let repairHint: string | undefined;
+  let lastFailure: StructuredAgentFailure | null = null;
   const p = join(ctx.artifactDir, spec.artifact);
-  if (existsSync(p)) {
-    const parsed = spec.schema.safeParse(safeJson(readFileSync(p, "utf8")));
-    if (parsed.success) return parsed.data;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const context = repairHint
+      ? `${baseContext}\n\n---\n\n## REPAIR NEEDED\n\n${repairHint}\n\nPlease rewrite ${spec.artifact} with correctly escaped JSON.`
+      : baseContext;
+
+    let res;
+    try {
+      res = await ctx.provider.run({ persona: spec.persona, context, artifactDir: ctx.artifactDir, model: ctx.model });
+    } catch (e) {
+      throw new StructuredAgentError({
+        reason: "provider_failed",
+        agent: spec.name,
+        artifactPath: p,
+        providerError: (e as Error).message,
+        repairAttempts: attempt,
+      });
+    }
+
+    // 1. primary: the agent wrote its artifact file
+    if (existsSync(p)) {
+      const raw = readFileSync(p, "utf8");
+
+      let json: unknown;
+      try {
+        json = JSON.parse(raw);
+      } catch (err) {
+        const msg = (err as Error).message;
+        lastFailure = { reason: "invalid_json", agent: spec.name, artifactPath: p, parseError: msg, repairAttempts: attempt };
+        console.warn(formatFailure(lastFailure));
+        if (attempt < maxRetries) {
+          repairHint = [
+            `The artifact ${spec.artifact} is not valid JSON.`,
+            `JSON parse error: ${msg}`,
+            `Bad artifact content:`,
+            raw,
+            `Rewrite ${spec.artifact} only. Preserve the intended semantics, but make it schema-valid JSON.`,
+          ].join("\n");
+          continue; // retry with repair context
+        }
+        throw new StructuredAgentError(lastFailure);
+      }
+
+      if (json !== undefined) {
+        const parsed = spec.schema.safeParse(json);
+        if (parsed.success) return parsed.data;
+        const msg = parsed.error.message;
+        lastFailure = { reason: "schema_invalid", agent: spec.name, artifactPath: p, schemaError: msg, repairAttempts: attempt };
+        console.warn(formatFailure(lastFailure));
+        if (attempt < maxRetries) {
+          repairHint = [
+            `The artifact ${spec.artifact} is valid JSON but does not match the required schema.`,
+            `Schema error: ${msg}`,
+            `Bad artifact content:`,
+            raw,
+            `Rewrite ${spec.artifact} only. Preserve the intended semantics, but make it schema-valid JSON.`,
+          ].join("\n");
+          continue;
+        }
+        throw new StructuredAgentError(lastFailure);
+      }
+    }
+
+    // 2. fallback: only when no artifact file exists.
+    if (res.resultText) {
+      const fromText = extractStructured(res.resultText, spec.schema);
+      if (fromText) return fromText;
+    }
+
+    lastFailure = { reason: "missing_artifact", agent: spec.name, artifactPath: p, repairAttempts: attempt };
+    throw new StructuredAgentError(lastFailure);
   }
-  // 2. fallback: the agent printed the payload to stdout instead of writing the file
-  if (res.resultText) {
-    const fromText = extractStructured(res.resultText, spec.schema);
-    if (fromText) return fromText;
-  }
-  return null;
+
+  throw new StructuredAgentError(lastFailure ?? {
+    reason: "missing_artifact",
+    agent: spec.name,
+    artifactPath: p,
+    repairAttempts: maxRetries,
+  });
 }
 
 /** Pull a schema-valid value out of free-form text (fenced JSON, prose-wrapped object/array, or bare). */
@@ -108,3 +200,12 @@ function extractStructured<Out>(text: string, schema: OutSchema<Out>): Out | nul
 }
 
 function safeJson(s: string): unknown { try { return JSON.parse(s); } catch { return undefined; } }
+
+function formatFailure(f: StructuredAgentFailure): string {
+  const details = [
+    f.parseError ? `parseError=${f.parseError}` : "",
+    f.schemaError ? `schemaError=${f.schemaError}` : "",
+    f.providerError ? `providerError=${f.providerError}` : "",
+  ].filter(Boolean).join(" ");
+  return `[monastery] ${f.agent}: structured output failed reason=${f.reason} artifact=${f.artifactPath} repairAttempts=${f.repairAttempts}${details ? " " + details : ""}`;
+}
