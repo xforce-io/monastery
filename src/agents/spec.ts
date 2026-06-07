@@ -65,28 +65,59 @@ export interface RunCtx { provider: AgentProvider; model: string; artifactDir: s
 
 /**
  * Run a structured agent: prompt -> schema-valid artifact (or stdout fallback) -> typed output, or null.
- * One place for the "run -> read file -> validate -> fall back to resultText -> null" shape that every
- * structured judge used to re-implement.
+ * On JSON parse failure, feeds the error + bad artifact back to the provider for one repair attempt.
+ * Logs (but does not retry) schema validation failures.
  */
 export async function runStructuredAgent<In, Out>(
   spec: StructuredAgentSpec<In, Out>,
   input: In,
   ctx: RunCtx,
 ): Promise<Out | null> {
-  const context = spec.buildContext(input);
-  const res = await ctx.provider.run({ persona: spec.persona, context, artifactDir: ctx.artifactDir, model: ctx.model });
+  const baseContext = spec.buildContext(input);
+  const maxRetries = 1; // one repair attempt on JSON parse failure
+  let repairHint: string | undefined;
 
-  // 1. primary: the agent wrote its artifact file
-  const p = join(ctx.artifactDir, spec.artifact);
-  if (existsSync(p)) {
-    const parsed = spec.schema.safeParse(safeJson(readFileSync(p, "utf8")));
-    if (parsed.success) return parsed.data;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const context = repairHint
+      ? `${baseContext}\n\n---\n\n## REPAIR NEEDED\n\n${repairHint}\n\nPlease rewrite ${spec.artifact} with correctly escaped JSON.`
+      : baseContext;
+
+    const res = await ctx.provider.run({ persona: spec.persona, context, artifactDir: ctx.artifactDir, model: ctx.model });
+
+    // 1. primary: the agent wrote its artifact file
+    const p = join(ctx.artifactDir, spec.artifact);
+    if (existsSync(p)) {
+      const raw = readFileSync(p, "utf8");
+
+      let json: unknown;
+      try {
+        json = JSON.parse(raw);
+      } catch (err) {
+        const msg = (err as Error).message;
+        console.warn(`[monastery] ${spec.name}: invalid JSON in ${p}: ${msg}`);
+        if (attempt < maxRetries) {
+          repairHint = `JSON parse error: ${msg}\nBad artifact content:\n${raw.slice(0, 500)}`;
+          continue; // retry with repair context
+        }
+        // exhausted retries — fall through to stdout fallback below
+      }
+
+      if (json !== undefined) {
+        const parsed = spec.schema.safeParse(json);
+        if (parsed.success) return parsed.data;
+        console.warn(`[monastery] ${spec.name}: schema error in ${p}: ${parsed.error.message}`);
+      }
+    }
+
+    // 2. fallback: the agent printed the payload to stdout instead of writing the file
+    if (res.resultText) {
+      const fromText = extractStructured(res.resultText, spec.schema);
+      if (fromText) return fromText;
+    }
+
+    break; // schema failure or missing artifact + no valid stdout: don't retry
   }
-  // 2. fallback: the agent printed the payload to stdout instead of writing the file
-  if (res.resultText) {
-    const fromText = extractStructured(res.resultText, spec.schema);
-    if (fromText) return fromText;
-  }
+
   return null;
 }
 
