@@ -2,9 +2,9 @@
 // The shared spec is append-only versioned comments (no edit-in-place, so endorsements bind to a version
 // unambiguously). Endorser identity = the comment's author (reuses listComments author, #51).
 
-export interface Spec { version: number; parties: string[]; body: string }
+export interface Spec { version: number; parties: string[]; body: string; id: string }
 export interface Endorsement { version: number; by: string }
-export type Comment = { body: string; author: string };
+export type Comment = { id: string; body: string; author: string };
 
 const SPEC_RE = /<!--monastery-spec version=(\d+) parties=([^>]*?)-->\n?([\s\S]*)/;
 const ENDORSE_RE = /<!--monastery-endorse version=(\d+)-->/;
@@ -20,7 +20,7 @@ export function parseSpecs(comments: Comment[]): Spec[] {
     const m = c.body.match(SPEC_RE);
     if (!m) continue;
     const parties = m[2].split(",").map((s) => s.trim()).filter(Boolean);
-    out.push({ version: Number(m[1]), parties, body: m[3].trim() });
+    out.push({ version: Number(m[1]), parties, body: m[3].trim(), id: c.id });
   }
   return out;
 }
@@ -41,10 +41,14 @@ export function parseEndorsements(comments: Comment[]): Endorsement[] {
   return out;
 }
 
-/** Consensus = every party of the CURRENT spec has endorsed that spec's exact version. */
-export function consensusReached(comments: Comment[]): boolean {
-  const spec = currentSpec(comments);
+/**
+ * Consensus = every party of the spec has endorsed it. `endorsers` are the logins who reacted 👍 on the
+ * spec comment — the ONLY endorsement signal an agent can't forge (a comment's author == owner is forgeable
+ * when monastery runs as the owner, #92). The shell never writes reactions and the action vocabulary has no
+ * "react", so a 👍 on the spec is necessarily a real human/party.
+ */
+export function consensusReached(spec: Spec | null, endorsers: string[]): boolean {
   if (!spec || spec.parties.length === 0) return false;
-  const endorsedCurrent = new Set(parseEndorsements(comments).filter((e) => e.version === spec.version).map((e) => e.by));
-  return spec.parties.every((p) => endorsedCurrent.has(p));
+  const set = new Set(endorsers);
+  return spec.parties.every((p) => set.has(p));
 }

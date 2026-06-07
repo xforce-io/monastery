@@ -156,11 +156,11 @@ export class GhAdapter implements GitHubAdapter {
     if (this.cachedLogin === undefined) this.cachedLogin = (await this.run(["api", "user", "--jq", ".login"]).catch(() => "")).trim();
     return this.cachedLogin;
   }
-  async reactions(repo: string, commentId: string): Promise<string[]> {
+  async reactions(repo: string, commentId: string): Promise<{ content: string; author: string }[]> {
     const out = await this.run([
-      "api", `repos/${repo}/issues/comments/${commentId}/reactions`, "--jq", "[.[].content]",
+      "api", `repos/${repo}/issues/comments/${commentId}/reactions`, "--jq", "[.[] | {content, author: .user.login}]",
     ]).catch(() => "[]");
-    return JSON.parse(out || "[]") as string[];
+    return JSON.parse(out || "[]") as { content: string; author: string }[];
   }
   async mergePR(repo: string, branch: string): Promise<void> {
     await this.run(["pr", "merge", branch, "--repo", repo, "--merge"]);

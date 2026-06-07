@@ -116,8 +116,8 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   if (!gate) return { kind: "waiting", on: "human", entry: parked }; // needs-approval but no approval comment: inconsistent, wait
 
   const reactions = await ctx.gh.reactions(ctx.repo, gate.id);
-  if (reactions.includes("-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
-  if (!reactions.includes("+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
+  if (reactions.some((r) => r.content === "-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
+  if (!reactions.some((r) => r.content === "+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
 
   // Approved (👍). Execute the gated action the panel proposed.
   const kind = approvalKind(gate.body);
