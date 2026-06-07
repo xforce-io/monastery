@@ -295,3 +295,26 @@ test("#88: approved implement consumes the gate — clears needs-approval, rewri
   await issueStep(c2, 60);
   expect(gh.prs).toHaveLength(1);                        // still one PR — no re-run loop
 });
+
+// --- #88 review fix: stale-reaction guard — a 👍 from before the gate must not approve it ---
+
+test("#88: a 👍 left BEFORE the implement gate was opened does NOT approve it (stale-reaction guard)", async () => {
+  const gh = ghWith({ number: 80, title: "fix it", body: "broken", labels: [], state: "open" });
+  gh.commentReactions["panel:80"] = ["+1"];
+  gh.reactionAt["panel:80"] = 0;                            // 👍 created early (e.g. on an earlier note state)
+  await proposeGate(gh, "o/r", 80, "implement", "## Plan"); // gate written now → panel updatedAt > 0
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 80);
+  expect(out.kind).toBe("waiting");        // stale 👍 ignored — still awaiting a fresh endorsement
+  expect(gh.prs).toHaveLength(0);          // patcher did NOT run
+});
+
+test("#88: a 👍 made AFTER the gate was opened approves it (fresh reaction)", async () => {
+  const gh = ghWith({ number: 81, title: "fix it", body: "broken", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 81, "implement", "## Plan"); // gate first
+  gh.commentReactions["panel:81"] = ["+1"];                // default timestamp = now (post-dates the gate)
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 81);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);
+});

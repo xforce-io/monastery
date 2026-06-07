@@ -114,8 +114,11 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   if (!panel) return { kind: "waiting", on: "human", entry: parked }; // needs-approval but no panel: inconsistent, wait
 
   const reactions = await ctx.gh.reactions(ctx.repo, panel.id);
-  if (reactions.includes("-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
-  if (!reactions.includes("+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
+  // #88: the sticky panel is reused across states, so a 👍/👎 left BEFORE this gate was (re)written must
+  // not count — only reactions that post-date the panel's last edit are valid for the current gate.
+  const fresh = reactions.filter((r) => r.at >= panel.updatedAt);
+  if (fresh.some((r) => r.content === "-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
+  if (!fresh.some((r) => r.content === "+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
 
   // Approved (👍). Execute the gated action the panel proposed.
   const kind = approvalKind(panel.body);

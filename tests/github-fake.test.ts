@@ -54,11 +54,11 @@ test("listComments carries author: own posts = selfLogin, injected comments keep
   expect(comments.find((c) => c.body === "from monastery")?.author).toBe("monastery"); // default selfLogin
 });
 
-test("reactions: defaults to [], returns injected reaction contents for a comment", async () => {
+test("reactions: defaults to [], returns injected reaction contents (with a timestamp) for a comment", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [] });
   expect(await gh.reactions("o/r", "42")).toEqual([]);
   gh.commentReactions["42"] = ["+1"];
-  expect(await gh.reactions("o/r", "42")).toEqual(["+1"]);
+  expect((await gh.reactions("o/r", "42")).map((r) => r.content)).toEqual(["+1"]);
 });
 
 test("findPrForBranch returns a url when a PR with that head exists, else null", async () => {

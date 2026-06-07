@@ -35,10 +35,13 @@ export interface GitHubAdapter {
   listPrReviews(repo: string, prNumber: number): Promise<{ author: string; state: string; body: string }[]>;
   /** Aggregate check status for a PR: all pass → "pass"; any fail → "fail"; else → "pending". */
   getPrChecks(repo: string, prNumber: number): Promise<"pass" | "fail" | "pending">;
-  /** All comments on an issue/PR, oldest first. `author` is the commenter's login (identity, not marker). */
-  listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]>;
-  /** Reaction contents on a comment (e.g. `["+1", "-1"]`) — `+1`/`-1` are the issue approve/decline signals (PROTOCOL §4). */
-  reactions(repo: string, commentId: string): Promise<string[]>;
+  /** All comments on an issue/PR, oldest first. `author` is the commenter's login (identity, not marker).
+   *  `updatedAt` is the comment's last-edit time (epoch ms) — the sticky panel's updatedAt is when the
+   *  approval gate was (re)written, so a 👍 is only valid if it post-dates it (issue #88). */
+  listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]>;
+  /** Reactions on a comment: content (`+1`/`-1` = approve/decline, PROTOCOL §4) + `at` = created time (epoch ms).
+   *  `at` lets the approval gate reject a stale 👍 left on the reused sticky panel before the gate (issue #88). */
+  reactions(repo: string, commentId: string): Promise<{ content: string; at: number }[]>;
   /** The login this monastery instance acts as (its own identity) — used to attribute/dedup endorsements. */
   login(): Promise<string>;
   /** Merge the PR whose head is `branch` (a gated, human-approved action). */

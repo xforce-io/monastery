@@ -144,22 +144,24 @@ export class GhAdapter implements GitHubAdapter {
     const s = out.trim();
     return s === "pass" || s === "fail" ? s : "pending";
   }
-  async listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]> {
+  async listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]> {
     const out = await this.run([
-      "api", `repos/${repo}/issues/${num}/comments`, "--jq", "[.[] | {id: (.id|tostring), body, author: .user.login}]",
+      "api", `repos/${repo}/issues/${num}/comments`, "--jq", "[.[] | {id: (.id|tostring), body, author: .user.login, updatedAt: .updated_at}]",
     ]).catch(() => "[]");
-    return JSON.parse(out || "[]") as { id: string; body: string; author: string }[];
+    const raw = JSON.parse(out || "[]") as { id: string; body: string; author: string; updatedAt: string }[];
+    return raw.map((c) => ({ id: c.id, body: c.body, author: c.author, updatedAt: Date.parse(c.updatedAt) || 0 }));
   }
   private cachedLogin?: string;
   async login(): Promise<string> {
     if (this.cachedLogin === undefined) this.cachedLogin = (await this.run(["api", "user", "--jq", ".login"]).catch(() => "")).trim();
     return this.cachedLogin;
   }
-  async reactions(repo: string, commentId: string): Promise<string[]> {
+  async reactions(repo: string, commentId: string): Promise<{ content: string; at: number }[]> {
     const out = await this.run([
-      "api", `repos/${repo}/issues/comments/${commentId}/reactions`, "--jq", "[.[].content]",
+      "api", `repos/${repo}/issues/comments/${commentId}/reactions`, "--jq", "[.[] | {content, at: .created_at}]",
     ]).catch(() => "[]");
-    return JSON.parse(out || "[]") as string[];
+    const raw = JSON.parse(out || "[]") as { content: string; at: string }[];
+    return raw.map((r) => ({ content: r.content, at: Date.parse(r.at) || 0 }));
   }
   async mergePR(repo: string, branch: string): Promise<void> {
     await this.run(["pr", "merge", branch, "--repo", repo, "--merge"]);
