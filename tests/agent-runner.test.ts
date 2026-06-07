@@ -8,11 +8,13 @@ import { FakeProvider } from "../src/provider/fake.js";
 import { runStructuredAgent, StructuredAgentError, type StructuredAgentSpec } from "../src/agents/spec.js";
 
 const schema = z.object({ value: z.number() });
+const toolInputSchema = { type: "object" as const, properties: { value: { type: "number" } }, required: ["value"] };
 const spec: StructuredAgentSpec<{ n: number }, { value: number }> = {
   name: "demo", role: "double a number", persona: "You double numbers.", sandbox: "artifact-only",
   policy: {}, artifact: "out.json", schema,
   buildContext: (input) => `double ${input.n}; write out.json`,
 };
+const specWithToolSchema = { ...spec, toolInputSchema };
 const newDir = () => mkdtempSync(join(tmpdir(), "monastery-runner-"));
 const rt = (provider: FakeProvider, artifactDir: string) => ({ provider, model: "sonnet", artifactDir });
 
@@ -144,6 +146,62 @@ test("gives up after exhausting retries when JSON parse keeps failing", async ()
     await expect(runStructuredAgent(spec, { n: 2 }, rt(provider, dir)))
       .rejects.toBeInstanceOf(StructuredAgentError);
     expect(provider.calls).toHaveLength(2); // initial attempt + 1 retry
+  } finally {
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- API provider routing ---
+
+test("routes artifact-only spec to apiProvider when set, not to provider", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({});
+  const apiProvider = new FakeProvider({ "out.json": '{"value":7}' });
+  const out = await runStructuredAgent(specWithToolSchema, { n: 3 }, { provider, apiProvider, model: "sonnet", artifactDir: dir });
+  expect(out).toEqual({ value: 7 });
+  expect(apiProvider.calls).toHaveLength(1);
+  expect(provider.calls).toHaveLength(0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("passes toolInputSchema and artifactName in the config when routing to apiProvider", async () => {
+  const dir = newDir();
+  const apiProvider = new FakeProvider({ "out.json": '{"value":3}' });
+  await runStructuredAgent(specWithToolSchema, { n: 1 }, { provider: new FakeProvider({}), apiProvider, model: "sonnet", artifactDir: dir });
+  expect(apiProvider.calls[0].toolInputSchema).toEqual(toolInputSchema);
+  expect(apiProvider.calls[0].artifactName).toBe("out.json");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("falls back to provider when apiProvider is not set", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "out.json": '{"value":5}' });
+  const out = await runStructuredAgent(specWithToolSchema, { n: 2 }, { provider, model: "sonnet", artifactDir: dir });
+  expect(out).toEqual({ value: 5 });
+  expect(provider.calls).toHaveLength(1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("falls back to provider when spec has no toolInputSchema even if apiProvider is set", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "out.json": '{"value":5}' });
+  const apiProvider = new FakeProvider({});
+  const out = await runStructuredAgent(spec, { n: 2 }, { provider, apiProvider, model: "sonnet", artifactDir: dir });
+  expect(out).toEqual({ value: 5 });
+  expect(provider.calls).toHaveLength(1);
+  expect(apiProvider.calls).toHaveLength(0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("API path does not retry when artifact is invalid — fails immediately", async () => {
+  const dir = newDir();
+  const apiProvider = new FakeProvider({ "out.json": '{"value":"bad "json"}' });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await expect(runStructuredAgent(specWithToolSchema, { n: 1 }, { provider: new FakeProvider({}), apiProvider, model: "sonnet", artifactDir: dir }))
+      .rejects.toMatchObject({ failure: { reason: "invalid_json", repairAttempts: 0 } });
+    expect(apiProvider.calls).toHaveLength(1); // no repair retry — called only once
   } finally {
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });

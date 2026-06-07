@@ -35,6 +35,9 @@ export interface StructuredAgentSpec<In, Out> extends AgentSpec {
   buildContext: (input: In) => string;
   artifact: string;       // the file the agent writes, e.g. "actions.json"
   schema: OutSchema<Out>; // its output contract (validated output is Out)
+  /** JSON Schema for Anthropic API tool use. When set and ctx.apiProvider is provided, the agent
+   *  uses the API (forced tool call) instead of the CLI, eliminating invalid_json failures. */
+  toolInputSchema?: Record<string, unknown>;
 }
 
 /** A workspace-mutating agent (the patcher): edits files in a clone; the shell reads the diff. */
@@ -62,7 +65,13 @@ function stripUndefined(o?: Partial<AgentPolicy>): Partial<AgentPolicy> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 }
 
-export interface RunCtx { provider: AgentProvider; model: string; artifactDir: string }
+export interface RunCtx {
+  provider: AgentProvider;
+  /** When set, artifact-only structured agents with a toolInputSchema use this instead of provider. */
+  apiProvider?: AgentProvider;
+  model: string;
+  artifactDir: string;
+}
 
 export type StructuredAgentFailureReason =
   | "missing_artifact"
@@ -90,6 +99,10 @@ export class StructuredAgentError extends Error {
 /**
  * Run a structured agent: prompt -> schema-valid artifact (or stdout fallback) -> typed output.
  * Invalid JSON and schema-invalid artifacts get a bounded repair attempt, then fail fast with diagnostics.
+ *
+ * When ctx.apiProvider is set and spec has toolInputSchema, artifact-only specs bypass the CLI
+ * and call the Anthropic API with tool use — the model is forced to produce valid JSON, so no
+ * invalid_json / schema_invalid failures and no repair retries.
  */
 export async function runStructuredAgent<In, Out>(
   spec: StructuredAgentSpec<In, Out>,
@@ -97,10 +110,53 @@ export async function runStructuredAgent<In, Out>(
   ctx: RunCtx,
 ): Promise<Out | null> {
   const baseContext = spec.buildContext(input);
+  const p = join(ctx.artifactDir, spec.artifact);
+
+  // API path: forced tool use guarantees valid JSON — no repair retries needed.
+  if (spec.sandbox === "artifact-only" && ctx.apiProvider && spec.toolInputSchema) {
+    try {
+      await ctx.apiProvider.run({
+        persona: spec.persona,
+        context: baseContext,
+        artifactDir: ctx.artifactDir,
+        model: ctx.model,
+        toolInputSchema: spec.toolInputSchema,
+        artifactName: spec.artifact,
+      });
+    } catch (e) {
+      throw new StructuredAgentError({
+        reason: "provider_failed",
+        agent: spec.name,
+        artifactPath: p,
+        providerError: (e as Error).message,
+        repairAttempts: 0,
+      });
+    }
+    if (!existsSync(p)) {
+      throw new StructuredAgentError({ reason: "missing_artifact", agent: spec.name, artifactPath: p, repairAttempts: 0 });
+    }
+    const raw = readFileSync(p, "utf8");
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch (err) {
+      throw new StructuredAgentError({
+        reason: "invalid_json", agent: spec.name, artifactPath: p,
+        parseError: (err as Error).message, repairAttempts: 0,
+      });
+    }
+    const parsed = spec.schema.safeParse(json);
+    if (parsed.success) return parsed.data;
+    throw new StructuredAgentError({
+      reason: "schema_invalid", agent: spec.name, artifactPath: p,
+      schemaError: parsed.error.message, repairAttempts: 0,
+    });
+  }
+
+  // CLI path: bounded repair retries for free-text JSON output.
   const maxRetries = Math.min(spec.policy.repairAttempts ?? 1, 2);
   let repairHint: string | undefined;
   let lastFailure: StructuredAgentFailure | null = null;
-  const p = join(ctx.artifactDir, spec.artifact);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const context = repairHint

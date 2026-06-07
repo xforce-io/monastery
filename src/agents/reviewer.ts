@@ -46,6 +46,29 @@ function buildContext({ diff, issue }: ReviewInput): string {
   ].join("\n\n");
 }
 
+/** JSON Schema for the Anthropic API tool use — mirrors ReviewSchema so the model is forced to call
+ *  the `output` tool with a findings array, eliminating free-text JSON parsing failures. */
+const REVIEW_TOOL_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          severity: { type: "string", enum: ["blocking", "advisory"] },
+          title: { type: "string" },
+          detail: { type: "string" },
+          file: { type: "string" },
+          line: { type: "integer" },
+        },
+        required: ["severity", "title", "detail"],
+      },
+    },
+  },
+  required: ["findings"],
+};
+
 /** The patcher's self-review gate (#22): judges the staged diff before a draft PR is shipped. */
 export const reviewerSpec: StructuredAgentSpec<ReviewInput, ReviewVerdict> = {
   name: "reviewer",
@@ -55,6 +78,7 @@ export const reviewerSpec: StructuredAgentSpec<ReviewInput, ReviewVerdict> = {
   policy: {},
   artifact: "review.json",
   schema: ReviewSchema,
+  toolInputSchema: REVIEW_TOOL_SCHEMA,
   buildContext,
 };
 
@@ -64,6 +88,7 @@ export async function reviewer(
   model: string,
   input: ReviewInput,
   artifactDir: string,
+  apiProvider?: AgentProvider,
 ): Promise<ReviewVerdict | null> {
-  return runStructuredAgent(reviewerSpec, input, { provider, model, artifactDir });
+  return runStructuredAgent(reviewerSpec, input, { provider, apiProvider, model, artifactDir });
 }

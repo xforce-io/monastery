@@ -23,6 +23,8 @@ export interface StepCtx {
   repo: string;
   gh: GitHubAdapter;
   provider: AgentProvider;
+  /** When set, judgment agents (artifact-only: maintainer, reviewer) call the Anthropic API instead of the CLI. */
+  apiProvider?: AgentProvider;
   model: string;
   artifactRoot: string;
   fails: FailTracker;
@@ -61,7 +63,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue);
   const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
   const dir = join(ctx.artifactRoot, `${issue.number}`);
-  const actions = await maintainer(ctx.provider, ctx.model, input, dir);
+  const actions = await maintainer(ctx.provider, ctx.model, input, dir, ctx.apiProvider);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.

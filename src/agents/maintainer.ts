@@ -155,6 +155,30 @@ function buildContext(input: MaintainerInput): string {
   ].join("\n\n");
 }
 
+/** JSON Schema for the Anthropic API tool use — always { actions: [...] } (the transform normalises bare arrays).
+ *  The model knows the per-kind fields from the context; we only enforce the top-level envelope here. */
+const MAINTAINER_TOOL_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    actions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["reply", "relabel", "panel", "openDraftPR", "propose", "implement", "spec", "endorse"],
+          },
+          num: { type: "integer" },
+        },
+        required: ["kind", "num"],
+        additionalProperties: true,
+      },
+    },
+  },
+  required: ["actions"],
+};
+
 /**
  * The keystone reasoning of v2: read an item + context, propose actions (CONSTITUTION §8 — replaces the
  * thesis-gate + triager judges with one agent). The spec IS the maintainable definition; behavior runs
@@ -168,6 +192,7 @@ export const maintainerSpec: StructuredAgentSpec<MaintainerInput, { actions: Act
   policy: { failThreshold: 3 },
   artifact: "actions.json",
   schema: BatchSchema,
+  toolInputSchema: MAINTAINER_TOOL_SCHEMA,
   buildContext,
 };
 
@@ -177,7 +202,8 @@ export async function maintainer(
   model: string,
   input: MaintainerInput,
   artifactDir: string,
+  apiProvider?: AgentProvider,
 ): Promise<Action[] | null> {
-  const out = await runStructuredAgent(maintainerSpec, input, { provider, model, artifactDir });
+  const out = await runStructuredAgent(maintainerSpec, input, { provider, apiProvider, model, artifactDir });
   return out ? out.actions : null;
 }

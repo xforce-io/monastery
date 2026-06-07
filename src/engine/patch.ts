@@ -49,7 +49,7 @@ function defaultReview(ctx: StepCtx): ReviewFn {
     // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
     const reviewDir = mkdtempSync(join(tmpdir(), "monastery-review-"));
     try {
-      return await reviewer(ctx.provider, ctx.reviewModel ?? ctx.model, { diff, issue }, reviewDir);
+      return await reviewer(ctx.provider, ctx.reviewModel ?? ctx.model, { diff, issue }, reviewDir, ctx.apiProvider);
     } finally {
       rmSync(reviewDir, { recursive: true, force: true });
     }

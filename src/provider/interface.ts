@@ -5,6 +5,9 @@ export interface AgentConfig {
   artifactDir: string;   // cwd; the agent communicates by writing files here
   model: string;         // passed verbatim to the underlying agent (e.g. "haiku")
   timeoutMs?: number;
+  // For API-based structured providers: JSON schema for tool use + artifact file name to write
+  toolInputSchema?: Record<string, unknown>;
+  artifactName?: string;
 }
 export interface AgentResult { artifacts: string[]; resultText?: string }
 

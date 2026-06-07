@@ -8,6 +8,7 @@ import { StepLock, RepoLockError } from "../config/step-lock.js";
 import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
+import { AnthropicApiProvider } from "../provider/anthropic-api.js";
 import { reconcile } from "../engine/reconcile.js";
 import { issueStep, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
@@ -86,6 +87,8 @@ async function main(): Promise<void> {
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
     const provider = new ClaudeCodeProvider();
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiProvider = apiKey ? AnthropicApiProvider.fromApiKey(apiKey) : undefined;
     const stepLock = new StepLock(join(homedir(), ".monastery"));
     const results: Awaited<ReturnType<typeof reconcile>>[] = [];
     const rawCmd = process.argv.slice(2).join(" ");
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
         const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
-        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
+        const ctx = { repo, gh, provider, apiProvider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
         if (args.issue) {
           const out = await issueStep(ctx, Number(args.issue));
           console.log(`${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`);
