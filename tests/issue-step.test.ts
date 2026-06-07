@@ -8,6 +8,7 @@ import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep, pendingApprovals, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
 import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
+import { SPEC_MARKER } from "../src/shell/consensus.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
 import type { Issue } from "../src/types.js";
 
@@ -340,4 +341,65 @@ test("#90: pendingApprovals excludes an issue whose gate is already 👍'd", asy
   await proposeGate(gh, "o/r", 1, "implement", "## Plan");
   gh.commentReactions["0"] = ["+1"]; // the gate comment (fake: first own comment id "0") is approved
   expect(await pendingApprovals(gh, "o/r")).toEqual([]);
+});
+
+// --- #95: approval-gate staleness — a newer spec / a 👀 reaction invalidates a parked implement gate ---
+
+test("#95: proposeGate stamps the current spec version into the implement gate marker", async () => {
+  const gh = ghWith({ number: 93, title: "fix", body: "y", labels: [], state: "open" });
+  gh.authoredComments[93] = [{ body: `${SPEC_MARKER(3, ["x"])}\nthe plan`, author: "x" }];
+  await proposeGate(gh, "o/r", 93, "implement", "## Plan");
+  expect(gh.comments[93][0]).toMatch(/^spec:\s*3$/m);
+});
+
+test("#95: a spec newer than the implement gate invalidates it — strips needs-approval, won't run the patcher, no agent call", async () => {
+  const gh = ghWith({ number: 90, title: "fix", body: "y", labels: [], state: "open" });
+  gh.authoredComments[90] = [{ body: `${SPEC_MARKER(1, ["xforce-io"])}\nv1 plan`, author: "xforce-io" }];
+  await proposeGate(gh, "o/r", 90, "implement", "## Plan v1"); // gate stamped at spec 1
+  gh.authoredComments[90].push({ body: `${SPEC_MARKER(2, ["xforce-io"])}\nv2 plan`, author: "xforce-io" }); // newer spec lands under the gate
+  gh.commentReactions["0"] = ["+1"]; // even with a 👍, the stale gate must NOT approve
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 90);
+  expect(gh.prs).toHaveLength(0);                       // stale → patcher did NOT run
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL);       // gate invalidated → active again next tick
+  expect(i.labels).not.toContain(DECLINED);             // not terminal
+  expect(gh.panels[90]).toContain("protocol: note");    // panel rewritten to a plain note
+  expect((c.provider as FakeProvider).calls).toHaveLength(0); // awaiting-gate never calls the agent
+});
+
+test("#95: an implement gate AT the current spec version is not stale — a fresh 👍 still runs the patcher", async () => {
+  const gh = ghWith({ number: 91, title: "fix", body: "y", labels: [], state: "open" });
+  gh.authoredComments[91] = [{ body: `${SPEC_MARKER(2, ["xforce-io"])}\nv2 plan`, author: "xforce-io" }];
+  await proposeGate(gh, "o/r", 91, "implement", "## Plan"); // stamped at spec 2 (the current version)
+  gh.commentReactions["0"] = ["+1"];
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 91);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);                        // not stale → patcher ran
+});
+
+test("#95: a plain prose comment under the gate does NOT invalidate it — only a newer spec / 👀 does (守 #92)", async () => {
+  const gh = ghWith({ number: 94, title: "fix", body: "y", labels: [], state: "open" });
+  gh.authoredComments[94] = [{ body: `${SPEC_MARKER(1, ["xforce-io"])}\nv1 plan`, author: "xforce-io" }];
+  await proposeGate(gh, "o/r", 94, "implement", "## Plan"); // stamped at spec 1
+  gh.authoredComments[94].push({ body: "I disagree, please use pi-ai instead", author: "xforce-io" }); // prose, no new spec
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 94);
+  expect(out.kind).toBe("waiting");                  // gate intact — prose alone is not a control signal
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
+test("#95: a 👀 on the gate sends it back to active (non-terminal) — strips needs-approval, not declined, no agent call", async () => {
+  const gh = ghWith({ number: 92, title: "fix", body: "y", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 92, "implement", "## Plan");
+  gh.commentReactions["0"] = ["eyes"]; // human asks to reconsider
+  const c = ctxWith(gh, new FakeProvider({}));
+  const out = await issueStep(c, 92);
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL); // back to active
+  expect(i.labels).not.toContain(DECLINED);       // NOT terminal (unlike 👎)
+  expect(gh.prs).toHaveLength(0);                  // patcher never ran
+  expect(gh.panels[92]).toContain("protocol: note");
+  expect((c.provider as FakeProvider).calls).toHaveLength(0);
 });

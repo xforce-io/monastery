@@ -42,7 +42,10 @@ const NEEDS_APPROVAL = "monastery:needs-approval";
 // approval/terminal state, and faking them would bypass the human gate (issue #92).
 const CONTROL_LABELS: ReadonlySet<string> = new Set([NEEDS_APPROVAL, "monastery:declined"]);
 const replyMarker = (toCommentId: string) => `<!--monastery-reply to=${toCommentId}-->`;
-const approvalMarker = (proposal: GatedKind) => `<!--monastery-state\nprotocol: approval\naction: ${proposal}\n-->`;
+// The approval marker records the gated action AND the spec version the gate was opened against (#95),
+// so awaitingGate can tell a stale implement gate (a newer spec landed under it) from a current one.
+const approvalMarker = (proposal: GatedKind, specVersion: number) =>
+  `<!--monastery-state\nprotocol: approval\naction: ${proposal}\nspec: ${specVersion}\n-->`;
 
 /** Execute a SAFE action, idempotently (constitution §3, §6). */
 export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): Promise<void> {
@@ -100,10 +103,12 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
  * (so the item moves to awaiting-gate). Shared by `propose` (close/merge) and `implement` (#88).
  */
 export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string): Promise<void> {
+  // Stamp the spec version this gate is opened against (#95) — a later, higher-version spec makes it stale.
+  const specVersion = currentSpec(await gh.listComments(repo, num))?.version ?? 0;
   // Visible banner (issue #90): the approval marker is an HTML comment a human can't see, so without this
   // they can't tell which comment to 👍. This line is plain text — it shows up on the issue page.
-  const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline";
-  await gh.postComment(repo, num, `${approvalMarker(proposal)}\n${banner}\n\n${draft}`);
+  const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
+  await gh.postComment(repo, num, `${approvalMarker(proposal, specVersion)}\n${banner}\n\n${draft}`);
   await gh.addLabel(repo, num, NEEDS_APPROVAL);
 }
 

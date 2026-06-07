@@ -16,6 +16,7 @@ import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
+import { currentSpec } from "../shell/consensus.js";
 
 export interface StepCtx {
   repo: string;
@@ -117,6 +118,21 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
 
   const reactions = await ctx.gh.reactions(ctx.repo, gate.id);
   if (reactions.some((r) => r.content === "-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
+
+  // #95: a parked implement gate goes STALE when a newer spec lands under it — invalidate it (back to
+  // active) instead of letting a 👍 approve an outdated design. Scoped to implement (the spec-bearing gate).
+  if (approvalKind(gate.body) === "implement") {
+    const cur = currentSpec(comments)?.version ?? 0;
+    if (cur > approvalSpecVersion(gate.body)) {
+      return demoteGate(ctx, issue, `⟳ 设计已更新（spec v${cur}），原 implement 提议作废，已退回重新评估。`);
+    }
+  }
+  // #95: 👀 is the human's NON-terminal "reconsider" signal (vs 👎 which terminalizes). Send it back to
+  // active so the maintainer re-proposes. The shell never writes reactions, so a 👀 is necessarily human.
+  if (reactions.some((r) => r.content === "eyes")) {
+    return demoteGate(ctx, issue, "⟳ 已打回（👀），原提议作废，已退回重新评估。");
+  }
+
   if (!reactions.some((r) => r.content === "+1")) {
     // #90: a genuine awaiting-your-approval item — keep it high-priority (not sunk to parked) and tag it
     // with the approval kind + comment id, so backlog/`monastery pending` can surface it with a direct link.
@@ -168,6 +184,24 @@ async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Pr
 function approvalKind(body: string): GatedKind | null {
   const m = body.match(/^action:\s*(close|merge|implement)\s*$/m);
   return m ? (m[1] as GatedKind) : null;
+}
+
+/** #95: the spec version a gate was opened against (`spec: N` in the approval marker); 0 if absent. */
+function approvalSpecVersion(body: string): number {
+  const m = body.match(/^spec:\s*(\d+)\s*$/m);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
+ * #95: invalidate a parked gate WITHOUT terminalizing it (unlike terminalizeDeclined) — clear
+ * needs-approval and rewrite the panel to a plain note, so next tick the item is `active` again and the
+ * maintainer re-proposes. Used when the design moved on under the gate (stale spec) or a human asked to
+ * reconsider (👀). The stale gate comment is left in place for audit; a fresh proposal supersedes it.
+ */
+async function demoteGate(ctx: StepCtx, issue: Issue, note: string): Promise<Outcome> {
+  await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${note}`);
+  return { kind: "progressed", entry: { number: issue.number, title: issue.title, priority: "now", rationale: note } };
 }
 
 /** The human-facing draft = the panel body with monastery markers stripped. */
