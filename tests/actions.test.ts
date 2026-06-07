@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
-import { executeSafe, doClose, doMerge } from "../src/shell/actions.js";
+import { executeSafe, doClose, doMerge, proposeGate, ActionSchema } from "../src/shell/actions.js";
 
 const gh = () => new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
 
@@ -86,4 +86,21 @@ test("doMerge merges the PR; skips if already merged", async () => {
   g.prStates["feat/1-x"] = "merged";
   await doMerge(g, "o/r", "feat/1-x");
   expect(g.merged).toEqual(["feat/1-x"]); // already merged -> skipped
+});
+
+// --- #88: implement is a gated action (needs a human 👍 before runImplement) ---
+
+test("implement action accepts an optional draft (the human-facing plan)", () => {
+  expect(ActionSchema.parse({ kind: "implement", num: 1, draft: "## Plan" })).toEqual({ kind: "implement", num: 1, draft: "## Plan" });
+  expect(ActionSchema.parse({ kind: "implement", num: 1 })).toEqual({ kind: "implement", num: 1 });
+});
+
+test("proposeGate(implement) opens an approval panel (action: implement) + needs-approval", async () => {
+  const g = gh();
+  await proposeGate(g, "o/r", 1, "implement", "## Plan: refactor X");
+  expect(g.panels[1]).toContain("protocol: approval");
+  expect(g.panels[1]).toContain("action: implement");
+  expect(g.panels[1]).toContain("## Plan: refactor X");
+  const [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-approval");
 });

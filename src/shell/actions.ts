@@ -3,7 +3,10 @@ import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
 
-export const GatedKindSchema = z.enum(["close", "merge"]);
+// Human-gated actions, reachable only via an approval panel + a human 👍 (PROTOCOL §4).
+// `implement` joins close/merge (issue #88): the agent may PROPOSE a patch, but the patcher
+// (runImplement) only runs after a real human endorses it — the agent can never self-approve.
+export const GatedKindSchema = z.enum(["close", "merge", "implement"]);
 export type GatedKind = z.infer<typeof GatedKindSchema>;
 
 /**
@@ -22,7 +25,7 @@ export const ActionSchema = z.discriminatedUnion("kind", [
   // implement: "this issue is worth fixing — produce a patch PR." The engine routes it to the shell-owned
   // patcher (runImplement): it writes code in a sandbox clone and opens a human-gated draft PR. The agent
   // still never touches git/gh (constitution §3); the only path to main is a human Merge (§4).
-  z.object({ kind: z.literal("implement"), num: z.number() }),
+  z.object({ kind: z.literal("implement"), num: z.number(), draft: z.string().optional() }),
   // spec / endorse: the multi-party consensus core (#48). `spec` appends a versioned shared spec comment;
   // `endorse` records this party's agreement to a spec version. Consensus = all parties endorsed the
   // current version (src/shell/consensus.ts). Both are agent-level, reversible; the merge gate stays the floor.
@@ -62,8 +65,7 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
       await gh.openDraftPR(repo, a.branch, a.title, a.body);
       return;
     case "propose":
-      await gh.upsertPanel(repo, a.num, `${approvalMarker(a.proposal)}\n${a.draft}`);
-      await gh.addLabel(repo, a.num, NEEDS_APPROVAL);
+      await proposeGate(gh, repo, a.num, a.proposal, a.draft);
       return;
     case "spec": {
       // Append-only versioned shared spec: bump the version only when the body changed (idempotent).
@@ -86,6 +88,16 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
       // routes `implement` to runImplement; reaching it here is a wiring bug, so fail loudly.
       throw new Error("'implement' is a shell executor (runImplement), not an executeSafe action");
   }
+}
+
+/**
+ * Open the approval gate (PROTOCOL §4): upsert the single sticky panel carrying the action marker
+ * (so a human's 👍 routes to the right gated executor next tick) + the needs-approval control label
+ * (so the item moves to awaiting-gate). Shared by `propose` (close/merge) and `implement` (#88).
+ */
+export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string): Promise<void> {
+  await gh.upsertPanel(repo, num, `${approvalMarker(proposal)}\n${draft}`);
+  await gh.addLabel(repo, num, NEEDS_APPROVAL);
 }
 
 /**
