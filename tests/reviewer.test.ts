@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProvider } from "../src/provider/fake.js";
 import { reviewer } from "../src/agents/reviewer.js";
+import { StructuredAgentError } from "../src/agents/spec.js";
 import type { Issue } from "../src/types.js";
 
 const issue: Issue = { number: 1, title: "t", body: "b", labels: [], state: "open" };
@@ -26,17 +27,17 @@ test("empty findings -> clean verdict", async () => {
   rmSync(d, { recursive: true, force: true });
 });
 
-test("missing review.json -> null", async () => {
+test("missing review.json -> structured failure", async () => {
   const d = dir();
-  const v = await reviewer(new FakeProvider({}), "haiku", { diff: "d", issue }, d);
-  expect(v).toBeNull();
+  await expect(reviewer(new FakeProvider({}), "haiku", { diff: "d", issue }, d))
+    .rejects.toMatchObject({ failure: { reason: "missing_artifact" } });
   rmSync(d, { recursive: true, force: true });
 });
 
-test("invalid schema -> null", async () => {
+test("invalid schema -> structured failure", async () => {
   const d = dir();
-  const v = await reviewer(new FakeProvider({ "review.json": '{"findings":[{"severity":"nope"}]}' }), "haiku", { diff: "d", issue }, d);
-  expect(v).toBeNull();
+  await expect(reviewer(new FakeProvider({ "review.json": '{"findings":[{"severity":"nope"}]}' }), "haiku", { diff: "d", issue }, d))
+    .rejects.toBeInstanceOf(StructuredAgentError);
   rmSync(d, { recursive: true, force: true });
 });
 
