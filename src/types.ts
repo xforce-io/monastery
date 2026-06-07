@@ -2,11 +2,12 @@
 
 // Outcome of any step level (issue step / reconcile item).
 export type WaitReason = "human" | "peer" | "ci";
-export type Outcome =
+export type Outcome = (
   | { kind: "progressed"; note?: string }
   | { kind: "waiting"; on: WaitReason }
   | { kind: "done" }
-  | { kind: "noop" };
+  | { kind: "noop" }
+) & { entry?: BacklogEntry };
 
 // Per-repo reconcile tick result (L0).
 export interface ReconcileResult {

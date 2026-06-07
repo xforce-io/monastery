@@ -10,7 +10,8 @@ import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
 import { maintainer, maintainerSpec } from "../agents/maintainer.js";
 import { effectivePolicy } from "../agents/spec.js";
 import { executeSafe, doClose, type GatedKind } from "../shell/actions.js";
-import type { FailTracker, RepoPolicy } from "../config/store.js";
+import type { FailTracker, RepoPolicy, BacklogWriter } from "../config/store.js";
+import { deriveEntry } from "./backlog.js";
 import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement } from "./patch.js";
@@ -34,6 +35,8 @@ export interface StepCtx {
   repoPolicy?: RepoPolicy;
   /** Preview mode: don't execute the heavy patcher (the DryRunAdapter only mocks gh, not the workspace). */
   dryRun?: boolean;
+  /** Sink for the per-repo backlog snapshot (issue #82); reconcile writes through it. */
+  backlog?: BacklogWriter;
 }
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
@@ -54,6 +57,7 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
 async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // The context layer (src/engine/context.ts) gathers this item's semantic context from GitHub.
   const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue);
+  const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
   const dir = join(ctx.artifactRoot, `${issue.number}`);
   const actions = await maintainer(ctx.provider, ctx.model, input, dir);
 
@@ -68,7 +72,13 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     } else {
       console.warn(`[monastery] maintainer skip ${ctx.repo}#${issue.number} (${fails}/${failThreshold})`);
     }
-    return { kind: "noop" };
+    return {
+      kind: "noop",
+      entry: {
+        number: issue.number, title: issue.title, priority: "later", rationale: "no valid output",
+        ...(blockedBy.length ? { blockedBy } : {}), ...(fails > 0 ? { fails } : {}),
+      },
+    };
   }
 
   ctx.fails.clearFail(ctx.repo, issue.number);
@@ -86,18 +96,22 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${(e as Error).message}`);
     }
   }
-  return actions.length ? { kind: "progressed" } : { kind: "noop" };
+  const entry = deriveEntry(issue, actions, blockedBy, ctx.fails.failCount(ctx.repo, issue.number));
+  return actions.length ? { kind: "progressed", entry } : { kind: "noop", entry };
 }
 
 /** awaiting-gate: a gated proposal is parked on the approval panel; act only on a human signal (PROTOCOL §4). */
 async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  const parked = {
+    number: issue.number, title: issue.title, priority: "parked" as const, rationale: "awaiting human approval",
+  };
   const comments = await ctx.gh.listComments(ctx.repo, issue.number);
   const panel = comments.find((c) => c.body.includes(APPROVAL_MARK));
-  if (!panel) return { kind: "waiting", on: "human" }; // needs-approval but no panel: inconsistent, wait
+  if (!panel) return { kind: "waiting", on: "human", entry: parked }; // needs-approval but no panel: inconsistent, wait
 
   const reactions = await ctx.gh.reactions(ctx.repo, panel.id);
   if (reactions.includes("-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
-  if (!reactions.includes("+1")) return { kind: "waiting", on: "human" }; // no signal yet
+  if (!reactions.includes("+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
 
   // Approved (👍). Execute the gated action the panel proposed.
   const kind = approvalKind(panel.body);
