@@ -38,6 +38,9 @@ export type Action = z.infer<typeof ActionSchema>;
 export const ActionsSchema = z.object({ actions: z.array(ActionSchema) });
 
 const NEEDS_APPROVAL = "monastery:needs-approval";
+// Shell-owned control labels (PROTOCOL §2): the agent may NEVER set/clear these via relabel — they encode
+// approval/terminal state, and faking them would bypass the human gate (issue #92).
+const CONTROL_LABELS: ReadonlySet<string> = new Set([NEEDS_APPROVAL, "monastery:declined"]);
 const replyMarker = (toCommentId: string) => `<!--monastery-reply to=${toCommentId}-->`;
 const approvalMarker = (proposal: GatedKind) => `<!--monastery-state\nprotocol: approval\naction: ${proposal}\n-->`;
 
@@ -52,8 +55,9 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
       return;
     }
     case "relabel":
-      for (const l of a.add) await gh.addLabel(repo, a.num, l);
-      for (const l of a.remove) await gh.removeLabel(repo, a.num, l);
+      // Display labels only — control labels are shell-owned (issue #92); silently skip them.
+      for (const l of a.add) if (!CONTROL_LABELS.has(l)) await gh.addLabel(repo, a.num, l);
+      for (const l of a.remove) if (!CONTROL_LABELS.has(l)) await gh.removeLabel(repo, a.num, l);
       return;
     case "panel":
       // Carry the panel marker so upsertPanel finds its single sticky comment AND it's never mistaken
