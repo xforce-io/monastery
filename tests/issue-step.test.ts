@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
-import { issueStep, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
+import { issueStep, pendingApprovals, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
 import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
 import type { Issue } from "../src/types.js";
@@ -227,11 +227,13 @@ test("active issue with no valid output: entry is later 'no valid output'", asyn
   expect(out.entry).toMatchObject({ number: 1, priority: "later", rationale: "no valid output" });
 });
 
-test("awaiting-gate issue: entry is parked", async () => {
+test("#90: awaiting-gate issue is a HIGH-priority awaiting-approval entry, tagged with kind + comment id", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
   await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "because X" });
   const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
-  expect(out.entry).toMatchObject({ number: 1, priority: "parked", rationale: "awaiting human approval" });
+  expect(out.entry).toMatchObject({ number: 1, priority: "now", awaitingApproval: true, approvalKind: "close" });
+  expect(out.entry?.approvalCommentId).toBeDefined();           // for the direct 👍 link
+  expect(out.entry?.rationale).toContain("👍");                  // not sunk to "parked"
 });
 
 test("awaiting-gate approved merge: still waits for the human to click Merge, entry stays parked", async () => {
@@ -317,4 +319,25 @@ test("#88: a 👍 made AFTER the gate was opened approves it (fresh reaction)", 
   const out = await issueStep(c, 81);
   expect(out.kind).toBe("progressed");
   expect(gh.prs).toHaveLength(1);
+});
+
+// --- #90 review fix: pendingApprovals scans ALL open awaiting issues, live (not the batched snapshot) ---
+
+test("#90: pendingApprovals lists open needs-approval issues with a gate, tagged with kind + comment id", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "await me", body: "y", labels: [], state: "open" },
+    { number: 3, title: "no gate", body: "y", labels: ["monastery:needs-approval"], state: "open" }, // label, no panel
+  ]});
+  await proposeGate(gh, "o/r", 1, "implement", "## Plan");
+  const items = await pendingApprovals(gh, "o/r");
+  expect(items.map((i) => i.number)).toEqual([1]);              // #1 has a gate; #3 (no panel) excluded
+  expect(items[0]).toMatchObject({ number: 1, title: "await me", approvalKind: "implement" });
+  expect(items[0].approvalCommentId).toBeDefined();
+});
+
+test("#90: pendingApprovals excludes an issue whose gate is already 👍'd", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await proposeGate(gh, "o/r", 1, "implement", "## Plan");
+  gh.commentReactions["0"] = ["+1"]; // the gate comment (fake: first own comment id "0") is approved
+  expect(await pendingApprovals(gh, "o/r")).toEqual([]);
 });

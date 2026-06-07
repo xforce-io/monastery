@@ -100,7 +100,10 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
  * (so the item moves to awaiting-gate). Shared by `propose` (close/merge) and `implement` (#88).
  */
 export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string): Promise<void> {
-  await gh.postComment(repo, num, `${approvalMarker(proposal)}\n${draft}`);
+  // Visible banner (issue #90): the approval marker is an HTML comment a human can't see, so without this
+  // they can't tell which comment to 👍. This line is plain text — it shows up on the issue page.
+  const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline";
+  await gh.postComment(repo, num, `${approvalMarker(proposal)}\n${banner}\n\n${draft}`);
   await gh.addLabel(repo, num, NEEDS_APPROVAL);
 }
 

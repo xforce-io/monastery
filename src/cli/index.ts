@@ -9,13 +9,13 @@ import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
-import { issueStep } from "../engine/issue-step.js";
+import { issueStep, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
 import type { ReconcileResult } from "../types.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, type StatusEntry } from "./status.js";
-import { formatBacklog } from "./backlog.js";
+import { formatBacklog, formatPending, type PendingItem } from "./backlog.js";
 import type { BacklogSnapshot } from "../types.js";
 
 export interface ParsedArgs {
@@ -28,7 +28,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (cmd === "init") return { cmd, repo: rest[0] };
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
-  if (cmd === "status" || cmd === "backlog") return { cmd, repo: opt("repo"), json: flag("json") };
+  if (cmd === "status" || cmd === "backlog" || cmd === "pending") return { cmd, repo: opt("repo"), json: flag("json") };
   return { cmd, repo: opt("repo"), issue: opt("issue"), dryRun: flag("dry-run"), json: flag("json"), forceStaleLock: flag("force-stale-lock") };
 }
 
@@ -68,6 +68,17 @@ async function main(): Promise<void> {
       .map((r) => store.readBacklog(r))
       .filter((s): s is BacklogSnapshot => s !== null);
     console.log(args.json ? JSON.stringify(snaps, null, 2) : snaps.map(formatBacklog).join("\n\n"));
+    return;
+  }
+
+  if (args.cmd === "pending") {
+    // Live full scan (issue #90 review fix): not the batched backlog snapshot, so it never misses an
+    // awaiting issue past MAX_ITEMS_PER_TICK and never goes stale after you react.
+    const gh = new GhAdapter();
+    const repos = args.repo ? [args.repo] : store.listRepos();
+    const items: PendingItem[] = [];
+    for (const repo of repos) for (const it of await pendingApprovals(gh, repo)) items.push({ ...it, repo });
+    console.log(args.json ? JSON.stringify(items, null, 2) : formatPending(items));
     return;
   }
 

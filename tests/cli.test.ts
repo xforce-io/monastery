@@ -125,3 +125,22 @@ test("summarize surfaces awaiting-your-👍 count when a repo has items blocked 
   expect(summarize([r("o/a", 2)])).toContain("awaiting-your-👍=2");
   expect(summarize([r("o/b", 0)])).not.toContain("awaiting-your-👍");
 });
+
+import { formatPending } from "../src/cli/backlog.js";
+
+test("formatPending lists awaiting-approval items with a direct 👍 link + kind (#90)", () => {
+  const out = formatPending([
+    { repo: "o/r", number: 7, title: "feat", approvalKind: "implement", approvalCommentId: "999" },
+  ]);
+  expect(out).toContain("#7 feat");
+  expect(out).toContain("implement");
+  expect(out).toContain("o/r/issues/7#issuecomment-999"); // direct 👍 link
+});
+
+test("formatPending: nothing awaiting → friendly message", () => {
+  expect(formatPending([])).toContain("nothing awaiting");
+});
+
+test("parses `pending --repo o/r --json`", () => {
+  expect(parseArgs(["pending", "--repo", "o/r", "--json"])).toEqual({ cmd: "pending", repo: "o/r", json: true });
+});
