@@ -26,8 +26,9 @@ export class FakeGitHub implements GitHubAdapter {
   private clock = 0;
   /** The login this fake "runs as" — author of its own posted comments/panels. */
   public selfLogin = "monastery";
-  /** Comments authored by others (humans / peer bots), injected for identity tests, keyed by issue. */
-  public authoredComments: Record<number, { body: string; author: string }[]> = {};
+  /** Comments authored by others (humans / peer bots), injected for identity tests, keyed by issue.
+   *  `updatedAt` is optional (default 0) — set it to model a human comment landing after a gate (#97). */
+  public authoredComments: Record<number, { body: string; author: string; updatedAt?: number }[]> = {};
   /** External issues (other repos), injected for cross-repo read tests, keyed by `<owner>/<repo>#<num>`. */
   public externalIssues: Record<string, Issue> = {};
   /** Branches whose PR was merged via mergePR. */
@@ -102,7 +103,7 @@ export class FakeGitHub implements GitHubAdapter {
   }
   async listComments(_r: string, n: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]> {
     // Others' comments first (chronological-ish), then monastery's own posts, then the sticky panel.
-    const ext = (this.authoredComments[n] ?? []).map((c, i) => ({ id: `ext${i}`, body: c.body, author: c.author, updatedAt: 0 }));
+    const ext = (this.authoredComments[n] ?? []).map((c, i) => ({ id: `ext${i}`, body: c.body, author: c.author, updatedAt: c.updatedAt ?? 0 }));
     const own = (this.comments[n] ?? []).map((body, i) => ({ id: String(i), body, author: this.selfLogin, updatedAt: this.commentUpdatedAt[n]?.[i] ?? 0 }));
     const out = [...ext, ...own];
     // The sticky panel is a real marked comment on GitHub; surface it here (stable id) so readers

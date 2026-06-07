@@ -17,6 +17,7 @@ import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec } from "../shell/consensus.js";
+import { isHumanComment } from "../shell/markers.js";
 
 export interface StepCtx {
   repo: string;
@@ -134,6 +135,13 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   }
 
   if (!reactions.some((r) => r.content === "+1")) {
+    // #97: the human left a NEW, unanswered comment under the gate — that's them talking to us, not approving.
+    // Send the item back to active so the maintainer reads it and replies/reconsiders next tick. Execution
+    // stays reaction-gated (this branch only runs when there is no 👍). Checked AFTER the 👍 path above so a
+    // genuine approval is never intercepted by a late comment.
+    if (hasNewUnansweredHumanComment(comments, gate)) {
+      return demoteGate(ctx, issue, "⟳ 收到新的人类评论，已退回重新评估以回应你的反馈。");
+    }
     // #90: a genuine awaiting-your-approval item — keep it high-priority (not sunk to parked) and tag it
     // with the approval kind + comment id, so backlog/`monastery pending` can surface it with a direct link.
     const k = approvalKind(gate.body) ?? undefined;
@@ -190,6 +198,24 @@ function approvalKind(body: string): GatedKind | null {
 function approvalSpecVersion(body: string): number {
   const m = body.match(/^spec:\s*(\d+)\s*$/m);
   return m ? Number(m[1]) : 0;
+}
+
+/**
+ * #97: is there a human comment that landed AFTER the gate and hasn't been replied to yet? Such a comment
+ * is the human talking to us mid-gate — we should respond, not sit. "newer than the gate" guarantees
+ * termination (a comment that predates the gate, or one already answered, never re-triggers); "unanswered"
+ * is the absence of a `<!--monastery-reply to=<id>-->` for it. Identity is by marker, not author (#92).
+ */
+function hasNewUnansweredHumanComment(
+  comments: { id: string; body: string; updatedAt: number }[],
+  gate: { updatedAt: number },
+): boolean {
+  return comments.some(
+    (c) =>
+      isHumanComment(c) &&
+      c.updatedAt > gate.updatedAt &&
+      !comments.some((r) => r.body.includes(`<!--monastery-reply to=${c.id}-->`)),
+  );
 }
 
 /**
