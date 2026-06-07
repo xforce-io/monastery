@@ -89,3 +89,30 @@ test("stepRepos releases the lock after a repo finishes so it can re-run", async
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+import { formatBacklog } from "../src/cli/backlog.js";
+import type { BacklogSnapshot } from "../src/types.js";
+
+test("parses `backlog --repo o/r --json`", () => {
+  expect(parseArgs(["backlog", "--repo", "o/r", "--json"]))
+    .toEqual({ cmd: "backlog", repo: "o/r", json: true });
+});
+
+test("formatBacklog renders header + ranked lines with priority, rationale, blockers", () => {
+  const snap: BacklogSnapshot = {
+    generatedAt: "1970-01-01T00:00:00.000Z",
+    repo: "o/r",
+    rankedOf: { ranked: 2, open: 3 },
+    entries: [
+      { number: 2, title: "c", priority: "soon", rationale: "advancing: panel" },
+      { number: 1, title: "a", priority: "later", rationale: "no action this tick", blockedBy: ["o/r#9"], fails: 2 },
+    ],
+  };
+  const out = formatBacklog(snap);
+  expect(out).toContain("o/r");
+  expect(out).toContain("ranked 2 of 3");
+  expect(out).toContain("[soon] #2 c");
+  expect(out).toContain("[later] #1 a");
+  expect(out).toContain("blocked: o/r#9");
+  expect(out).toContain("fails: 2");
+});

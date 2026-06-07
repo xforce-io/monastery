@@ -123,7 +123,8 @@ test("awaiting-gate + no reaction yet: waits on the human, no agent call, no clo
   const gh = await awaitingGate(22, "close", "closing because X");
   const provider = new FakeProvider({});
   const out = await issueStep(ctxWith(gh, provider), 22);
-  expect(out).toEqual({ kind: "waiting", on: "human" });
+  expect(out.kind).toBe("waiting");
+  expect((out as { on: string }).on).toBe("human");
   expect(provider.calls).toHaveLength(0);
   expect(gh.closed).not.toContain(22);
 });
@@ -216,4 +217,37 @@ test("a closed / unknown issue is a noop", async () => {
   const gh = ghWith({ number: 31, title: "x", body: "y", labels: [], state: "open" });
   const out = await issueStep(ctxWith(gh, new FakeProvider({})), 404);
   expect(out.kind).toBe("noop");
+});
+
+// --- issue #82: issueStep attaches a derived backlog entry to its Outcome ---
+
+test("active issue: outcome carries a derived entry (relabel → later)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  const provider = new FakeProvider(actionsJson([{ kind: "relabel", num: 1, add: ["type:bug"], remove: [] }]));
+  const out = await issueStep(ctxWith(gh, provider), 1);
+  expect(out.entry).toMatchObject({ number: 1, title: "x", priority: "later" });
+});
+
+test("active issue with no valid output: entry is later 'no valid output'", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  // actions targeting a different issue number triggers the "no valid output" branch
+  const provider = new FakeProvider(actionsJson([{ kind: "relabel", num: 999, add: ["type:bug"], remove: [] }]));
+  const out = await issueStep(ctxWith(gh, provider), 1);
+  expect(out.entry).toMatchObject({ number: 1, priority: "later", rationale: "no valid output" });
+});
+
+test("awaiting-gate issue: entry is parked", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "because X" });
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
+  expect(out.entry).toMatchObject({ number: 1, priority: "parked", rationale: "awaiting human approval" });
+});
+
+test("awaiting-gate approved merge: still waits for the human to click Merge, entry stays parked", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "merge", draft: "ship it" });
+  gh.commentReactions["panel:1"] = ["+1"]; // approved, but a merge is finalized by the human on the PR
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
+  expect(out.kind).toBe("waiting");
+  expect(out.entry).toMatchObject({ number: 1, priority: "parked" });
 });

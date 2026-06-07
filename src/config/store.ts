@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PolicyOverrides } from "../agents/spec.js";
+import type { BacklogSnapshot } from "../types.js";
 
 /**
  * Per-repo policy. Non-disposable (lives in config.json). `model` is the repo-wide default model;
@@ -21,6 +22,11 @@ export interface FailTracker {
   clearFail(repo: string, num: number): void;
 }
 
+/** Writes the per-repo backlog snapshot (issue #82). Disposable — rebuilt each step. */
+export interface BacklogWriter {
+  writeBacklog(repo: string, snapshot: BacklogSnapshot): void;
+}
+
 /** `<owner>/<repo>` → a filesystem-safe per-repo dir slug. */
 function repoSlug(repo: string): string { return repo.replace(/\//g, "__"); }
 
@@ -30,7 +36,7 @@ function repoSlug(repo: string): string { return repo.replace(/\//g, "__"); }
  *   <root>/repos/<owner>__<repo>/cache.json  disposable: { cursor, fails } — rebuildable from GitHub
  * Secrets never live here — env/keychain only.
  */
-export class Store implements FailTracker {
+export class Store implements FailTracker, BacklogWriter {
   constructor(private root: string) { mkdirSync(root, { recursive: true }); }
 
   private readJson<T>(path: string, fallback: T): T {
@@ -87,5 +93,17 @@ export class Store implements FailTracker {
   clearFail(repo: string, num: number): void {
     const c = this.readCache(repo);
     if (num in c.fails) { delete c.fails[num]; this.writeCache(repo, c); }
+  }
+
+  // --- repos/<slug>/backlog.json (disposable, issue #82) ---
+
+  private backlogPath(repo: string): string { return join(this.root, "repos", repoSlug(repo), "backlog.json"); }
+
+  readBacklog(repo: string): BacklogSnapshot | null {
+    return this.readJson<BacklogSnapshot | null>(this.backlogPath(repo), null);
+  }
+  writeBacklog(repo: string, snapshot: BacklogSnapshot): void {
+    mkdirSync(join(this.root, "repos", repoSlug(repo)), { recursive: true });
+    this.writeJson(this.backlogPath(repo), snapshot);
   }
 }

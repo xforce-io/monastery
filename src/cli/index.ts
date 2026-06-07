@@ -13,6 +13,8 @@ import { issueStep } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, type StatusEntry } from "./status.js";
+import { formatBacklog } from "./backlog.js";
+import type { BacklogSnapshot } from "../types.js";
 
 export interface ParsedArgs {
   cmd: string; sub?: string; repo?: string; model?: string; issue?: string; dryRun?: boolean; json?: boolean; forceStaleLock?: boolean;
@@ -24,7 +26,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (cmd === "init") return { cmd, repo: rest[0] };
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
-  if (cmd === "status") return { cmd, repo: opt("repo"), json: flag("json") };
+  if (cmd === "status" || cmd === "backlog") return { cmd, repo: opt("repo"), json: flag("json") };
   return { cmd, repo: opt("repo"), issue: opt("issue"), dryRun: flag("dry-run"), json: flag("json"), forceStaleLock: flag("force-stale-lock") };
 }
 
@@ -58,6 +60,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.cmd === "backlog") {
+    const repos = args.repo ? [args.repo] : store.listRepos();
+    const snaps = repos
+      .map((r) => store.readBacklog(r))
+      .filter((s): s is BacklogSnapshot => s !== null);
+    console.log(args.json ? JSON.stringify(snaps, null, 2) : snaps.map(formatBacklog).join("\n\n"));
+    return;
+  }
+
   if (args.cmd === "step") {
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
@@ -71,7 +82,7 @@ async function main(): Promise<void> {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
         const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
-        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, ws: new GitWorkspace(), now: () => Date.now() };
+        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
         if (args.issue) {
           const out = await issueStep(ctx, Number(args.issue));
           console.log(`${repo}#${args.issue}: ${out.kind}`);

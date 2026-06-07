@@ -1,8 +1,9 @@
 // src/engine/reconcile.ts — L_repo (PROTOCOL §6).
 // Each tick: list open items, classify into the three coarse states, step each non-terminal one.
-import type { ReconcileResult, WaitReason } from "../types.js";
+import type { BacklogEntry, BacklogSnapshot, ReconcileResult, WaitReason } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { issueStep, type StepCtx } from "./issue-step.js";
+import { sortEntries } from "./backlog.js";
 
 export const MAX_ITEMS_PER_TICK = 20;
 
@@ -19,11 +20,13 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
 
   const waiting: Record<WaitReason, number> = { human: 0, peer: 0, ci: 0 };
   let advanced = 0;
+  const entries: BacklogEntry[] = [];
 
   for (const i of batch) {
     // Per-item fault isolation: one item blowing up must not abort the rest of the tick (constitution §10).
     try {
       const out = await issueStep(ctx, i.number);
+      if (out.entry) entries.push(out.entry);
       if (out.kind === "progressed" || out.kind === "done") advanced++;
       else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
     } catch (e) {
@@ -44,6 +47,18 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
     : waiting.human > 0
       ? HUMAN_BACKOFF_MS
       : NEW_ISSUE_BACKOFF_MS;
+
+  // Backlog snapshot (issue #82): maintainer-written projection of this tick's decisions.
+  // Disposable; rebuilt every tick. Skipped under dry-run (no persistent side effects).
+  if (!ctx.dryRun && ctx.backlog) {
+    const snapshot: BacklogSnapshot = {
+      generatedAt: new Date(ctx.now()).toISOString(),
+      repo: ctx.repo,
+      rankedOf: { ranked: entries.length, open: runnable.length },
+      entries: sortEntries(entries),
+    };
+    ctx.backlog.writeBacklog(ctx.repo, snapshot);
+  }
 
   return {
     repo: ctx.repo,

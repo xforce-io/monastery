@@ -99,3 +99,30 @@ test("cache is disposable: deleting a repo's cache dir resets it but keeps confi
   expect(fresh.repoModel("owner/monastery")).toBe("opus"); // config intact
   rmSync(dir, { recursive: true, force: true });
 });
+
+import type { BacklogSnapshot } from "../src/types.js";
+
+const snap = (repo: string): BacklogSnapshot => ({
+  generatedAt: "1970-01-01T00:00:00.000Z",
+  repo,
+  rankedOf: { ranked: 1, open: 1 },
+  entries: [{ number: 1, title: "a", priority: "now", rationale: "r" }],
+});
+
+test("backlog: read missing returns null; write then read round-trips; persists per-repo", () => {
+  const { store, dir } = tmpStore();
+  expect(store.readBacklog("o/r")).toBeNull();
+  store.writeBacklog("o/r", snap("o/r"));
+  expect(store.readBacklog("o/r")).toEqual(snap("o/r"));
+  expect(existsSync(join(dir, "repos", "o__r", "backlog.json"))).toBe(true);
+  expect(new Store(dir).readBacklog("o/r")).toEqual(snap("o/r")); // persisted
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("backlog is isolated per repo", () => {
+  const { store, dir } = tmpStore();
+  store.writeBacklog("a/x", snap("a/x"));
+  expect(store.readBacklog("a/x")).not.toBeNull();
+  expect(store.readBacklog("b/y")).toBeNull();
+  rmSync(dir, { recursive: true, force: true });
+});

@@ -94,3 +94,45 @@ test("declined is terminal: not stepped, not counted as waiting:human, agent NOT
   expect(r.waiting.find((w) => w.on === "human")).toBeUndefined();
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+import type { BacklogSnapshot } from "../src/types.js";
+
+// provider returning a chosen action set per issue number (derived from the artifact dir)
+class PerIssueProvider implements AgentProvider {
+  public calls: AgentConfig[] = [];
+  constructor(private byNum: Record<number, object[]>) {}
+  async run(config: AgentConfig): Promise<AgentResult> {
+    this.calls.push(config);
+    const num = Number(config.artifactDir.split("/").pop());
+    mkdirSync(config.artifactDir, { recursive: true });
+    writeFileSync(join(config.artifactDir, "actions.json"), JSON.stringify({ actions: this.byNum[num] ?? [] }));
+    return { artifacts: [] };
+  }
+}
+
+test("writes a sorted backlog snapshot through ctx.backlog", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "a", body: "b", labels: [], state: "open" },  // relabel -> later
+    { number: 2, title: "c", body: "d", labels: [], state: "open" },  // panel   -> soon
+  ]});
+  const provider = new PerIssueProvider({
+    1: [{ kind: "relabel", num: 1, add: ["type:bug"], remove: [] }],
+    2: [{ kind: "panel", num: 2, body: "status" }],
+  });
+  const written: BacklogSnapshot[] = [];
+  const c = { ...baseCtx(gh, provider), backlog: { writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
+  await reconcile(c);
+  expect(written.length).toBe(1);
+  expect(written[0].entries.map((e) => e.number)).toEqual([2, 1]); // soon(#2) before later(#1)
+  expect(written[0].rankedOf).toEqual({ ranked: 2, open: 2 });
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("dry-run does NOT write the backlog", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "a", body: "b", labels: [], state: "open" }] });
+  const written: BacklogSnapshot[] = [];
+  const c = { ...baseCtx(gh, relabel(1)), dryRun: true, backlog: { writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
+  await reconcile(c);
+  expect(written.length).toBe(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
