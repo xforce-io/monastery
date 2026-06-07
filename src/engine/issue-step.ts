@@ -117,7 +117,19 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
 
   const reactions = await ctx.gh.reactions(ctx.repo, gate.id);
   if (reactions.some((r) => r.content === "-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
-  if (!reactions.some((r) => r.content === "+1")) return { kind: "waiting", on: "human", entry: parked }; // no signal yet
+  if (!reactions.some((r) => r.content === "+1")) {
+    // #90: a genuine awaiting-your-approval item — keep it high-priority (not sunk to parked) and tag it
+    // with the approval kind + comment id, so backlog/`monastery pending` can surface it with a direct link.
+    const k = approvalKind(gate.body) ?? undefined;
+    return {
+      kind: "waiting", on: "human",
+      entry: {
+        number: issue.number, title: issue.title, priority: "now",
+        rationale: `⏳ awaiting your 👍${k ? ` (${k})` : ""}`,
+        awaitingApproval: true, approvalKind: k, approvalCommentId: gate.id,
+      },
+    };
+  }
 
   // Approved (👍). Execute the gated action the panel proposed.
   const kind = approvalKind(gate.body);

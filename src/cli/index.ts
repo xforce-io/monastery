@@ -15,7 +15,7 @@ import { StructuredAgentError } from "../agents/spec.js";
 import type { ReconcileResult } from "../types.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, type StatusEntry } from "./status.js";
-import { formatBacklog } from "./backlog.js";
+import { formatBacklog, formatPending } from "./backlog.js";
 import type { BacklogSnapshot } from "../types.js";
 
 export interface ParsedArgs {
@@ -28,7 +28,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (cmd === "init") return { cmd, repo: rest[0] };
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
-  if (cmd === "status" || cmd === "backlog") return { cmd, repo: opt("repo"), json: flag("json") };
+  if (cmd === "status" || cmd === "backlog" || cmd === "pending") return { cmd, repo: opt("repo"), json: flag("json") };
   return { cmd, repo: opt("repo"), issue: opt("issue"), dryRun: flag("dry-run"), json: flag("json"), forceStaleLock: flag("force-stale-lock") };
 }
 
@@ -68,6 +68,17 @@ async function main(): Promise<void> {
       .map((r) => store.readBacklog(r))
       .filter((s): s is BacklogSnapshot => s !== null);
     console.log(args.json ? JSON.stringify(snaps, null, 2) : snaps.map(formatBacklog).join("\n\n"));
+    return;
+  }
+
+  if (args.cmd === "pending") {
+    const repos = args.repo ? [args.repo] : store.listRepos();
+    const snaps = repos
+      .map((r) => store.readBacklog(r))
+      .filter((s): s is BacklogSnapshot => s !== null);
+    console.log(args.json
+      ? JSON.stringify(snaps.flatMap((s) => s.entries.filter((e) => e.awaitingApproval)), null, 2)
+      : snaps.map(formatPending).join("\n\n"));
     return;
   }
 

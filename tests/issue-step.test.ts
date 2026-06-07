@@ -227,11 +227,13 @@ test("active issue with no valid output: entry is later 'no valid output'", asyn
   expect(out.entry).toMatchObject({ number: 1, priority: "later", rationale: "no valid output" });
 });
 
-test("awaiting-gate issue: entry is parked", async () => {
+test("#90: awaiting-gate issue is a HIGH-priority awaiting-approval entry, tagged with kind + comment id", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
   await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "because X" });
   const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
-  expect(out.entry).toMatchObject({ number: 1, priority: "parked", rationale: "awaiting human approval" });
+  expect(out.entry).toMatchObject({ number: 1, priority: "now", awaitingApproval: true, approvalKind: "close" });
+  expect(out.entry?.approvalCommentId).toBeDefined();           // for the direct 👍 link
+  expect(out.entry?.rationale).toContain("👍");                  // not sunk to "parked"
 });
 
 test("awaiting-gate approved merge: still waits for the human to click Merge, entry stays parked", async () => {

@@ -41,6 +41,11 @@ export interface BacklogEntry {
   rationale: string;
   blockedBy?: string[]; // open Depends-on refs
   fails?: number;       // consecutive maintainer-fail count
+  // #90: an item blocked on the human's 👍. Kept at high priority (not sunk to parked) and tagged so
+  // `monastery pending` can list it with a direct link to the exact comment to react on.
+  awaitingApproval?: boolean;
+  approvalKind?: string;        // "implement" | "close" | "merge"
+  approvalCommentId?: string;   // the approval comment id — for the direct 👍 link
 }
 
 export interface BacklogSnapshot {
