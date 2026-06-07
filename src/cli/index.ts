@@ -13,7 +13,7 @@ import { issueStep } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
-import { formatStatus, toStatusEntry, type StatusEntry } from "./status.js";
+import { formatStatus, toStatusEntry, explainOutcome, type StatusEntry } from "./status.js";
 import { formatBacklog } from "./backlog.js";
 import type { BacklogSnapshot } from "../types.js";
 
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
         const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
         if (args.issue) {
           const out = await issueStep(ctx, Number(args.issue));
-          console.log(`${repo}#${args.issue}: ${out.kind}`);
+          console.log(`${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`);
         } else {
           results.push(await reconcile(ctx));
         }
