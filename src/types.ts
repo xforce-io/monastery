@@ -28,3 +28,23 @@ export interface Issue {
   labels: string[];
   state: "open" | "closed";
 }
+
+// Backlog snapshot (issue #82): maintainer-written, human-read, disposable. Derived
+// deterministically from the maintainer's actions — see docs/design/82-backlog-snapshot.md.
+export type Priority = "now" | "soon" | "later" | "parked";
+
+export interface BacklogEntry {
+  number: number;
+  title: string;
+  priority: Priority;
+  rationale: string;
+  blockedBy?: string[]; // open Depends-on refs
+  fails?: number;       // consecutive maintainer-fail count
+}
+
+export interface BacklogSnapshot {
+  generatedAt: string;
+  repo: string;
+  rankedOf: { ranked: number; open: number };
+  entries: BacklogEntry[]; // already sorted
+}
