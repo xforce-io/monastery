@@ -6,6 +6,8 @@ import type { BacklogEntry, Priority } from "../types.js";
 /** Actions that mean "this issue is being advanced this tick" (short of handing it to the patcher). */
 const ADVANCING: ReadonlySet<string> = new Set(["spec", "endorse", "propose", "panel", "openDraftPR"]);
 
+const BUCKET: Record<Priority, number> = { now: 0, soon: 1, later: 2, parked: 3 };
+
 /** Derive a backlog entry from the maintainer's proposed actions (strongest signal wins). */
 export function deriveEntry(
   issue: { number: number; title: string },
@@ -33,4 +35,14 @@ export function deriveEntry(
   if (blockedBy.length) entry.blockedBy = blockedBy;
   if (fails > 0) entry.fails = fails;
   return entry;
+}
+
+/** Stable deterministic order: bucket, then not-blocked, then fewer fails, then lower number. */
+export function sortEntries(entries: BacklogEntry[]): BacklogEntry[] {
+  return [...entries].sort((a, b) =>
+    BUCKET[a.priority] - BUCKET[b.priority]
+    || (a.blockedBy?.length ?? 0) - (b.blockedBy?.length ?? 0)
+    || (a.fails ?? 0) - (b.fails ?? 0)
+    || a.number - b.number,
+  );
 }
