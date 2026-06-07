@@ -1,5 +1,5 @@
 // tests/step-lock.test.ts
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -97,5 +97,46 @@ test("stale lock (dead pid) is auto-cleared; acquire succeeds", () => {
   const release = lock.acquire("owner/repo");
   release();
 
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("lock held by an alive pid but older than the stale threshold is auto-cleared", () => {
+  const { lock, dir } = tmpLock();
+  const repoDir = join(dir, "repos", "owner__repo");
+  mkdirSync(repoDir, { recursive: true });
+
+  // pid is alive (this very process), but startedAt is years ago — well beyond
+  // any plausible step duration. Treat as a stale leftover (e.g. crashed run
+  // whose pid was later reused) and clear it instead of blocking forever.
+  writeFileSync(
+    join(repoDir, "step.lock"),
+    JSON.stringify({ pid: process.pid, repo: "owner/repo", startedAt: "2020-01-01T00:00:00Z", cmd: "" }),
+    "utf8",
+  );
+
+  const release = lock.acquire("owner/repo");
+  // re-acquired by us
+  const data = JSON.parse(readFileSync(join(repoDir, "step.lock"), "utf8"));
+  expect(data.pid).toBe(process.pid);
+  expect(data.startedAt).not.toBe("2020-01-01T00:00:00Z");
+  release();
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("force overwrite of a live lock warns about the displaced pid", () => {
+  const { lock, dir } = tmpLock();
+  const held = lock.acquire("owner/repo"); // live lock, our pid
+
+  const warns: string[] = [];
+  const spy = vi.spyOn(console, "warn").mockImplementation((m?: unknown) => { warns.push(String(m)); });
+  // force should overwrite even though the holder is alive, but not silently
+  const release = lock.acquire("owner/repo", "", true);
+  spy.mockRestore();
+
+  expect(warns.some((w) => w.includes(String(process.pid)))).toBe(true);
+
+  release();
+  held();
   rmSync(dir, { recursive: true, force: true });
 });

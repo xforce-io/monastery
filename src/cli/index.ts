@@ -63,25 +63,11 @@ async function main(): Promise<void> {
     const baseGh = new GhAdapter();
     const provider = new ClaudeCodeProvider();
     const stepLock = new StepLock(join(homedir(), ".monastery"));
-    const results = [];
+    const results: Awaited<ReturnType<typeof reconcile>>[] = [];
     const rawCmd = process.argv.slice(2).join(" ");
-    for (const repo of repos) {
-      let release: (() => void) | undefined;
-      try {
-        release = stepLock.acquire(repo, rawCmd, args.forceStaleLock);
-      } catch (e) {
-        if (e instanceof RepoLockError) {
-          if (args.json) {
-            console.error(JSON.stringify({ repo: e.repo, error: "repo_locked", pid: e.pid, startedAt: e.startedAt }));
-          } else {
-            console.error(`[monastery] repo ${e.repo} is already being stepped by pid ${e.pid} since ${e.startedAt}`);
-            console.error(`[monastery] refusing concurrent run; retry later or use --force-stale-lock only if the prior process is gone`);
-          }
-          process.exit(1);
-        }
-        throw e;
-      }
-      try {
+    const exitCode = await stepRepos({
+      repos, lock: stepLock, rawCmd, json: args.json, force: args.forceStaleLock,
+      runOne: async (repo) => {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
         const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
@@ -102,16 +88,60 @@ async function main(): Promise<void> {
             }
           }
         }
-      } finally {
-        release();
-      }
-    }
+      },
+    });
     if (!args.issue) console.log(args.json ? JSON.stringify(results, null, 2) : summarize(results));
+    if (exitCode !== 0) process.exit(exitCode);
     return;
   }
 
   console.error(`unknown command: ${args.cmd}`);
   process.exit(1);
+}
+
+export interface StepReposDeps {
+  repos: string[];
+  lock: StepLock;
+  rawCmd: string;
+  json?: boolean;
+  force?: boolean;
+  runOne: (repo: string) => Promise<void>;
+  err?: (msg: string) => void;
+}
+
+/**
+ * Step each repo under its own lock. A repo locked by a live process is skipped
+ * (fail-fast, no provider/GitHub work) and reported, but does NOT abort the whole
+ * batch — the remaining repos still run. Returns 1 if any repo was lock-conflicted,
+ * else 0. The lock is always released after a repo's work finishes or throws.
+ */
+export async function stepRepos(deps: StepReposDeps): Promise<number> {
+  const err = deps.err ?? ((m: string) => console.error(m));
+  let exitCode = 0;
+  for (const repo of deps.repos) {
+    let release: (() => void) | undefined;
+    try {
+      release = deps.lock.acquire(repo, deps.rawCmd, deps.force);
+    } catch (e) {
+      if (e instanceof RepoLockError) {
+        if (deps.json) {
+          err(JSON.stringify({ repo: e.repo, error: "repo_locked", pid: e.pid, startedAt: e.startedAt }));
+        } else {
+          err(`[monastery] repo ${e.repo} is already being stepped by pid ${e.pid} since ${e.startedAt}`);
+          err(`[monastery] refusing concurrent run; retry later or use --force-stale-lock only if the prior process is gone`);
+        }
+        exitCode = 1;
+        continue;
+      }
+      throw e;
+    }
+    try {
+      await deps.runOne(repo);
+    } finally {
+      release();
+    }
+  }
+  return exitCode;
 }
 
 function summarize(results: { repo: string; advanced: number; idle: boolean; nextPollMs: number }[]): string {

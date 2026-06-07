@@ -27,6 +27,11 @@ export class RepoLockError extends Error {
   }
 }
 
+// A lock whose holder is still "alive" but whose startedAt is older than this is
+// treated as stale. Guards against pid reuse (a crashed run's pid handed to an
+// unrelated process) and wedged runs. Set well above any plausible step duration.
+const STALE_LOCK_MS = 12 * 60 * 60 * 1000; // 12h
+
 function repoSlug(repo: string): string { return repo.replace(/\//g, "__"); }
 
 function isAlive(pid: number): boolean {
@@ -55,16 +60,26 @@ export class StepLock {
 
   /**
    * Acquire the lock for `repo`. Returns a release function that removes the lock file.
-   * Throws RepoLockError if a live process already holds the lock.
-   * Stale locks (pid not found) are silently removed and the lock is re-acquired.
-   * When `force` is true, any existing lock is removed regardless of whether the pid is alive.
+   * Throws RepoLockError if a live process holds a recent lock.
+   * Stale locks are removed and the lock is re-acquired. A lock is stale when its
+   * pid is no longer running, or when its startedAt is older than STALE_LOCK_MS
+   * (covers pid reuse and wedged runs).
+   * When `force` is true, any existing lock is removed regardless of holder/age —
+   * the displaced lock is logged, not removed silently.
    */
   acquire(repo: string, cmd = "", force = false): () => void {
     mkdirSync(join(this.root, "repos", repoSlug(repo)), { recursive: true });
     const path = this.lockPath(repo);
 
-    // --force-stale-lock: unconditionally remove any existing lock before acquiring
-    if (force) { try { unlinkSync(path); } catch { /* ignore */ } }
+    // --force-stale-lock: unconditionally remove any existing lock before acquiring.
+    // The escape hatch for pid-reuse false positives; warn loudly about what we displace.
+    if (force) {
+      try {
+        const prev = JSON.parse(readFileSync(path, "utf8")) as LockData;
+        console.warn(`[monastery] --force-stale-lock: removing existing lock held by pid ${prev.pid} (startedAt ${prev.startedAt})`);
+      } catch { /* no existing/unreadable lock — nothing to displace */ }
+      try { unlinkSync(path); } catch { /* ignore */ }
+    }
 
     let fd: number;
     try {
@@ -83,11 +98,13 @@ export class StepLock {
         return this.acquire(repo, cmd);
       }
 
-      if (isAlive(existing.pid)) {
+      const ageMs = Date.now() - Date.parse(existing.startedAt);
+      const expired = Number.isFinite(ageMs) && ageMs > STALE_LOCK_MS;
+      if (isAlive(existing.pid) && !expired) {
         throw new RepoLockError(repo, existing.pid, existing.startedAt);
       }
 
-      // Stale lock (dead pid) — remove and retry
+      // Stale lock (dead pid, or alive but older than the threshold) — remove and retry
       try { unlinkSync(path); } catch { /* ignore */ }
       return this.acquire(repo, cmd);
     }
