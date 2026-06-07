@@ -123,6 +123,19 @@ test("the agent accepts spec and endorse actions", async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("#100: the prompt tells the agent a spec version must be a full, self-contained design (not a diff)", async () => {
+  // The schema validates output but never reaches the LLM (spec.ts only safeParses). The full-document
+  // invariant every currentSpec consumer relies on must be stated in the PROMPT, or an agent could write a
+  // delta version that silently drops its base — exactly what the patcher (after #100) would then build from.
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", input, dir);
+  const ctx = provider.calls[0].context;
+  expect(ctx).toMatch(/全量|完整|自包含|self-contained|complete/i); // each version stands alone
+  expect(ctx).toMatch(/增量|diff|delta|incremental/i);              // explicitly: NOT a delta
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("consensus state (spec + endorsers + reached) and self identity are surfaced in context", async () => {
   const dir = newDir();
   const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });

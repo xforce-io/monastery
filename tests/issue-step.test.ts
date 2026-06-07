@@ -322,6 +322,22 @@ test("#88: a 👍 made AFTER the gate was opened approves it (fresh reaction)", 
   expect(gh.prs).toHaveLength(1);
 });
 
+// --- #100: an approved implement feeds the ENDORSED spec (not a stale issue body) to the patcher ---
+
+test("#100: approved implement feeds the endorsed currentSpec, not the stale issue body, to the patcher", async () => {
+  const gh = ghWith({ number: 90, title: "fix it", body: "STALE v1: add @anthropic-ai/sdk", labels: [], state: "open" });
+  await gh.postComment("o/r", 90, `${SPEC_MARKER(1, ["x"])}\nENDORSED SPEC: native fetch, zero deps`); // comment id "0"
+  await proposeGate(gh, "o/r", 90, "implement", "## Plan");  // gate comment id "1", stamped spec: 1 == currentSpec
+  gh.commentReactions["1"] = ["+1"];                         // 👍 on the gate
+  const provider = new FakeProvider({});
+  const c: StepCtx = { ...ctxWith(gh, provider), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 90);
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);
+  expect(provider.calls[0].context).toContain("ENDORSED SPEC: native fetch, zero deps");
+  expect(provider.calls[0].context).not.toContain("@anthropic-ai/sdk");
+});
+
 // --- #90 review fix: pendingApprovals scans ALL open awaiting issues, live (not the batched snapshot) ---
 
 test("#90: pendingApprovals lists open needs-approval issues with a gate, tagged with kind + comment id", async () => {

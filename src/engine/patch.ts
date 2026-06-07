@@ -7,6 +7,7 @@ import type { Issue, Outcome } from "../types.js";
 import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../agents/reviewer.js";
 import { patcherSpec } from "../agents/patcher.js";
 import { effectivePolicy } from "../agents/spec.js";
+import type { Spec } from "../shell/consensus.js";
 
 // Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
@@ -60,8 +61,13 @@ function defaultReview(ctx: StepCtx): ReviewFn {
  * The shell-owned patcher executor (proposal-driven: the maintainer agent's `implement` action routes here).
  * Writes code in a sandbox clone, self-reviews, and opens a HUMAN-GATED draft PR. The agent never touches
  * git/gh — the shell owns clone/push/PR, and the only path to main is a human Merge (constitution §3/§4).
+ *
+ * #100: when an endorsed `spec` is supplied, ITS body — not the (possibly stale) issue body — is the
+ * patcher's authoritative task description. The approval gate binds to a `spec: N` version (#95), so the
+ * shell feeds the patcher exactly what was approved, closing the #99 hole where the patcher trusted a body
+ * that still carried a rejected design.
  */
-export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | null): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
   const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
   const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
@@ -73,7 +79,10 @@ export async function runImplement(ctx: StepCtx, issue: Issue): Promise<Outcome>
 
   const dir = await ctx.ws.clone(ctx.repo, branch);
   try {
-    const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${issue.body}`;
+    // #100: the endorsed spec (decision A) fully supersedes the issue body — the body may be stale (the very
+    // failure in #99). No spec -> fall back to the body (plain-body issues are unchanged).
+    const task = spec ? `endorsed spec v${spec.version}:\n\n${spec.body}` : issue.body;
+    const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${task}`;
     const implRes = await ctx.provider.run({ persona: PERSONA, context, artifactDir: dir, model: ctx.model });
     // The patcher's stdout IS the author summary (what+why). It runs in the worktree, so it can't write a
     // file (that would land in the diff) — we capture resultText here and render it into the PR body below.

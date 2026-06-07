@@ -36,6 +36,18 @@ test("ActionSchema rejects a malformed action (missing/empty fields, bad proposa
   expect(ActionSchema.safeParse({ kind: "panel", num: "1", body: "x" }).success).toBe(false); // num not a number
 });
 
+test("#100: the spec action's body field documents the full-document contract (not an incremental diff)", () => {
+  // currentSpec only ever reads the highest-version comment's body — every consumer (the maintainer's
+  // context, consensusReached, the patcher after #100) treats it as the COMPLETE design. That invariant
+  // must be stated to the agent on the `spec` action, or a future agent could write a delta and break it.
+  const specVariant = (ActionSchema.options as { shape?: { kind?: { value?: string }; body?: { description?: string } } }[])
+    .find((o) => o.shape?.kind?.value === "spec");
+  expect(specVariant).toBeDefined();
+  const desc = specVariant!.shape!.body!.description ?? "";
+  expect(desc).toMatch(/全量|完整|自包含|supersede|self-contained/i); // each version stands alone
+  expect(desc).toMatch(/增量|diff|incremental/i);                      // explicitly: NOT a delta
+});
+
 test("ActionsSchema validates a batch under { actions: [...] }", () => {
   const ok = ActionsSchema.safeParse({ actions: [{ kind: "relabel", num: 2, add: ["thesis:in"], remove: [] }] });
   expect(ok.success).toBe(true);
