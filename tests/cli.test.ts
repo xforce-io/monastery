@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseArgs, stepRepos } from "../src/cli/index.js";
+import { parseArgs, stepRepos, summarize } from "../src/cli/index.js";
 import { StepLock } from "../src/config/step-lock.js";
 
 test("parses `step --repo o/r --dry-run --json`", () => {
@@ -115,4 +115,13 @@ test("formatBacklog renders header + ranked lines with priority, rationale, bloc
   expect(out).toContain("[later] #1 a");
   expect(out).toContain("blocked: o/r#9");
   expect(out).toContain("fails: 2");
+});
+
+test("summarize surfaces awaiting-your-👍 count when a repo has items blocked on the human (#88)", () => {
+  const r = (repo: string, awaiting: number) => ({
+    repo, advanced: 0, idle: true, nextPollMs: 60000,
+    waiting: awaiting > 0 ? [{ on: "human" as const, count: awaiting }] : [],
+  });
+  expect(summarize([r("o/a", 2)])).toContain("awaiting-your-👍=2");
+  expect(summarize([r("o/b", 0)])).not.toContain("awaiting-your-👍");
 });

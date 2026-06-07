@@ -12,6 +12,7 @@ import { reconcile } from "../engine/reconcile.js";
 import { issueStep } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
+import type { ReconcileResult } from "../types.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, type StatusEntry } from "./status.js";
 import { formatBacklog } from "./backlog.js";
@@ -156,8 +157,12 @@ export async function stepRepos(deps: StepReposDeps): Promise<number> {
   return exitCode;
 }
 
-function summarize(results: { repo: string; advanced: number; idle: boolean; nextPollMs: number }[]): string {
-  return results.map((r) => `${r.repo}: advanced=${r.advanced} idle=${r.idle} next=${Math.round(r.nextPollMs / 1000)}s`).join("\n");
+export function summarize(results: ReconcileResult[]): string {
+  return results.map((r) => {
+    const awaiting = r.waiting.find((w) => w.on === "human")?.count ?? 0;
+    const base = `${r.repo}: advanced=${r.advanced} idle=${r.idle} next=${Math.round(r.nextPollMs / 1000)}s`;
+    return awaiting > 0 ? `${base} awaiting-your-👍=${awaiting}` : base; // #88: surface items blocked on you
+  }).join("\n");
 }
 
 // Only run when invoked as the binary (not when imported by tests).
