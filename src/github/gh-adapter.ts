@@ -111,6 +111,39 @@ export class GhAdapter implements GitHubAdapter {
     const s = out.trim().toLowerCase();
     return s === "open" || s === "merged" || s === "closed" ? s : null;
   }
+  async getPrDetails(repo: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean } | null> {
+    const out = await this.run([
+      "pr", "list", "--repo", repo, "--head", branch, "--state", "all",
+      "--json", "number,url,title,body,isDraft", "--jq", ".[0] // empty",
+    ]).catch(() => "");
+    if (!out.trim()) return null;
+    try {
+      const r = JSON.parse(out) as { number: number; url: string; title: string; body: string; isDraft: boolean };
+      return { number: r.number, url: r.url, title: r.title, body: r.body ?? "", isDraft: r.isDraft ?? false };
+    } catch {
+      return null;
+    }
+  }
+  async listPrComments(repo: string, prNumber: number): Promise<{ id: string; body: string; author: string }[]> {
+    // PR conversation comments share the same endpoint as issue comments (a PR IS an issue in GitHub's model).
+    return this.listComments(repo, prNumber);
+  }
+  async listPrReviews(repo: string, prNumber: number): Promise<{ author: string; state: string; body: string }[]> {
+    const out = await this.run([
+      "api", `repos/${repo}/pulls/${prNumber}/reviews`,
+      "--jq", "[.[] | {author: .user.login, state, body}]",
+    ]).catch(() => "[]");
+    return JSON.parse(out || "[]") as { author: string; state: string; body: string }[];
+  }
+  async getPrChecks(repo: string, prNumber: number): Promise<"pass" | "fail" | "pending"> {
+    // statusCheckRollup via gh pr view; fall back to "pending" on any error.
+    const out = await this.run([
+      "pr", "view", String(prNumber), "--repo", repo, "--json", "statusCheckRollup",
+      "--jq", '.statusCheckRollup | if . == null or length == 0 then "pending" elif any(.[]; .conclusion == "FAILURE" or .conclusion == "TIMED_OUT") then "fail" elif any(.[]; .status != "COMPLETED") then "pending" else "pass" end',
+    ]).catch(() => "");
+    const s = out.trim();
+    return s === "pass" || s === "fail" ? s : "pending";
+  }
   async listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]> {
     const out = await this.run([
       "api", `repos/${repo}/issues/${num}/comments`, "--jq", "[.[] | {id: (.id|tostring), body, author: .user.login}]",

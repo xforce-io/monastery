@@ -27,6 +27,14 @@ export interface GitHubAdapter {
   findPrForBranch(repo: string, branch: string): Promise<string | null>;
   /** State of the PR whose head is `branch`: open | merged | closed; null if none. */
   prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null>;
+  /** Full PR metadata for the PR whose head is `branch`: number, url, title, body, isDraft. Null if no PR. */
+  getPrDetails(repo: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean } | null>;
+  /** Conversation comments on a PR (by PR number), oldest first. Same shape as listComments — author is login. */
+  listPrComments(repo: string, prNumber: number): Promise<{ id: string; body: string; author: string }[]>;
+  /** Reviews on a PR (by PR number): author, state (APPROVED / REQUEST_CHANGES / COMMENTED), body. */
+  listPrReviews(repo: string, prNumber: number): Promise<{ author: string; state: string; body: string }[]>;
+  /** Aggregate check status for a PR: all pass → "pass"; any fail → "fail"; else → "pending". */
+  getPrChecks(repo: string, prNumber: number): Promise<"pass" | "fail" | "pending">;
   /** All comments on an issue/PR, oldest first. `author` is the commenter's login (identity, not marker). */
   listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string }[]>;
   /** Reaction contents on a comment (e.g. `["+1", "-1"]`) — `+1`/`-1` are the issue approve/decline signals (PROTOCOL §4). */

@@ -11,8 +11,20 @@ export interface MaintainerInput {
   issue: Issue;                                              // the item: number, title, body, labels, state
   comments: { id: string; body: string; author: string }[]; // oldest-first; author = login (identity)
   /** State of monastery's PR for this issue (branch feat/<n>-<slug>), or null if none — so the agent
-   *  doesn't re-propose `implement` when a patch PR is already open/awaiting the human's merge. */
-  pr?: { branch: string; state: "open" | "merged" | "closed" } | null;
+   *  doesn't re-propose `implement` when a patch PR is already open/awaiting the human's merge.
+   *  When a PR exists, also includes full PR context so the agent sees human feedback left on the PR. */
+  pr?: {
+    branch: string;
+    state: "open" | "merged" | "closed";
+    url?: string;
+    number?: number;
+    title?: string;
+    body?: string;
+    isDraft?: boolean;
+    comments?: { id: string; body: string; author: string }[];
+    reviews?: { author: string; state: string; body: string }[];
+    checks?: "pass" | "fail" | "pending";
+  } | null;
   /** Cross-repo upstream issues this one declares (`Depends-on:`), with their current state (read-only). */
   deps?: { ref: string; state: "open" | "closed"; title: string }[];
   /** This monastery instance's own login — so the agent knows who it is and whether IT has endorsed. */
@@ -55,14 +67,34 @@ function consensusBlock(input: MaintainerInput): string {
   return lines.join("\n");
 }
 
+function buildPrBlock(pr: MaintainerInput["pr"]): string {
+  if (!pr) return "monastery has no PR open for this issue.";
+  const lines: string[] = [`branch: ${pr.branch}, state: ${pr.state}`];
+  if (pr.url) lines.push(`url: ${pr.url}`);
+  if (pr.number !== undefined) lines.push(`number: ${pr.number}`);
+  if (pr.title) lines.push(`title: ${pr.title}`);
+  if (pr.isDraft !== undefined) lines.push(`isDraft: ${pr.isDraft}`);
+  if (pr.body) lines.push(`body: ${pr.body}`);
+  if (pr.checks) lines.push(`checks: ${pr.checks}`);
+  if (pr.comments?.length) {
+    const commentLines = pr.comments.map((c) => `<pr-comment id="${c.id}" author="${c.author}">\n${c.body}\n</pr-comment>`).join("\n");
+    lines.push(`<pr-comments>\n${commentLines}\n</pr-comments>`);
+  } else {
+    lines.push("(no PR comments)");
+  }
+  if (pr.reviews?.length) {
+    const reviewLines = pr.reviews.map((r) => `<pr-review author="${r.author}" state="${r.state}">\n${r.body}\n</pr-review>`).join("\n");
+    lines.push(`<pr-reviews>\n${reviewLines}\n</pr-reviews>`);
+  }
+  return lines.join("\n");
+}
+
 function buildContext(input: MaintainerInput): string {
   const { thesis, issue, comments, pr, deps, backlog } = input;
   const commentBlock = comments.length
     ? comments.map((c) => `<comment id="${c.id}" author="${c.author}">\n${c.body}\n</comment>`).join("\n")
     : "(no comments)";
-  const prBlock = pr
-    ? `monastery's PR for this issue: branch ${pr.branch}, state ${pr.state}.`
-    : "monastery has no PR open for this issue.";
+  const prBlock = buildPrBlock(pr);
   const depBlock = deps && deps.length
     ? deps.map((d) => `- ${d.ref} [${d.state}] ${d.title}`).join("\n")
     : "(none)";

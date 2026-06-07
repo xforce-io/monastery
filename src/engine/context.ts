@@ -12,10 +12,23 @@ import { currentSpec, parseEndorsements, consensusReached } from "../shell/conse
 export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, issue: Issue): Promise<MaintainerInput> {
   const thesis = await gh.readThesis(repo);
   const comments = await gh.listComments(repo, issue.number);
-  // monastery's PR state for this issue's branch (so the agent won't re-implement while a PR is open, §8).
+  // monastery's PR for this issue's branch: gather state + rich context so the agent sees human PR feedback.
   const branch = branchName(issue.number, issue.title);
   const prState = await gh.prState(repo, branch);
-  const pr = prState ? { branch, state: prState } : null;
+  let pr: MaintainerInput["pr"] = null;
+  if (prState) {
+    const details = await gh.getPrDetails(repo, branch);
+    if (details) {
+      const [prComments, prReviews, checks] = await Promise.all([
+        gh.listPrComments(repo, details.number),
+        gh.listPrReviews(repo, details.number),
+        gh.getPrChecks(repo, details.number),
+      ]);
+      pr = { branch, state: prState, ...details, comments: prComments, reviews: prReviews, checks };
+    } else {
+      pr = { branch, state: prState };
+    }
+  }
   // read-only cross-repo awareness: each `Depends-on:` upstream's current state (P0).
   const deps = await resolveDeps(gh, issue.body);
   // multi-party consensus state: current shared spec + endorsements (P1).

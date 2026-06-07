@@ -49,3 +49,58 @@ test("gatherMaintainerContext: no pr / no deps / no spec → null pr, empty deps
   expect(input.deps).toEqual([]);
   expect(input.consensus?.reached).toBe(false);
 });
+
+test("gatherMaintainerContext enriches pr with url/number/title/body/isDraft when getPrDetails returns data", async () => {
+  const issue: Issue = { number: 5, title: "x", body: "b", labels: [], state: "open" };
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  gh.prStates["feat/5-x"] = "open";
+  gh.prDetailsByBranch["feat/5-x"] = { number: 10, url: "https://github.com/o/r/pull/10", title: "fix x", body: "PR body", isDraft: true };
+
+  const input = await gatherMaintainerContext(gh, "o/r", issue);
+
+  expect(input.pr?.url).toBe("https://github.com/o/r/pull/10");
+  expect(input.pr?.number).toBe(10);
+  expect(input.pr?.title).toBe("fix x");
+  expect(input.pr?.body).toBe("PR body");
+  expect(input.pr?.isDraft).toBe(true);
+});
+
+test("gatherMaintainerContext includes PR conversation comments in pr.comments", async () => {
+  const issue: Issue = { number: 5, title: "x", body: "b", labels: [], state: "open" };
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  gh.prStates["feat/5-x"] = "open";
+  gh.prDetailsByBranch["feat/5-x"] = { number: 10, url: "https://github.com/o/r/pull/10", title: "t", body: "b", isDraft: false };
+  gh.prCommentsByPr[10] = [
+    { id: "c1", body: "please fix this", author: "alice" },
+    { id: "c2", body: "<!--monastery-panel-->status", author: "monastery" },
+  ];
+
+  const input = await gatherMaintainerContext(gh, "o/r", issue);
+
+  expect(input.pr?.comments).toHaveLength(2);
+  expect(input.pr?.comments?.[0]).toEqual({ id: "c1", body: "please fix this", author: "alice" });
+});
+
+test("gatherMaintainerContext includes PR reviews in pr.reviews", async () => {
+  const issue: Issue = { number: 5, title: "x", body: "b", labels: [], state: "open" };
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  gh.prStates["feat/5-x"] = "open";
+  gh.prDetailsByBranch["feat/5-x"] = { number: 10, url: "https://github.com/o/r/pull/10", title: "t", body: "b", isDraft: false };
+  gh.prReviewsByPr[10] = [{ author: "bob", state: "REQUEST_CHANGES", body: "not ready yet" }];
+
+  const input = await gatherMaintainerContext(gh, "o/r", issue);
+
+  expect(input.pr?.reviews).toEqual([{ author: "bob", state: "REQUEST_CHANGES", body: "not ready yet" }]);
+});
+
+test("gatherMaintainerContext includes PR checks summary in pr.checks", async () => {
+  const issue: Issue = { number: 5, title: "x", body: "b", labels: [], state: "open" };
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  gh.prStates["feat/5-x"] = "open";
+  gh.prDetailsByBranch["feat/5-x"] = { number: 10, url: "https://github.com/o/r/pull/10", title: "t", body: "b", isDraft: false };
+  gh.prChecksByPr[10] = "fail";
+
+  const input = await gatherMaintainerContext(gh, "o/r", issue);
+
+  expect(input.pr?.checks).toBe("fail");
+});
