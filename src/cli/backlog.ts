@@ -12,15 +12,15 @@ export function formatBacklog(s: BacklogSnapshot): string {
   return [header, ...lines].join("\n");
 }
 
-/** Render only the items awaiting the human's 👍, each with a direct link to the comment to react on (#90). */
-export function formatPending(s: BacklogSnapshot): string {
-  const pending = s.entries.filter((e) => e.awaitingApproval);
-  if (!pending.length) return `${s.repo} — nothing awaiting your approval 🎉`;
-  const lines = pending.map((e) => {
-    const link = e.approvalCommentId
-      ? `https://github.com/${s.repo}/issues/${e.number}#issuecomment-${e.approvalCommentId}`
-      : `https://github.com/${s.repo}/issues/${e.number}`;
-    return `  ⏳ #${e.number} ${e.title} [${e.approvalKind ?? "approval"}]\n     👍 here: ${link}`;
+export interface PendingItem { repo: string; number: number; title: string; approvalKind?: string; approvalCommentId: string }
+
+/** Render the LIVE awaiting-approval list (from a full GitHub scan via pendingApprovals — not the batched
+ *  snapshot, so it never misses items past MAX_ITEMS_PER_TICK nor goes stale), each with a direct 👍 link (#90). */
+export function formatPending(items: PendingItem[]): string {
+  if (!items.length) return "nothing awaiting your approval 🎉";
+  const lines = items.map((e) => {
+    const link = `https://github.com/${e.repo}/issues/${e.number}#issuecomment-${e.approvalCommentId}`;
+    return `  ⏳ #${e.number} ${e.title} [${e.approvalKind ?? "approval"}] (${e.repo})\n     👍 here: ${link}`;
   });
-  return [`${s.repo} — awaiting your 👍 (${pending.length}):`, ...lines].join("\n");
+  return [`awaiting your 👍 (${items.length}):`, ...lines].join("\n");
 }

@@ -128,24 +128,17 @@ test("summarize surfaces awaiting-your-👍 count when a repo has items blocked 
 
 import { formatPending } from "../src/cli/backlog.js";
 
-test("formatPending lists awaiting-approval items with a direct 👍 link + kind, excludes the rest (#90)", () => {
-  const snap: BacklogSnapshot = {
-    generatedAt: "1970-01-01T00:00:00.000Z", repo: "o/r", rankedOf: { ranked: 2, open: 2 },
-    entries: [
-      { number: 7, title: "feat", priority: "now", rationale: "⏳", awaitingApproval: true, approvalKind: "implement", approvalCommentId: "999" },
-      { number: 8, title: "other", priority: "soon", rationale: "advancing: panel" },
-    ],
-  };
-  const out = formatPending(snap);
+test("formatPending lists awaiting-approval items with a direct 👍 link + kind (#90)", () => {
+  const out = formatPending([
+    { repo: "o/r", number: 7, title: "feat", approvalKind: "implement", approvalCommentId: "999" },
+  ]);
   expect(out).toContain("#7 feat");
   expect(out).toContain("implement");
-  expect(out).toContain("issues/7#issuecomment-999"); // direct 👍 link
-  expect(out).not.toContain("#8");                     // not awaiting → excluded
+  expect(out).toContain("o/r/issues/7#issuecomment-999"); // direct 👍 link
 });
 
 test("formatPending: nothing awaiting → friendly message", () => {
-  expect(formatPending({ generatedAt: "x", repo: "o/r", rankedOf: { ranked: 0, open: 0 }, entries: [] }))
-    .toContain("nothing awaiting");
+  expect(formatPending([])).toContain("nothing awaiting");
 });
 
 test("parses `pending --repo o/r --json`", () => {

@@ -177,3 +177,26 @@ function stripMarkers(body: string): string {
     .replace(/^⏳ \*\*NEEDS YOUR APPROVAL\*\*[^\n]*\n*/m, "") // drop the #90 approval banner from the human draft
     .trim();
 }
+
+/**
+ * Read-only scan of ALL open awaiting-gate issues for `monastery pending` (issue #90 review fix): every
+ * open `needs-approval` issue whose latest approval comment has no 👍 yet. Live (not the batched snapshot),
+ * so it never misses items past MAX_ITEMS_PER_TICK and never goes stale after you react.
+ */
+export async function pendingApprovals(
+  gh: GitHubAdapter,
+  repo: string,
+): Promise<{ number: number; title: string; approvalKind?: string; approvalCommentId: string }[]> {
+  const open = await gh.listOpenIssues(repo, 0);
+  const out: { number: number; title: string; approvalKind?: string; approvalCommentId: string }[] = [];
+  for (const i of open) {
+    if (i.labels.includes(DECLINED) || !i.labels.includes(NEEDS_APPROVAL)) continue;
+    const comments = await gh.listComments(repo, i.number);
+    const gate = comments.filter((c) => c.body.includes(APPROVAL_MARK)).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (!gate) continue; // needs-approval but no panel: inconsistent, skip
+    const reactions = await gh.reactions(repo, gate.id);
+    if (reactions.some((r) => r.content === "+1")) continue; // already approved
+    out.push({ number: i.number, title: i.title, approvalKind: approvalKind(gate.body) ?? undefined, approvalCommentId: gate.id });
+  }
+  return out;
+}

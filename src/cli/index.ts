@@ -9,13 +9,13 @@ import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
-import { issueStep } from "../engine/issue-step.js";
+import { issueStep, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
 import type { ReconcileResult } from "../types.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, type StatusEntry } from "./status.js";
-import { formatBacklog, formatPending } from "./backlog.js";
+import { formatBacklog, formatPending, type PendingItem } from "./backlog.js";
 import type { BacklogSnapshot } from "../types.js";
 
 export interface ParsedArgs {
@@ -72,13 +72,13 @@ async function main(): Promise<void> {
   }
 
   if (args.cmd === "pending") {
+    // Live full scan (issue #90 review fix): not the batched backlog snapshot, so it never misses an
+    // awaiting issue past MAX_ITEMS_PER_TICK and never goes stale after you react.
+    const gh = new GhAdapter();
     const repos = args.repo ? [args.repo] : store.listRepos();
-    const snaps = repos
-      .map((r) => store.readBacklog(r))
-      .filter((s): s is BacklogSnapshot => s !== null);
-    console.log(args.json
-      ? JSON.stringify(snaps.flatMap((s) => s.entries.filter((e) => e.awaitingApproval)), null, 2)
-      : snaps.map(formatPending).join("\n\n"));
+    const items: PendingItem[] = [];
+    for (const repo of repos) for (const it of await pendingApprovals(gh, repo)) items.push({ ...it, repo });
+    console.log(args.json ? JSON.stringify(items, null, 2) : formatPending(items));
     return;
   }
 
