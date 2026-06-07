@@ -136,9 +136,9 @@ export async function stepRepos(deps: StepReposDeps): Promise<number> {
     } catch (e) {
       if (e instanceof RepoLockError) {
         if (deps.json) {
-          err(JSON.stringify({ repo: e.repo, error: "repo_locked", pid: e.pid, startedAt: e.startedAt }));
+          err(JSON.stringify({ repo: e.repo, error: "repo_locked", pid: e.pid, hostname: e.hostname, startedAt: e.startedAt }));
         } else {
-          err(`[monastery] repo ${e.repo} is already being stepped by pid ${e.pid} since ${e.startedAt}`);
+          err(`[monastery] repo ${e.repo} is already being stepped by pid ${e.pid}@${e.hostname ?? "unknown"} since ${e.startedAt}`);
           err(`[monastery] refusing concurrent run; retry later or use --force-stale-lock only if the prior process is gone`);
         }
         exitCode = 1;
