@@ -242,3 +242,12 @@ test("awaiting-gate issue: entry is parked", async () => {
   const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
   expect(out.entry).toMatchObject({ number: 1, priority: "parked", rationale: "awaiting human approval" });
 });
+
+test("awaiting-gate approved merge: still waits for the human to click Merge, entry stays parked", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "merge", draft: "ship it" });
+  gh.commentReactions["panel:1"] = ["+1"]; // approved, but a merge is finalized by the human on the PR
+  const out = await issueStep(ctxWith(gh, new FakeProvider({})), 1);
+  expect(out.kind).toBe("waiting");
+  expect(out.entry).toMatchObject({ number: 1, priority: "parked" });
+});

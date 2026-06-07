@@ -122,7 +122,8 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   }
   // PROTOCOL §4: a merge is approved by the human clicking Merge on the PR directly (which closes the
   // issue via `Closes #N` -> terminal). The shell does not merge from an issue 👍. Keep waiting.
-  return { kind: "waiting", on: "human" };
+  // Still open + needs-approval, so it stays parked in the backlog.
+  return { kind: "waiting", on: "human", entry: parked };
 }
 
 /** Stamp the terminal `declined` state, clear the approval ask, record why. Idempotent. */
