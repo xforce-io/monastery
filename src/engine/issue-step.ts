@@ -90,7 +90,9 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // #108: run the maintainer in the tick's read-only repo checkout (so it can verify root cause from code)
   // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).
   const dir = ctx.repoDir ?? join(ctx.artifactRoot, `${issue.number}`);
-  const actions = await maintainer(ctx.provider, ctx.model, input, dir);
+  // #72: the maintainer's model comes from its effective policy (agents.maintainer.model), not just ctx.model.
+  const model = effectivePolicy(maintainerSpec, ctx.repoPolicy).model ?? ctx.model;
+  const actions = await maintainer(ctx.provider, model, input, dir);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.
