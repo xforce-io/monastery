@@ -7,7 +7,12 @@ export type Outcome = (
   | { kind: "waiting"; on: WaitReason }
   | { kind: "done" }
   | { kind: "noop" }
-) & { entry?: BacklogEntry };
+) & {
+  entry?: BacklogEntry;
+  // #86: set by awaitingGate under ctx.deferImplement — an approved implement gate that the tick scheduler
+  // should run at most one of. reconcile collects these and runs only the backlog-top one this tick.
+  readyImplement?: boolean;
+};
 
 // Per-repo reconcile tick result (L0).
 export interface ReconcileResult {

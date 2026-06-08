@@ -22,13 +22,19 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   let advanced = 0;
   const entries: BacklogEntry[] = [];
 
+  // #86: a tick runs at most ONE implement (the heavy runImplement / patcher). Pass 1 steps the whole batch
+  // with deferImplement, so approved implement gates are only REPORTED (readyImplement), not run; every other
+  // action (maintainer judgment, lightweight writes, close/demote, non-approved gates) executes as usual.
+  const ready: { number: number; title: string; entry?: BacklogEntry }[] = [];
+
   // Step the whole batch. #108: under ONE shared read-only checkout (so the maintainer can verify root
   // cause from code), unless nothing is active (awaiting-gate items run no agent → no checkout needed).
   const stepBatch = async (sctx: StepCtx) => {
     for (const i of batch) {
       // Per-item fault isolation: one item blowing up must not abort the rest of the tick (constitution §10).
       try {
-        const out = await issueStep(sctx, i.number);
+        const out = await issueStep({ ...sctx, deferImplement: true }, i.number);
+        if (out.readyImplement) { ready.push({ number: i.number, title: i.title, entry: out.entry }); continue; }
         if (out.entry) entries.push(out.entry);
         if (out.kind === "progressed" || out.kind === "done") advanced++;
         else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
@@ -40,6 +46,27 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   const hasActive = batch.some((i) => !i.labels.includes(NEEDS_APPROVAL));
   if (hasActive) await withReadOnlyCheckout(ctx, stepBatch);
   else await stepBatch(ctx);
+
+  // Pass 2: schedule the single heavy slot. Pick the backlog-top approved candidate and run only it (re-step
+  // with deferImplement off → the normal approved-gate path: runImplement + gate consumed). The rest keep their
+  // 👍'd gate intact and re-enter next tick — deferring is safe, nothing is lost.
+  if (ready.length > 0) {
+    const winner = sortEntries(ready.map((r) => r.entry!))[0].number;
+    for (const r of ready) {
+      if (r.number !== winner) {
+        entries.push({ number: r.number, title: r.title, priority: "now", rationale: "⏳ approved implement → deferred (one per tick; next tick)" });
+        continue;
+      }
+      try {
+        const out = await issueStep({ ...ctx, deferImplement: false }, r.number);
+        if (out.kind === "progressed" || out.kind === "done") advanced++;
+        entries.push({ number: r.number, title: r.title, priority: "now", rationale: "✅ approved implement → executed this tick" });
+      } catch (e) {
+        console.warn(`[monastery] implement ${ctx.repo}#${r.number} failed (skipped): ${(e as Error).message}`);
+        entries.push({ number: r.number, title: r.title, priority: "now", rationale: "approved implement → failed this tick" });
+      }
+    }
+  }
 
   // waiting.human = awaiting-gate items (needs-approval, not declined) across the whole repo — they sit
   // until a human signals. This is the single source for waiting.human (the batch loop skips on==human).
