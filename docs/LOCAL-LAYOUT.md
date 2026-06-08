@@ -59,11 +59,13 @@
 
 ## 模型解析顺序(CLI `step`)
 
-每仓 tick 时按此优先级取 model:
+每仓 tick 时,**每个角色(maintainer / patcher / reviewer)各自**按此优先级取 model:
 
 ```
-config.json 的 per-repo model  →  $MONASTERY_MODEL  →  "sonnet"(默认 ≥ sonnet)
+agents.<role>.model(effectivePolicy)  →  config.json 的 per-repo model  →  $MONASTERY_MODEL  →  "sonnet"(默认 ≥ sonnet)
 ```
+
+即 per-agent 覆盖最高;不写 `agents.<role>.model` 时该角色回退到仓库级 model 链。reviewer 额外兼容历史的 `MONASTERY_REVIEW_MODEL`(经 `reviewModel`),其位置介于 per-repo model 之后:`agents.reviewer.model → MONASTERY_REVIEW_MODEL → per-repo model → …`。
 
 `monastery repos add <owner>/<repo> [model]` 写入 config;省略 `model` 则该仓 policy 为空、走回退链。
 

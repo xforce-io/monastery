@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StepCtx } from "./issue-step.js";
 import type { Issue, Outcome } from "../types.js";
-import { reviewer, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../agents/reviewer.js";
+import { reviewer, reviewerSpec, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../agents/reviewer.js";
 import { patcherSpec } from "../agents/patcher.js";
 import { effectivePolicy } from "../agents/spec.js";
 import type { Spec } from "../shell/consensus.js";
@@ -50,7 +50,9 @@ function defaultReview(ctx: StepCtx): ReviewFn {
     // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
     const reviewDir = mkdtempSync(join(tmpdir(), "monastery-review-"));
     try {
-      return await reviewer(ctx.provider, ctx.reviewModel ?? ctx.model, { diff, issue }, reviewDir);
+      // #72: reviewer model precedence — agents.reviewer.model → legacy ctx.reviewModel (MONASTERY_REVIEW_MODEL) → ctx.model.
+      const reviewModel = effectivePolicy(reviewerSpec, ctx.repoPolicy).model ?? ctx.reviewModel ?? ctx.model;
+      return await reviewer(ctx.provider, reviewModel, { diff, issue }, reviewDir);
     } finally {
       rmSync(reviewDir, { recursive: true, force: true });
     }
@@ -72,6 +74,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
   const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
   const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
   const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
+  const patcherModel = policy.model ?? ctx.model; // #72: agents.patcher.model takes effect, not just ctx.model
 
   // Converge: an open PR already exists for this branch -> don't re-run the patcher (idempotent, PROTOCOL §7).
   const existingPr = await ctx.gh.findPrForBranch(ctx.repo, branch);
@@ -83,7 +86,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     // failure in #99). No spec -> fall back to the body (plain-body issues are unchanged).
     const task = spec ? `endorsed spec v${spec.version}:\n\n${spec.body}` : issue.body;
     const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${task}`;
-    const implRes = await ctx.provider.run({ persona: PERSONA, context, artifactDir: dir, model: ctx.model });
+    const implRes = await ctx.provider.run({ persona: PERSONA, context, artifactDir: dir, model: patcherModel });
     // The patcher's stdout IS the author summary (what+why). It runs in the worktree, so it can't write a
     // file (that would land in the diff) — we capture resultText here and render it into the PR body below.
     let authorSummary = implRes.resultText?.trim() || "";
@@ -119,7 +122,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
         await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS));
         return { kind: "noop" };
       }
-      const fixRes = await ctx.provider.run({ persona: FIX_PERSONA, context: fixContext(issue, blocking), artifactDir: dir, model: ctx.model });
+      const fixRes = await ctx.provider.run({ persona: FIX_PERSONA, context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel });
       if (fixRes.resultText?.trim()) authorSummary = fixRes.resultText.trim();   // keep the summary current with the final diff
       fixedTitles.push(...blocking.map((b) => b.title));
       tests = await ctx.ws.runTests(dir);
