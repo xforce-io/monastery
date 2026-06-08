@@ -1,3 +1,6 @@
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { expect, test } from "vitest";
 import { GitWorkspace, type Runner } from "../src/workspace/git-workspace.js";
 
@@ -43,4 +46,19 @@ test("runTests returns null when there is no package.json", async () => {
   const ws = new GitWorkspace(run);
   // a path that surely has no package.json
   expect(await ws.runTests("/nonexistent-dir-xyz")).toBeNull();
+});
+
+// #87 sandbox isolation: the clone() sandbox must live under os.tmpdir(), never the
+// main working tree (process.cwd()). Guards the "约束而非信任" filesystem invariant —
+// a regression here is how a patcher run could pollute the repo it runs from.
+test("#87 clone() sandbox lives in tmpdir, never process.cwd()", async () => {
+  const { run } = recorder();
+  const ws = new GitWorkspace(run);
+  const dir = await ws.clone("o/r", "feat/1-x");
+  try {
+    expect(dir).not.toBe(process.cwd());
+    expect(dirname(dir)).toBe(tmpdir());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

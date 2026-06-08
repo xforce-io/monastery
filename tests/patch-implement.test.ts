@@ -38,6 +38,26 @@ test("happy path: writes a patch in a sandbox, self-review passes, opens a draft
   expect(ws.cleaned).toHaveLength(1);                // sandbox cleaned up
 });
 
+// #87 sandbox isolation: the agent's cwd (artifactDir) must be the tmp sandbox clone,
+// never the main working tree (process.cwd()). This is the real leak class — an agent
+// run with cwd=main repo would edit files in place. Pairs with the GitWorkspace.clone
+// tmpdir test in git-workspace.test.ts.
+test("#87 the patcher agent runs in the tmp sandbox clone, never process.cwd()", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const provider = new FakeProvider({});
+  const c = ctx(gh, ws, async () => clean);
+  c.provider = provider;
+  await runImplement(c, issue);
+  expect(ws.cloned).toHaveLength(1);
+  const sandbox = ws.cloned[0].dir;
+  for (const call of provider.calls) {
+    expect(call.artifactDir).toBe(sandbox);          // agent cwd == the sandbox clone
+    expect(call.artifactDir).not.toBe(process.cwd()); // never the main working tree
+    expect(call.artifactDir.startsWith(tmpdir())).toBe(true);
+  }
+});
+
 test("PR body carries the patcher's author summary in a 本次改动 section", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
   const ws = new FakeWorkspace({ diff: "some patch", tests: true });
