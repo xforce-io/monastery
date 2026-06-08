@@ -9,7 +9,7 @@ import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
-import { issueStep, pendingApprovals } from "../engine/issue-step.js";
+import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
 import type { ReconcileResult } from "../types.js";
@@ -97,7 +97,9 @@ async function main(): Promise<void> {
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
         const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
         if (args.issue) {
-          const out = await issueStep(ctx, Number(args.issue));
+          // #108: a single-issue run gets the same read-only code checkout as a reconcile tick, so the
+          // maintainer can verify root cause from source here too (parity between the two entry points).
+          const out = await withReadOnlyCheckout(ctx, (c) => issueStep(c, Number(args.issue)));
           console.log(`${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`);
         } else {
           results.push(await reconcile(ctx));

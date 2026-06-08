@@ -23,10 +23,16 @@ test("the no-git/gh boundary (CONSTITUTION §3) is declared in every agent's per
   }
 });
 
-test("sandboxes are declared explicitly: structured agents are artifact-only; the patcher gets a clone", () => {
-  expect(maintainerSpec.sandbox).toBe("artifact-only");
+test("sandboxes are declared explicitly: maintainer reads code, reviewer is text-only, patcher gets a writable clone", () => {
+  expect(maintainerSpec.sandbox).toBe("readonly-clone"); // #108: reads code to verify root cause before implement
   expect(reviewerSpec.sandbox).toBe("artifact-only");
   expect(patcherSpec.sandbox).toBe("workspace-clone");
+});
+
+test("#108 maintainer persona grants read-only code access and requires verifying root cause before implement", () => {
+  const p = maintainerSpec.persona;
+  expect(p).toMatch(/READ-ONLY checkout/i);      // it can read the repo
+  expect(p).toMatch(/VERIFY BEFORE IMPLEMENT/i); // and must, for a bug, before proposing implement
 });
 
 test("operational policy lives on the spec (the single home for the SLA-ish knobs)", () => {

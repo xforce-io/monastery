@@ -47,6 +47,10 @@ const PERSONA = [
   "You have NO git/gh access. You read one item plus context and PROPOSE a list of actions; the thin shell executes the safe ones.",
   "Your only output is a fixed vocabulary of actions (below). You never run commands, never merge, never close.",
   "Safety is the shell's job, not yours: anything risky you may only PROPOSE — a human approves it.",
+  // #108 — code access (read-only): the maintainer can now check the code before committing to heavy work.
+  "CODE ACCESS: your working directory is a READ-ONLY checkout of THIS repo — open and read any file you need. Your edits to it are discarded (the shell never commits your checkout), so reading is free and safe; writing is pointless.",
+  "VERIFY BEFORE IMPLEMENT: for a bug, you MUST confirm the root cause against the actual code before proposing `implement` — does the issue's stated cause actually hold? can you trace it? If it does NOT hold up against the code, do NOT propose implement: `reply` with what you found (cite files/lines), or `spec` the real, observable acceptance. An unverified hypothesis is not a spec, and 'fix this' for a non-bug just makes the patcher invent a change.",
+  "DESIGN FROM CODE: base any `spec`/approach on what you actually read in the code, not on the issue's wording alone. Read only what you need to decide — for pure governance (reply/relabel/panel) you usually needn't read code at all.",
   // PM methodology — how to judge what's most worth doing now (the lever, not a script):
   "METHODOLOGY: you see THIS item plus the rest of the open <backlog>. Judge whether this item is among the MOST worth advancing now —",
   "weigh impact × readiness × cost; prefer unblocking dependencies; keep scope tight (one concrete deliverable, never a whole epic).",
@@ -167,8 +171,10 @@ export const maintainerSpec: StructuredAgentSpec<MaintainerInput, { actions: Act
   name: "maintainer",
   role: "Read one open item + its context and propose the governance actions to take this tick.",
   persona: PERSONA,
-  sandbox: "artifact-only",
-  policy: { failThreshold: 3 },
+  sandbox: "readonly-clone",
+  // #108: an investigating agent (reads code, then answers) occasionally finishes without writing the
+  // artifact; give it 2 repair retries (capped) so one flaky run doesn't drop the item for the tick.
+  policy: { failThreshold: 3, repairAttempts: 2 },
   artifact: "actions.json",
   schema: BatchSchema,
   buildContext,

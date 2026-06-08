@@ -39,6 +39,29 @@ export interface StepCtx {
   dryRun?: boolean;
   /** Sink for the per-repo backlog snapshot (issue #82); reconcile writes through it. */
   backlog?: BacklogWriter;
+  /** #108: read-only repo checkout for code-reading agents (maintainer). Shared per tick; the shell never
+   *  commits it. When set, the maintainer runs with this as its cwd so it can verify root cause from code. */
+  repoDir?: string;
+}
+
+/**
+ * #108: run `fn` with a read-only repo checkout threaded into `ctx.repoDir`, so code-reading agents
+ * (the maintainer) can verify root cause from source. Cloned once, cleaned up after. A clone failure
+ * degrades gracefully to text-only (the pre-#108 behavior). Used by BOTH entry points — the reconcile
+ * tick (once, shared across the batch) and the single-issue CLI path — so they behave identically.
+ */
+export async function withReadOnlyCheckout<T>(ctx: StepCtx, fn: (ctx: StepCtx) => Promise<T>): Promise<T> {
+  let repoDir: string | undefined;
+  try {
+    repoDir = await ctx.ws.cloneReadOnly(ctx.repo);
+  } catch (e) {
+    console.warn(`[monastery] read-only clone failed for ${ctx.repo}; maintainer runs text-only: ${(e as Error).message}`);
+  }
+  try {
+    return await fn(repoDir ? { ...ctx, repoDir } : ctx);
+  } finally {
+    if (repoDir) await ctx.ws.cleanup(repoDir).catch(() => { /* best effort */ });
+  }
 }
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
@@ -64,7 +87,9 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // The context layer (src/engine/context.ts) gathers this item's semantic context from GitHub.
   const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue);
   const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
-  const dir = join(ctx.artifactRoot, `${issue.number}`);
+  // #108: run the maintainer in the tick's read-only repo checkout (so it can verify root cause from code)
+  // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).
+  const dir = ctx.repoDir ?? join(ctx.artifactRoot, `${issue.number}`);
   const actions = await maintainer(ctx.provider, ctx.model, input, dir);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
