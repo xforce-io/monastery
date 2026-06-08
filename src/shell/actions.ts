@@ -29,7 +29,16 @@ export const ActionSchema = z.discriminatedUnion("kind", [
   // spec / endorse: the multi-party consensus core (#48). `spec` appends a versioned shared spec comment;
   // `endorse` records this party's agreement to a spec version. Consensus = all parties endorsed the
   // current version (src/shell/consensus.ts). Both are agent-level, reversible; the merge gate stays the floor.
-  z.object({ kind: z.literal("spec"), num: z.number(), body: z.string().min(1), parties: z.array(z.string()) }),
+  z.object({
+    kind: z.literal("spec"), num: z.number(),
+    // #100: every consumer (currentSpec, the maintainer's context, consensusReached, the patcher) reads ONLY
+    // the highest-version comment as the spec — never concatenated. So each version must be a complete,
+    // self-contained design that supersedes prior ones; a delta would silently drop its own base.
+    body: z.string().min(1).describe(
+      "完整、自包含的设计文档:每个版本取代旧版,必须能脱离历史版本独立成立(全量,非增量 diff)。",
+    ),
+    parties: z.array(z.string()),
+  }),
   z.object({ kind: z.literal("endorse"), num: z.number(), version: z.number() }),
 ]);
 export type Action = z.infer<typeof ActionSchema>;

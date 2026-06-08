@@ -164,7 +164,10 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   }
   if (kind === "implement") {
     // #88: the human endorsed (👍) the implement proposal — run the patcher (sandbox + draft PR).
-    const out = await runImplement(ctx, issue);
+    // #100: feed the ENDORSED spec (not the possibly-stale issue body) to the patcher. The stale-gate
+    // guard above (#95) already ensured currentSpec.version == the gate's `spec: N`, so this is exactly
+    // the design the human approved. No spec on the item -> runImplement falls back to the body.
+    const out = await runImplement(ctx, issue, currentSpec(comments));
     // Consume the gate on success: clear needs-approval + rewrite the panel to a plain note, so the item
     // doesn't re-enter awaitingGate on the stale 👍 every tick (which would re-count as advanced forever).
     if (out.kind === "progressed") {

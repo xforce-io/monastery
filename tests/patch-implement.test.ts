@@ -9,6 +9,7 @@ import { FakeWorkspace } from "../src/workspace/fake.js";
 import { runImplement } from "../src/engine/patch.js";
 import type { StepCtx } from "../src/engine/issue-step.js";
 import type { ReviewVerdict } from "../src/agents/reviewer.js";
+import type { Spec } from "../src/shell/consensus.js";
 import type { Issue } from "../src/types.js";
 
 const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
@@ -92,6 +93,38 @@ test("self-review keeps finding blocking issues -> gives up with a panel, opens 
   expect(out.kind).toBe("noop");
   expect(gh.prs).toHaveLength(0);                    // unreviewable -> no PR shipped
   expect(gh.panels[7]).toMatch(/human/i);            // escalated to a human-visible panel
+});
+
+test("#100: an endorsed spec supersedes a stale issue body as the patcher's task description", async () => {
+  // Reproduces #99: the issue body still carries the rejected v1 plan; the endorsed spec is v3.
+  const stale: Issue = {
+    number: 7, title: "fix the bug",
+    body: "PLAN v1: add @anthropic-ai/sdk and bind ANTHROPIC_API_KEY", labels: [], state: "open",
+  };
+  const spec: Spec = {
+    version: 3, parties: ["x"],
+    body: "SPEC v3: native fetch, OpenAI-compatible, zero new deps", id: "c1",
+  };
+  const gh = new FakeGitHub({ thesis: "T", issues: [stale] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const c = ctx(gh, ws, async () => clean);
+  const fp = new FakeProvider({});
+  c.provider = fp;
+  const out = await runImplement(c, stale, spec);
+  expect(out.kind).toBe("progressed");
+  // The patcher's first run (the implement call) gets the spec, NOT the stale body.
+  expect(fp.calls[0].context).toContain("SPEC v3: native fetch, OpenAI-compatible, zero new deps");
+  expect(fp.calls[0].context).not.toContain("@anthropic-ai/sdk");
+});
+
+test("#100: no endorsed spec -> patcher falls back to the issue body (unchanged)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] }); // issue.body = "it crashes"
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const c = ctx(gh, ws, async () => clean);
+  const fp = new FakeProvider({});
+  c.provider = fp;
+  await runImplement(c, issue);
+  expect(fp.calls[0].context).toContain("it crashes");
 });
 
 test("no draft PR is opened without a human-gated path: the PR is always a draft", async () => {

@@ -114,6 +114,7 @@ function buildContext(input: MaintainerInput): string {
     [
       "CONSENSUS (how things get agreed across parties): the shared SPEC is the acceptance contract — the real need + acceptance criteria + agreed approach.",
       "Co-author it with `spec` (list the `parties` who must agree — by default the issue's author and this repo's maintainers). Any edit bumps the version and invalidates prior endorsements.",
+      "Each spec version MUST be the COMPLETE, self-contained design (full need + acceptance + approach) — a new version fully REPLACES the old, never a diff/增量 against it. Only the latest version is ever read (as the contract AND as what the patcher builds from), so a partial/delta version silently drops its own base.",
       "When the CURRENT spec satisfies your party's need, `endorse` its version. When consensus is reached (every party endorsed the current version), the party that should do the work may `propose implement`.",
       "Don't keep talking once consensus holds — converge, don't compromise.",
     ].join(" "),
