@@ -7,6 +7,7 @@ import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep, pendingApprovals, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
+import { branchName } from "../src/engine/patch.js";
 import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
 import { SPEC_MARKER } from "../src/shell/consensus.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
@@ -453,6 +454,63 @@ test("#97 validation (issue #91): WITHOUT that last human comment, the same gate
   expect(out.kind).toBe("waiting");                          // nothing new → still waiting on the human
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
+// --- #102: a rejected (closed-unmerged) implement PR has a deterministic recovery — the shell posts
+//     guidance (notifies) + rewrites the lying panel + reverts to active; the patcher stays gated. ---
+
+/** An active issue whose implement PR (number `pr`) on its deterministic branch was closed unmerged. */
+function withClosedImplPr(num: number, title: string, pr: number, panel?: string): FakeGitHub {
+  const gh = ghWith({ number: num, title, body: "broken", labels: [], state: "open" });
+  const branch = branchName(num, title);
+  gh.prStates[branch] = "closed";
+  gh.prDetailsByBranch[branch] = { number: pr, url: `u/${pr}`, title: "t", body: "b", isDraft: true };
+  if (panel) gh.panels[num] = panel;
+  return gh;
+}
+
+test("#102: a closed-unmerged implement PR posts guidance + rewrites the lying panel, no agent call", async () => {
+  const gh = withClosedImplPr(110, "fix it", 99,
+    "<!--monastery-state\nprotocol: note\n-->\n✅ implement approved — draft PR opened (#99). Awaiting your review/merge.");
+  const provider = new FakeProvider(actionsJson([]));
+  const out = await issueStep(ctxWith(gh, provider), 110);
+  expect(out.kind).toBe("waiting");
+  expect((out as { on: string }).on).toBe("human");
+  expect(provider.calls).toHaveLength(0);                                  // shell-deterministic — agent not consulted
+  expect(gh.comments[110].some((c) => c.includes("#99") && c.includes("已关闭"))).toBe(true); // guidance posted (notifies)
+  expect(gh.panels[110]).not.toContain("Awaiting your review/merge");      // the lying panel is gone
+  expect(gh.panels[110]).toContain("实现被拒");                             // panel now tells the truth
+});
+
+test("#102: recovery is idempotent — guidance posted once; the next tick proceeds to the maintainer", async () => {
+  const gh = withClosedImplPr(111, "fix it", 99);
+  const provider = new FakeProvider(actionsJson([]));
+  await issueStep(ctxWith(gh, provider), 111);                 // tick 1: posts guidance, no agent
+  expect(provider.calls).toHaveLength(0);
+  const after1 = gh.comments[111].length;
+  await issueStep(ctxWith(gh, provider), 111);                 // tick 2: marker present → flows to the agent
+  expect(gh.comments[111].length).toBe(after1);               // no duplicate guidance
+  expect(provider.calls).toHaveLength(1);                      // maintainer runs now (with the closed-PR context)
+});
+
+test("#102: an OPEN PR does not trigger recovery — it flows to the maintainer normally", async () => {
+  const gh = ghWith({ number: 112, title: "fix it", body: "broken", labels: [], state: "open" });
+  gh.prStates["feat/112-fix-it"] = "open";
+  const provider = new FakeProvider(actionsJson([]));
+  await issueStep(ctxWith(gh, provider), 112);
+  expect(provider.calls).toHaveLength(1);                      // not intercepted
+  expect(gh.comments[112] ?? []).toHaveLength(0);              // no guidance posted
+});
+
+test("#102: a NEW closed PR (different number) re-triggers recovery — the marker is per-PR", async () => {
+  const gh = withClosedImplPr(113, "fix it", 99);
+  await issueStep(ctxWith(gh, new FakeProvider(actionsJson([]))), 113);    // handle #99
+  gh.prDetailsByBranch["feat/113-fix-it"] = { number: 105, url: "u", title: "t", body: "b", isDraft: true }; // a later impl, also closed
+  const provider = new FakeProvider(actionsJson([]));
+  const out = await issueStep(ctxWith(gh, provider), 113);
+  expect(out.kind).toBe("waiting");
+  expect(provider.calls).toHaveLength(0);                      // fresh rejection → shell intercepts again
+  expect(gh.comments[113].some((c) => c.includes("#105"))).toBe(true);
 });
 
 // --- #95: approval-gate staleness — a newer spec / a 👀 reaction invalidates a parked implement gate ---

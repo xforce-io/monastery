@@ -14,7 +14,7 @@ import type { FailTracker, RepoPolicy, BacklogWriter } from "../config/store.js"
 import { deriveEntry } from "./backlog.js";
 import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
-import { runImplement } from "./patch.js";
+import { runImplement, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
@@ -57,6 +57,10 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
 
 /** active: ask the maintainer agent for actions, then execute them (safe ones in-place; implement -> patcher). */
 async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+  // #102: a closed-unmerged implement PR is a human rejection with no merge/terminal transition — recover
+  // deterministically (guide the human, fix the lying panel) BEFORE consulting the agent.
+  const rejected = await recoverRejectedImpl(ctx, issue);
+  if (rejected) return rejected;
   // The context layer (src/engine/context.ts) gathers this item's semantic context from GitHub.
   const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue);
   const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
@@ -231,6 +235,33 @@ async function demoteGate(ctx: StepCtx, issue: Issue, note: string): Promise<Out
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
   await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${note}`);
   return { kind: "progressed", entry: { number: issue.number, title: issue.title, priority: "now", rationale: note } };
+}
+
+/**
+ * #102: when the human closes monastery's deterministic implement PR without merging it, that is a
+ * non-terminal rejection of this implementation attempt. Post guidance once per PR and repair the sticky
+ * panel so it no longer claims we're waiting for review/merge; the next tick is active again, with the
+ * closed PR available in maintainer context.
+ */
+async function recoverRejectedImpl(ctx: StepCtx, issue: Issue): Promise<Outcome | null> {
+  const branch = branchName(issue.number, issue.title);
+  if ((await ctx.gh.prState(ctx.repo, branch)) !== "closed") return null;
+
+  const pr = await ctx.gh.getPrDetails(ctx.repo, branch);
+  if (!pr) return null;
+
+  const marker = `<!--monastery-impl-rejected pr=${pr.number}-->`;
+  const comments = await ctx.gh.listComments(ctx.repo, issue.number);
+  if (comments.some((c) => c.body.includes(marker))) return null;
+
+  const note = `实现被拒：PR #${pr.number} 已关闭且未合并。请在 issue 中说明希望调整的方向，monastery 会重新评估并提出新的实现。`;
+  await ctx.gh.postComment(ctx.repo, issue.number, `${marker}\n${note}`);
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${note}`);
+  return {
+    kind: "waiting",
+    on: "human",
+    entry: { number: issue.number, title: issue.title, priority: "now", rationale: note },
+  };
 }
 
 /** The human-facing draft = the panel body with monastery markers stripped. */
