@@ -56,6 +56,43 @@ agent 层      有方法论的角色:读 context → 判断 → 从动作词表�
 - **resource**:`GitHubAdapter`(GitHub 读写)· `Store`(本地可丢缓存)· 仓库文件。外壳独占,agent 不碰(§3/§5)。
 - **context**:把 resource 攒成 agent 要的语义输入。**现状**:散在 `src/engine/issue-step.ts` 的 `active()`(thesis + 评论 + pr 态 + deps + 共识 + self)。**north-star**:抽成一个**薄 context 模块**,并给 maintainer 加 **backlog 感知**(其它 open issue 摘要),让 PM 判断有料——而外壳照样 loop(覆盖),所以 backlog 感知 ≠ 当调度器、≠ 会饿死。
 
+### 2.4 核心概念模型(名词与两轴)
+
+> 散在 PROTOCOL/AGENTS/代码里的核心名词,这里收口成单一概念模型。宪法 §13 立原则,本节给模型。
+
+**核心名词**
+
+| 名词 | 是什么 | 谁拥有/写 | 落在哪 |
+|---|---|---|---|
+| **item** | 被追踪的 open issue 或 monastery 开的 PR | — | GitHub |
+| **粗状态** | active / awaiting-gate / terminal(只这三档) | 外壳 | label + marker |
+| **控制标签** | `needs-approval` / `declined`(外壳路由专用) | 外壳 | GitHub label |
+| **展示标签** | `type:bug` 等(给人看状态) | agent 维护 | GitHub label |
+| **marker** | `<!--monastery-state-->`(note panel / approval gate) | 外壳 | 评论 |
+| **动作(能力词表)** | reply/relabel/panel/openDraftPR/propose/implement/spec/endorse | agent **只提议** | — |
+| **安全分级** | safe(当场执行) vs gated(propose→approve→execute) | 外壳 | 挂在动作上 |
+| **signal** | 人的放行:PR=Merge · issue=👍(拒=👎 · 重议=👀) | 人 | reaction / merge |
+| **gate** | 审批闸门(§4) | 外壳 | needs-approval + 审批评论 |
+| **spec** | 共享验收契约(need+acceptance+approach),👍 背书 | maintainer 著 · 各方背书 | issue body / 评论 |
+| **agent** | maintainer/patcher/reviewer;`AgentSpec={name,role,persona,sandbox,policy}` | — | `src/agents` |
+| **sandbox** | agent 访问权限分级:`artifact-only`/`readonly-clone`/`workspace-clone` | 外壳 | AgentSpec |
+| **provider** | agent 运行后端:claude-code / api | 外壳 | — |
+| **外壳** | L_repo(`reconcile`)+ L_item(`issueStep`) | — | `src/engine` |
+
+**两轴(外壳约束 agent 的两个维度,宪法 §13)**
+
+```
+约束 agent
+├─ 效果轴(能造成什么)= 能力词表 + 安全分级 + gate + 永不碰 git/gh   →【§3 接口】
+└─ 访问轴(能读/碰什么)= sandbox 三档:
+     artifact-only   只读输入文本、只写产物          —— 不碰代码(reviewer)
+     readonly-clone  只读整个 repo、写无效(外壳不采纳) —— 只读代码(maintainer,#108)
+     workspace-clone 读写沙箱、外壳读 diff            —— 读写代码(patcher)
+   不变量:读非边界,写才是。
+```
+
+**关系一句话**:外壳发现 **item** → 按**粗状态**路由 → active 调 **agent**(其 **sandbox** 决定能读多少)→ agent 从**能力词表**提议**动作** → 外壳按**安全分级**:safe 当场执行 / gated 摆 **gate** 等 **signal** → 人放行 → 执行。**spec** 是 issue 侧到开发侧的过境契约。
+
 ## 3. 接口:动作词表 + 安全分级
 
 agent 输出 = 一组**提议的动作**,每个在外壳预定义词表里,外壳知其安全级与幂等键。实现:`src/shell/actions.ts`(`ActionSchema` 同源)。安全动作 `executeSafe` 当场做;`implement` 路由到 patcher;gated(close/merge)只能经 `propose` + 人放行。详见 `docs/design/34-action-vocabulary.md`。
