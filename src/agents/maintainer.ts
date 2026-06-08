@@ -139,6 +139,7 @@ function buildContext(input: MaintainerInput): string {
       `- {"kind":"openDraftPR","num":${issue.number},"branch":"feat/${issue.number}-<slug>","title":"<t>","body":"<b>"} — open an EMPTY draft PR from an existing branch.`,
       `- {"kind":"propose","num":${issue.number},"proposal":"close"|"merge","draft":"<markdown the human will see>"} — ask a human to approve a risky, irreversible action.`,
       `- {"kind":"implement","num":${issue.number},"draft":"<a short plan the human reviews>"} — PROPOSE implementing this issue. The shell posts a fresh approval comment with your draft + needs-approval; ONLY after a real human 👍 does the patcher write a sandbox fix and open a draft PR. You CANNOT self-approve (a spec/endorse you author never counts as the human's 👍). Propose this ONLY for a single, well-understood, concrete change worth doing now — NEVER for an epic / broad / tracking issue (see SCOPE below).`,
+      `- {"kind":"rework","num":${issue.number},"draft":"<a short plan: what you'll change per the feedback>"} — PROPOSE updating monastery's OWN open draft PR for this issue from human feedback. Use this (NOT implement) when <pr> shows an open draft PR AND a human left feedback asking for changes. Like implement it is human-gated: after a 👍 the shell checks out the SAME branch, re-patches from the feedback, and updates the SAME PR (never a new one). Only propose rework when there is concrete human feedback to act on.`,
       `- {"kind":"spec","num":${issue.number},"body":"<the acceptance contract>","parties":["<login>", ...]} — author/revise the shared spec.`,
       `- {"kind":"endorse","num":${issue.number},"version":<N>} — record that your party agrees to spec version N.`,
     ].join("\n"),
@@ -149,9 +150,9 @@ function buildContext(input: MaintainerInput): string {
       "and only implement once a single, well-scoped, deliverable change is clearly identified.",
     ].join(" "),
     [
-      "BEFORE proposing implement, check <pr>: if a PR is already open for this issue, do NOT propose implement again —",
-      "wait for the human to merge it, or reply/panel. If the PR is closed (rejected), treat that as a rejected implementation:",
-      "without a human reason/comment explaining WHY it was rejected, do NOT propose implement again; reply/ask for the reason or wait.",
+      "BEFORE proposing implement, check <pr>: if an OPEN draft PR already exists for this issue, do NOT propose implement again.",
+      "Instead: if a human left feedback on it asking for changes -> propose `rework` (the shell updates the SAME PR); if there's no actionable feedback yet -> wait for the human to merge it, or reply/panel.",
+      "If the PR is closed (rejected), treat that as a rejected implementation: without a human reason/comment explaining WHY it was rejected, do NOT propose implement again; reply/ask for the reason or wait.",
       "Once a human gives the reason, route by that reason: implementation wrong -> propose a new implement plan; spec/approach wrong -> revise spec; no longer wanted -> propose close.",
     ].join(" "),
     [

@@ -28,6 +28,19 @@ export class GitWorkspace implements Workspace {
     return dir;
   }
 
+  // #79: check out an EXISTING remote branch (no `-b`) — for reworking an open draft PR in place.
+  async checkout(repo: string, branch: string): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), "monastery-wt-"));
+    await this.run("gh", ["repo", "clone", repo, dir]);
+    const co = await this.run("git", ["-C", dir, "checkout", branch]);
+    if (co.exitCode !== 0) {
+      rmSync(dir, { recursive: true, force: true });
+      throw new Error(`git checkout ${branch} failed (exit ${co.exitCode}): ${co.stdout}`);
+    }
+    try { appendFileSync(join(dir, ".git", "info", "exclude"), "\n" + [...SCRATCH, "node_modules/"].join("\n") + "\n"); } catch { /* best effort */ }
+    return dir;
+  }
+
   // Shallow checkout for code-reading agents (the maintainer): --depth 1, no branch. The shell never
   // commits this dir, so it stays read-only by convention — the agent may read any file but its edits are inert.
   async cloneReadOnly(repo: string): Promise<string> {

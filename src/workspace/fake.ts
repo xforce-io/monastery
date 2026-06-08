@@ -8,6 +8,7 @@ import type { Workspace } from "./workspace.js";
  *  but stagedDiff()/runTests() are driven by preset opts (the agent's edits are irrelevant here). */
 export class FakeWorkspace implements Workspace {
   public cloned: { repo: string; branch: string; dir: string }[] = [];
+  public checkedOut: { repo: string; branch: string; dir: string }[] = [];
   public clonedReadOnly: { repo: string; dir: string }[] = [];
   public committed: { branch: string; message: string }[] = [];
   public cleaned: string[] = [];
@@ -16,6 +17,11 @@ export class FakeWorkspace implements Workspace {
   async clone(repo: string, branch: string): Promise<string> {
     const dir = mkdtempSync(join(tmpdir(), "fake-wt-"));
     this.cloned.push({ repo, branch, dir });
+    return dir;
+  }
+  async checkout(repo: string, branch: string): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), "fake-co-"));
+    this.checkedOut.push({ repo, branch, dir });
     return dir;
   }
   async cloneReadOnly(repo: string): Promise<string> {

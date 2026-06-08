@@ -83,3 +83,26 @@ test("#108 cloneReadOnly throws when gh clone fails", async () => {
   const ws = new GitWorkspace(run);
   await expect(ws.cloneReadOnly("o/r")).rejects.toThrow(/read-only.*failed/);
 });
+
+// #79 checkout: clone + check out an EXISTING remote branch (no `-b`) — for reworking an open draft PR.
+test("#79 checkout() clones then checks out an existing branch, never -b", async () => {
+  const { run, calls } = recorder();
+  const ws = new GitWorkspace(run);
+  const dir = await ws.checkout("o/r", "feat/7-fix");
+  try {
+    expect(dir).not.toBe(process.cwd());
+    expect(dirname(dir)).toBe(tmpdir());
+    expect(calls).toEqual([
+      ["gh", "repo", "clone", "o/r", dir],
+      ["git", "-C", dir, "checkout", "feat/7-fix"], // EXISTING branch — no `-b`
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#79 checkout() throws when the branch checkout fails (branch gone)", async () => {
+  const run: Runner = async (file, args) => ({ stdout: "error: pathspec", exitCode: file === "git" && args.includes("checkout") ? 1 : 0 });
+  const ws = new GitWorkspace(run);
+  await expect(ws.checkout("o/r", "feat/7-fix")).rejects.toThrow(/checkout.*failed/i);
+});

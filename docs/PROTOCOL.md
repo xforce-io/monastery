@@ -28,7 +28,7 @@
 |---|---|
 | `<!--monastery-state ...-->` | monastery 的 marker；note 用单条 sticky panel，approval gate 用新评论 |
 | `<!--monastery-reply to=<id>-->` | 对某条人类评论的回复 |
-| 审批评论:`protocol: approval` + `action: close\|merge\|implement` | 一个待放行的 gated 提议 |
+| 审批评论:`protocol: approval` + `action: close\|merge\|implement\|rework` | 一个待放行的 gated 提议 |
 
 **铁律:monastery 发的每条评论都带 marker。人类评论 = 无 marker。** 外壳/agent 据此排除自己,绝不自问自答。
 
@@ -49,9 +49,10 @@
   agent 提议:
     - SAFE 动作(reply/relabel/panel/openDraftPR) → 外壳当场执行
     - implement → 外壳跑 patcher(沙箱写码+自审)→ 开人合的 draft PR(#43;agent 不碰 git/gh)
-    - propose(close|merge) / implement → 外壳摆出提议(新审批评论 + needs-approval)→ item 转 awaiting-gate
+    - rework → 已有 open draft PR + 人类反馈时,外壳 checkout 同分支按反馈更新同一 PR(#79;非新 PR)
+    - propose(close|merge) / implement / rework → 外壳摆出提议(新审批评论 + needs-approval)→ item 转 awaiting-gate
 人给信号:
-    👍 / Merge → 外壳执行 gated 执行器(doClose/doMerge)→ terminal
+    👍 / Merge → 外壳执行 gated 执行器(doClose / runImplement / runRework)→ terminal/更新
     拒绝       → terminal(declined)
 ```
 

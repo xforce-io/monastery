@@ -14,7 +14,7 @@ import type { FailTracker, RepoPolicy, BacklogWriter } from "../config/store.js"
 import { deriveEntry } from "./backlog.js";
 import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
-import { runImplement, branchName } from "./patch.js";
+import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
@@ -125,13 +125,14 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // that takes down the tick (constitution §10 — the safety layer always holds, even for a bad agent).
   for (const a of actions) {
     try {
-      if (a.kind === "implement") {
-        // #88: implement is human-gated. The agent only PROPOSES — open an approval comment + needs-approval;
-        // the patcher (runImplement) runs only after a real human 👍 next tick (awaitingGate). The agent
-        // can never self-approve its own implementation (closes the consensus self-endorse hole).
-        const draft = a.draft ?? `Proposed implement for #${issue.number}. 👍 this approval comment to let monastery write a draft PR.`;
-        if (ctx.dryRun) console.warn(`[dry-run] would propose implement ${ctx.repo}#${issue.number} (awaiting human 👍)`);
-        else await proposeGate(ctx.gh, ctx.repo, issue.number, "implement", draft);
+      if (a.kind === "implement" || a.kind === "rework") {
+        // #88/#79: implement & rework are heavy and human-gated. The agent only PROPOSES — open an approval
+        // comment + needs-approval; the executor (runImplement / runRework) runs only after a real human 👍
+        // next tick (awaitingGate). The agent can never self-approve its own heavy work.
+        const verb = a.kind === "rework" ? "rework the open draft PR" : "implement";
+        const draft = a.draft ?? `Proposed ${verb} for #${issue.number}. 👍 this approval comment to proceed.`;
+        if (ctx.dryRun) console.warn(`[dry-run] would propose ${a.kind} ${ctx.repo}#${issue.number} (awaiting human 👍)`);
+        else await proposeGate(ctx.gh, ctx.repo, issue.number, a.kind, draft);
       } else await executeSafe(ctx.gh, ctx.repo, a);
     } catch (e) {
       console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${(e as Error).message}`);
@@ -197,30 +198,35 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     await doClose(ctx.gh, ctx.repo, issue.number, reason); // closes first -> idempotent, leaves the open list
     return { kind: "done" };
   }
-  if (kind === "implement") {
-    // #86: defer to the tick scheduler — don't run the heavy patcher here. Report this as a ready candidate
+  if (kind === "implement" || kind === "rework") {
+    // #86: defer to the tick scheduler — don't run the heavy executor here. Report this as a ready candidate
     // (gate left intact, so it re-enters awaitingGate next tick) and let reconcile run at most one per tick.
+    // Both implement and rework are heavy patcher work, so both share the one-per-tick budget.
     if (ctx.deferImplement) {
       return {
         kind: "waiting", on: "human", readyImplement: true,
         entry: {
           number: issue.number, title: issue.title, priority: "now",
-          rationale: "✅ approved implement — ready (tick scheduler)",
-          awaitingApproval: true, approvalKind: "implement", approvalCommentId: gate.id,
+          rationale: `✅ approved ${kind} — ready (tick scheduler)`,
+          awaitingApproval: true, approvalKind: kind, approvalCommentId: gate.id,
         },
       };
     }
-    // #88: the human endorsed (👍) the implement proposal — run the patcher (sandbox + draft PR).
-    // #100: feed the ENDORSED spec (not the possibly-stale issue body) to the patcher. The stale-gate
-    // guard above (#95) already ensured currentSpec.version == the gate's `spec: N`, so this is exactly
-    // the design the human approved. No spec on the item -> runImplement falls back to the body.
-    const out = await runImplement(ctx, issue, currentSpec(comments));
+    // #88/#79: the human endorsed (👍). Run the gated executor.
+    // implement: #100 feeds the ENDORSED spec (not the possibly-stale issue body); the #95 stale-gate guard
+    //   above already ensured currentSpec.version == the gate's `spec: N`. No spec -> falls back to the body.
+    // rework: runRework checks out the existing branch and updates the SAME PR from the PR's human feedback.
+    const out = kind === "rework"
+      ? await runRework(ctx, issue)
+      : await runImplement(ctx, issue, currentSpec(comments));
     // Consume the gate on success: clear needs-approval + rewrite the panel to a plain note, so the item
     // doesn't re-enter awaitingGate on the stale 👍 every tick (which would re-count as advanced forever).
     if (out.kind === "progressed") {
       await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
-      await ctx.gh.upsertPanel(ctx.repo, issue.number,
-        `${NOTE_MARKER}\n✅ implement approved — draft PR opened${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`);
+      const done = kind === "rework"
+        ? `✅ rework approved — the draft PR was updated${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`
+        : `✅ implement approved — draft PR opened${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`;
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${done}`);
     }
     return out;
   }
@@ -238,9 +244,9 @@ async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Pr
   return { kind: "done" };
 }
 
-/** Read the proposed gated kind from the approval comment marker (`action: close|merge|implement`). */
+/** Read the proposed gated kind from the approval comment marker (`action: close|merge|implement|rework`). */
 function approvalKind(body: string): GatedKind | null {
-  const m = body.match(/^action:\s*(close|merge|implement)\s*$/m);
+  const m = body.match(/^action:\s*(close|merge|implement|rework)\s*$/m);
   return m ? (m[1] as GatedKind) : null;
 }
 

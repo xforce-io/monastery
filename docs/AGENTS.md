@@ -13,7 +13,7 @@ agent 的定义(persona / 输入 / 输出 / 沙箱 / 策略)是 v2「发挥模�
 |---|---|---|---|---|---|
 | **maintainer** | `src/agents/maintainer.ts` `maintainerSpec` | **项目经理**:读 item+代码+上下文 → 验真 → 判最值得做 → 提议动作 | `MaintainerInput`(thesis/issue/评论/PR 态)→ `actions.json` = `Action[]`(`ActionSchema`) | `readonly-clone` | `engine/issue-step.ts` `active()` |
 | **reviewer** | `src/agents/reviewer.ts` `reviewerSpec` | **架构师/QA**:评判 patcher 的 diff(自审门 #22) | `{diff, issue}` → `review.json` = `{findings}`(`ReviewSchema`) | `artifact-only` | `engine/patch.ts` `runImplement()` |
-| **patcher** | `src/agents/patcher.ts` `patcherSpec` | **研发**:在沙箱里修 issue,产 diff | issue → 工作树改动(无 schema,外壳读 diff) | `workspace-clone` | `engine/patch.ts` `runImplement()` |
+| **patcher** | `src/agents/patcher.ts` `patcherSpec` | **研发**:在沙箱里修 issue,产 diff | issue → 工作树改动(无 schema,外壳读 diff) | `workspace-clone` | `engine/patch.ts` `runImplement()`(新 PR)/ `runRework()`(更新 PR,#79) |
 
 > **角色即方法论**(宪法 §12):每个 agent 是一个有方法论的角色——PM 定做什么 → 研发实现 → 架构/QA 评审。要它更强就改 persona 的方法论,不建新机制。方法论清单见 `ARCHITECTURE.md` §2.1。
 
