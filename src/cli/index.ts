@@ -2,7 +2,8 @@
 // src/cli/index.ts
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Store } from "../config/store.js";
 import { StepLock, RepoLockError } from "../config/step-lock.js";
 import { GhAdapter } from "../github/gh-adapter.js";
@@ -178,8 +179,22 @@ export function summarize(results: ReconcileResult[]): string {
   }).join("\n");
 }
 
+// True when this module is the process entrypoint. Compares *real* paths so that
+// symlinked bins (npm link's node_modules/.bin, Homebrew shim) and macOS
+// /tmp→/private/tmp differences still match; a plain string compare leaves the
+// global `monastery` command a silent no-op (#106). Returns false when imported
+// (argv1 undefined) or when either path can't be resolved.
+export function isEntrypoint(metaUrl: string, argv1: string | undefined): boolean {
+  if (!argv1) return false;
+  try {
+    return realpathSync(fileURLToPath(metaUrl)) === realpathSync(argv1);
+  } catch {
+    return false;
+  }
+}
+
 // Only run when invoked as the binary (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isEntrypoint(import.meta.url, process.argv[1])) {
   main().catch((e) => {
     console.error(e);
     // Exit-code taxonomy: 1 runtime, 2 usage, 3 agent structured-output failure, 4 repo lock.
