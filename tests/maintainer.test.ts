@@ -195,6 +195,19 @@ test("when a monastery PR is already open, the agent is told NOT to re-propose i
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("when a monastery PR was closed, the agent is told not to re-implement without a human reason", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", { ...input, pr: { branch: "feat/7-dark-mode", state: "closed", number: 99 } }, dir);
+  const ctx = provider.calls[0].context;
+  const prInstruction = ctx.split("\n\n").find((b) => /PR.*closed|closed.*PR|rejected/i.test(b)) ?? "";
+  expect(prInstruction).toMatch(/human.*reason|reason.*human|why/i);
+  expect(prInstruction).toMatch(/do NOT propose implement|禁止.*implement/i);
+  expect(prInstruction).toMatch(/reply|ask|wait/i);
+  expect(prInstruction).toMatch(/spec|close/i);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("PR url/isDraft/comments/reviews/checks are surfaced in the <pr> context block", async () => {
   const dir = newDir();
   const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
