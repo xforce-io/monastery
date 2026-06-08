@@ -62,3 +62,24 @@ test("#87 clone() sandbox lives in tmpdir, never process.cwd()", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// #108 cloneReadOnly: a shallow checkout (no branch) for code-reading agents (the maintainer).
+test("#108 cloneReadOnly is a shallow checkout in tmpdir with no branch", async () => {
+  const { run, calls } = recorder();
+  const ws = new GitWorkspace(run);
+  const dir = await ws.cloneReadOnly("o/r");
+  try {
+    expect(dir).not.toBe(process.cwd());
+    expect(dirname(dir)).toBe(tmpdir());
+    // shallow clone, and NO `checkout -b` — read-only, never branches/commits
+    expect(calls).toEqual([["gh", "repo", "clone", "o/r", dir, "--", "--depth", "1"]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#108 cloneReadOnly throws when gh clone fails", async () => {
+  const run: Runner = async (file) => ({ stdout: "not found", exitCode: file === "gh" ? 1 : 0 });
+  const ws = new GitWorkspace(run);
+  await expect(ws.cloneReadOnly("o/r")).rejects.toThrow(/read-only.*failed/);
+});

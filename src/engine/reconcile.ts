@@ -22,16 +22,34 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   let advanced = 0;
   const entries: BacklogEntry[] = [];
 
-  for (const i of batch) {
-    // Per-item fault isolation: one item blowing up must not abort the rest of the tick (constitution §10).
+  // #108: clone the repo ONCE per tick (shallow, read-only) and share it across the batch, so the maintainer
+  // can verify root cause from code before proposing implement. Skip when no active item needs an agent
+  // (awaiting-gate items run no agent). A clone failure degrades gracefully to text-only maintainer.
+  const hasActive = batch.some((i) => !i.labels.includes(NEEDS_APPROVAL));
+  let repoDir: string | undefined;
+  if (hasActive) {
     try {
-      const out = await issueStep(ctx, i.number);
-      if (out.entry) entries.push(out.entry);
-      if (out.kind === "progressed" || out.kind === "done") advanced++;
-      else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
+      repoDir = await ctx.ws.cloneReadOnly(ctx.repo);
     } catch (e) {
-      console.warn(`[monastery] step ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
+      console.warn(`[monastery] read-only clone failed for ${ctx.repo}; maintainer runs text-only: ${(e as Error).message}`);
     }
+  }
+  const tickCtx: StepCtx = repoDir ? { ...ctx, repoDir } : ctx;
+
+  try {
+    for (const i of batch) {
+      // Per-item fault isolation: one item blowing up must not abort the rest of the tick (constitution §10).
+      try {
+        const out = await issueStep(tickCtx, i.number);
+        if (out.entry) entries.push(out.entry);
+        if (out.kind === "progressed" || out.kind === "done") advanced++;
+        else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
+      } catch (e) {
+        console.warn(`[monastery] step ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
+      }
+    }
+  } finally {
+    if (repoDir) await ctx.ws.cleanup(repoDir).catch(() => { /* best effort */ });
   }
 
   // waiting.human = awaiting-gate items (needs-approval, not declined) across the whole repo — they sit

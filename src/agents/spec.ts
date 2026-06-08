@@ -11,8 +11,13 @@ import { zodToJsonSchema } from "../provider/json-schema.js";
 /** A zod schema whose validated OUTPUT is `Out` (its input may differ, e.g. a transforming union). */
 export type OutSchema<Out> = ZodType<Out, ZodTypeDef, unknown>;
 
-/** What an agent is allowed to touch. "carries no git/gh" is an invariant of every sandbox. */
-export type Sandbox = "artifact-only" | "workspace-clone";
+/** What an agent is allowed to touch. "carries no git/gh" is an invariant of every sandbox.
+ *  - artifact-only:  reads its input text, writes one artifact file; no code. May run on the pure API provider.
+ *  - readonly-clone: cwd is a read-only repo checkout — reads code on demand, writes only its artifact;
+ *    its checkout is never committed (read ≠ write; only write is a safety boundary). Needs a filesystem
+ *    provider (claude -p), so it never uses the pure API provider.
+ *  - workspace-clone: edits files in a clone; the shell reads the diff (patcher). */
+export type Sandbox = "artifact-only" | "readonly-clone" | "workspace-clone";
 
 /** Per-agent operational defaults (the SLA-ish knobs). Per-repo overrides live in RepoPolicy (PR2). */
 export interface AgentPolicy {

@@ -11,12 +11,16 @@ import { reconcile, MAX_ITEMS_PER_TICK } from "../src/engine/reconcile.js";
 import { executeSafe } from "../src/shell/actions.js";
 import type { AgentConfig, AgentProvider, AgentResult } from "../src/provider/interface.js";
 
-/** A maintainer stub that relabels whichever issue it is handed (num derived from the artifact dir). */
+// #108: the maintainer's cwd is a shared read-only repo checkout, so the issue number comes from the
+// prompt context (how the real agent knows which item it is), not from the artifact dir.
+const numFromContext = (ctx: string) => Number(ctx.match(/<issue number="(\d+)"/)?.[1]);
+
+/** A maintainer stub that relabels whichever issue it is handed (num derived from the prompt context). */
 class RelabelEachProvider implements AgentProvider {
   public calls: AgentConfig[] = [];
   async run(config: AgentConfig): Promise<AgentResult> {
     this.calls.push(config);
-    const num = Number(config.artifactDir.split("/").pop());
+    const num = numFromContext(config.context);
     mkdirSync(config.artifactDir, { recursive: true });
     writeFileSync(join(config.artifactDir, "actions.json"), JSON.stringify({ actions: [{ kind: "relabel", num, add: ["x"], remove: [] }] }));
     return { artifacts: [] };
@@ -97,13 +101,13 @@ test("declined is terminal: not stepped, not counted as waiting:human, agent NOT
 
 import type { BacklogSnapshot } from "../src/types.js";
 
-// provider returning a chosen action set per issue number (derived from the artifact dir)
+// provider returning a chosen action set per issue number (derived from the prompt context, #108)
 class PerIssueProvider implements AgentProvider {
   public calls: AgentConfig[] = [];
   constructor(private byNum: Record<number, object[]>) {}
   async run(config: AgentConfig): Promise<AgentResult> {
     this.calls.push(config);
-    const num = Number(config.artifactDir.split("/").pop());
+    const num = numFromContext(config.context);
     mkdirSync(config.artifactDir, { recursive: true });
     writeFileSync(join(config.artifactDir, "actions.json"), JSON.stringify({ actions: this.byNum[num] ?? [] }));
     return { artifacts: [] };
@@ -134,5 +138,31 @@ test("dry-run does NOT write the backlog", async () => {
   const c = { ...baseCtx(gh, relabel(1)), dryRun: true, backlog: { writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
   await reconcile(c);
   expect(written.length).toBe(0);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("#108 clones the repo read-only ONCE per tick, runs the maintainer in it, then cleans up", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "a", body: "b", labels: [], state: "open" },
+    { number: 2, title: "c", body: "d", labels: [], state: "open" },
+  ]});
+  const provider = new RelabelEachProvider();
+  const ws = new FakeWorkspace();
+  const c = { ...baseCtx(gh, provider), ws };
+  await reconcile(c);
+  expect(ws.clonedReadOnly).toHaveLength(1);                              // ONE shared checkout for the whole batch
+  const roDir = ws.clonedReadOnly[0].dir;
+  expect(provider.calls.map((x) => x.artifactDir)).toEqual([roDir, roDir]); // maintainer cwd = the read-only checkout
+  expect(ws.cleaned).toContain(roDir);                                    // checkout removed after the tick
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("#108 a tick with only awaiting-gate items does not clone (no agent runs)", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await executeSafe(gh, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "x" }); // -> needs-approval
+  const ws = new FakeWorkspace();
+  const c = { ...baseCtx(gh, new FakeProvider({})), ws };
+  await reconcile(c);
+  expect(ws.clonedReadOnly).toHaveLength(0);                             // nothing active -> no code checkout
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });

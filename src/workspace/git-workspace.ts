@@ -28,6 +28,18 @@ export class GitWorkspace implements Workspace {
     return dir;
   }
 
+  // Shallow checkout for code-reading agents (the maintainer): --depth 1, no branch. The shell never
+  // commits this dir, so it stays read-only by convention — the agent may read any file but its edits are inert.
+  async cloneReadOnly(repo: string): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), "monastery-ro-"));
+    const r = await this.run("gh", ["repo", "clone", repo, dir, "--", "--depth", "1"]);
+    if (r.exitCode !== 0) {
+      rmSync(dir, { recursive: true, force: true });
+      throw new Error(`gh repo clone (read-only) failed (exit ${r.exitCode}): ${r.stdout}`);
+    }
+    return dir;
+  }
+
   async runTests(dir: string): Promise<boolean | null> {
     if (!existsSync(join(dir, "package.json"))) return null;
     const ci = await this.run("npm", ["ci"], { cwd: dir });

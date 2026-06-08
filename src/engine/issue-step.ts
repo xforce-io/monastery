@@ -39,6 +39,9 @@ export interface StepCtx {
   dryRun?: boolean;
   /** Sink for the per-repo backlog snapshot (issue #82); reconcile writes through it. */
   backlog?: BacklogWriter;
+  /** #108: read-only repo checkout for code-reading agents (maintainer). Shared per tick; the shell never
+   *  commits it. When set, the maintainer runs with this as its cwd so it can verify root cause from code. */
+  repoDir?: string;
 }
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
@@ -64,7 +67,9 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // The context layer (src/engine/context.ts) gathers this item's semantic context from GitHub.
   const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue);
   const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
-  const dir = join(ctx.artifactRoot, `${issue.number}`);
+  // #108: run the maintainer in the tick's read-only repo checkout (so it can verify root cause from code)
+  // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).
+  const dir = ctx.repoDir ?? join(ctx.artifactRoot, `${issue.number}`);
   const actions = await maintainer(ctx.provider, ctx.model, input, dir);
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
