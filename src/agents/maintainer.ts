@@ -146,7 +146,9 @@ function buildContext(input: MaintainerInput): string {
     ].join(" "),
     [
       "BEFORE proposing implement, check <pr>: if a PR is already open for this issue, do NOT propose implement again —",
-      "wait for the human to merge it, or reply/panel. If the PR is closed (rejected), reconsider (e.g. propose close or a different approach).",
+      "wait for the human to merge it, or reply/panel. If the PR is closed (rejected), treat that as a rejected implementation:",
+      "without a human reason/comment explaining WHY it was rejected, do NOT propose implement again; reply/ask for the reason or wait.",
+      "Once a human gives the reason, route by that reason: implementation wrong -> propose a new implement plan; spec/approach wrong -> revise spec; no longer wanted -> propose close.",
     ].join(" "),
     [
       `Write ONLY the file actions.json with this exact shape and nothing else:`,
