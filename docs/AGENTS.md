@@ -11,7 +11,7 @@ agent 的定义(persona / 输入 / 输出 / 沙箱 / 策略)是 v2「发挥模�
 
 | agent | 定义 | 角色 | 输入 → 输出 | 沙箱 | 在哪被调 |
 |---|---|---|---|---|---|
-| **maintainer** | `src/agents/maintainer.ts` `maintainerSpec` | **项目经理**:读 item+上下文 → 判最值得做 → 提议动作 | `MaintainerInput`(thesis/issue/评论/PR 态)→ `actions.json` = `Action[]`(`ActionSchema`) | `artifact-only` | `engine/issue-step.ts` `active()` |
+| **maintainer** | `src/agents/maintainer.ts` `maintainerSpec` | **项目经理**:读 item+代码+上下文 → 验真 → 判最值得做 → 提议动作 | `MaintainerInput`(thesis/issue/评论/PR 态)→ `actions.json` = `Action[]`(`ActionSchema`) | `readonly-clone` | `engine/issue-step.ts` `active()` |
 | **reviewer** | `src/agents/reviewer.ts` `reviewerSpec` | **架构师/QA**:评判 patcher 的 diff(自审门 #22) | `{diff, issue}` → `review.json` = `{findings}`(`ReviewSchema`) | `artifact-only` | `engine/patch.ts` `runImplement()` |
 | **patcher** | `src/agents/patcher.ts` `patcherSpec` | **研发**:在沙箱里修 issue,产 diff | issue → 工作树改动(无 schema,外壳读 diff) | `workspace-clone` | `engine/patch.ts` `runImplement()` |
 
@@ -28,7 +28,25 @@ WorkspaceAgentSpec          extends AgentSpec { fixPersona? }                   
 AgentPolicy    = { model?, timeoutMs?, failThreshold?, maxIters? }
 ```
 
-- **runner** `runStructuredAgent(spec, input, {provider, model, artifactDir})`:跑 provider → 读 `spec.artifact` → `spec.schema` 校验 → 回退 stdout 抽取 → `null`。一处实现,maintainer/reviewer 复用。
+- **runner** `runStructuredAgent(spec, input, {provider, model, artifactDir})`:跑 provider → 读 `spec.artifact` → `spec.schema` 校验 → 回退 stdout 抽取 → `null`。一处实现,maintainer/reviewer 复用。`artifact-only` 档优先用 `ApiProvider.fromEnv()`(配了结构化端点时),否则降级到传入的 `ctx.provider`。
+
+## Provider:形态轴 vs 成本轴
+
+选哪个 provider 是**形态**问题,不是成本问题。两种形态,与 sandbox 档一一对应:
+
+| 形态 | 是什么 | 配谁(sandbox) | 实现 |
+|---|---|---|---|
+| **结构化调用** | 一次 in-context 请求 → schema 约束的 JSON;无工具 / 无文件系统 / 无多轮 | `artifact-only`(纯判断、不读代码) | `ApiProvider`(OpenAI-compatible 端点) |
+| **agentic 会话** | 工具 + 文件系统 + 多轮 | `readonly-clone` / `workspace-clone`(读 / 写代码) | `AgentProvider`(`claude -p`) |
+
+**成本是另一条轴,由模型决定(`policy.model`,#72-A 落地),两种形态都能调。** `claude -p --model haiku` 是「便宜的 agentic 会话」——服务 maintainer/patcher,**不是 ApiProvider 的替代**:形态不同(agentic 的进程启动 + 多轮开销照付),且其结构化输出靠「写文件 + repair 重试」,不如 API 的 schema 约束可靠。换句话说,fast 模型替代的是「贵的 agentic」,替代不了「结构化调用」这个形态。
+
+落到三个 agent:
+
+- **maintainer / patcher**:必须读 / 写代码 → 钉死 `AgentProvider`。要便宜就 `agents.<name>.model=haiku`,**不切 provider**。
+- **reviewer**:评判的是已喂进 prompt 的 diff(review ≠ 根因验证,无需读全仓)→ 正是结构化调用的形态 → 维持 `artifact-only`,优先接 `ApiProvider`(快 + 结构化可靠);未配端点时优雅降级到 `claude -p`。
+
+> **推论(#34 红线)**:想给「读代码的 maintainer」前加一个「不读代码的廉价预筛」= 新建一个 `artifact-only`/ApiProvider 的 triage 角色 = 重新引入 dispatch 判官。**不做**——maintainer 省钱用 haiku 更薄。这条定调取代了曾讨论的「maintainer 拆两档」方案。
 
 ## 不变量(测试钉死,`tests/agents.test.ts`)
 
