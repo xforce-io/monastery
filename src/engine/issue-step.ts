@@ -44,6 +44,26 @@ export interface StepCtx {
   repoDir?: string;
 }
 
+/**
+ * #108: run `fn` with a read-only repo checkout threaded into `ctx.repoDir`, so code-reading agents
+ * (the maintainer) can verify root cause from source. Cloned once, cleaned up after. A clone failure
+ * degrades gracefully to text-only (the pre-#108 behavior). Used by BOTH entry points — the reconcile
+ * tick (once, shared across the batch) and the single-issue CLI path — so they behave identically.
+ */
+export async function withReadOnlyCheckout<T>(ctx: StepCtx, fn: (ctx: StepCtx) => Promise<T>): Promise<T> {
+  let repoDir: string | undefined;
+  try {
+    repoDir = await ctx.ws.cloneReadOnly(ctx.repo);
+  } catch (e) {
+    console.warn(`[monastery] read-only clone failed for ${ctx.repo}; maintainer runs text-only: ${(e as Error).message}`);
+  }
+  try {
+    return await fn(repoDir ? { ...ctx, repoDir } : ctx);
+  } finally {
+    if (repoDir) await ctx.ws.cleanup(repoDir).catch(() => { /* best effort */ });
+  }
+}
+
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
 export const FAIL_THRESHOLD = maintainerSpec.policy.failThreshold ?? 3;
 const NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";

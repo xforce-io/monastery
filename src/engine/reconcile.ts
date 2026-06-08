@@ -2,7 +2,7 @@
 // Each tick: list open items, classify into the three coarse states, step each non-terminal one.
 import type { BacklogEntry, BacklogSnapshot, ReconcileResult, WaitReason } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
-import { issueStep, type StepCtx } from "./issue-step.js";
+import { issueStep, withReadOnlyCheckout, type StepCtx } from "./issue-step.js";
 import { sortEntries } from "./backlog.js";
 
 export const MAX_ITEMS_PER_TICK = 20;
@@ -22,25 +22,13 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   let advanced = 0;
   const entries: BacklogEntry[] = [];
 
-  // #108: clone the repo ONCE per tick (shallow, read-only) and share it across the batch, so the maintainer
-  // can verify root cause from code before proposing implement. Skip when no active item needs an agent
-  // (awaiting-gate items run no agent). A clone failure degrades gracefully to text-only maintainer.
-  const hasActive = batch.some((i) => !i.labels.includes(NEEDS_APPROVAL));
-  let repoDir: string | undefined;
-  if (hasActive) {
-    try {
-      repoDir = await ctx.ws.cloneReadOnly(ctx.repo);
-    } catch (e) {
-      console.warn(`[monastery] read-only clone failed for ${ctx.repo}; maintainer runs text-only: ${(e as Error).message}`);
-    }
-  }
-  const tickCtx: StepCtx = repoDir ? { ...ctx, repoDir } : ctx;
-
-  try {
+  // Step the whole batch. #108: under ONE shared read-only checkout (so the maintainer can verify root
+  // cause from code), unless nothing is active (awaiting-gate items run no agent → no checkout needed).
+  const stepBatch = async (sctx: StepCtx) => {
     for (const i of batch) {
       // Per-item fault isolation: one item blowing up must not abort the rest of the tick (constitution §10).
       try {
-        const out = await issueStep(tickCtx, i.number);
+        const out = await issueStep(sctx, i.number);
         if (out.entry) entries.push(out.entry);
         if (out.kind === "progressed" || out.kind === "done") advanced++;
         else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
@@ -48,9 +36,10 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
         console.warn(`[monastery] step ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
       }
     }
-  } finally {
-    if (repoDir) await ctx.ws.cleanup(repoDir).catch(() => { /* best effort */ });
-  }
+  };
+  const hasActive = batch.some((i) => !i.labels.includes(NEEDS_APPROVAL));
+  if (hasActive) await withReadOnlyCheckout(ctx, stepBatch);
+  else await stepBatch(ctx);
 
   // waiting.human = awaiting-gate items (needs-approval, not declined) across the whole repo — they sit
   // until a human signals. This is the single source for waiting.human (the batch loop skips on==human).

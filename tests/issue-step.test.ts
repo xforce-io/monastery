@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
-import { issueStep, pendingApprovals, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
+import { issueStep, withReadOnlyCheckout, pendingApprovals, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
 import { branchName } from "../src/engine/patch.js";
 import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
 import { SPEC_MARKER } from "../src/shell/consensus.js";
@@ -572,4 +572,26 @@ test("#95: a 👀 on the gate sends it back to active (non-terminal) — strips 
   expect(gh.prs).toHaveLength(0);                  // patcher never ran
   expect(gh.panels[92]).toContain("protocol: note");
   expect((c.provider as FakeProvider).calls).toHaveLength(0);
+});
+
+// --- #108: read-only checkout provisioning (shared by reconcile and the single-issue CLI path) ---
+
+test("#108 withReadOnlyCheckout threads a read-only clone into ctx.repoDir, then cleans it up", async () => {
+  const ws = new FakeWorkspace();
+  const ctx = { ...ctxWith(ghWith({ number: 1, title: "x", body: "y", labels: [], state: "open" }), new FakeProvider({})), ws };
+  let seen: string | undefined = "untouched";
+  await withReadOnlyCheckout(ctx, async (c) => { seen = c.repoDir; });
+  expect(ws.clonedReadOnly).toHaveLength(1);
+  expect(seen).toBe(ws.clonedReadOnly[0].dir);              // fn ran with repoDir = the checkout
+  expect(ws.cleaned).toContain(ws.clonedReadOnly[0].dir);   // cleaned up after
+});
+
+test("#108 withReadOnlyCheckout degrades to text-only (no repoDir) when the clone fails", async () => {
+  const ws = new FakeWorkspace();
+  ws.cloneReadOnly = async () => { throw new Error("clone boom"); };
+  const ctx = { ...ctxWith(ghWith({ number: 1, title: "x", body: "y", labels: [], state: "open" }), new FakeProvider({})), ws };
+  let hadDir = true;
+  await withReadOnlyCheckout(ctx, async (c) => { hadDir = c.repoDir !== undefined; });
+  expect(hadDir).toBe(false);                                // text-only fallback, fn still ran
+  expect(ws.cleaned).toHaveLength(0);                        // nothing to clean
 });
