@@ -225,6 +225,25 @@ test("retries once on schema failure and returns fixed output on second attempt"
   }
 });
 
+test("#108 retries on missing_artifact (agent answered without writing the file) and recovers", async () => {
+  const dir = newDir();
+  // first pass: investigated but wrote nothing; retry: writes a valid artifact.
+  const provider = new FakeProvider([
+    { files: {} },
+    { files: { "out.json": '{"value":4}' } },
+  ]);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const out = await runStructuredAgent(spec, { n: 2 }, rt(provider, dir));
+    expect(out).toEqual({ value: 4 });
+    expect(provider.calls).toHaveLength(2);                                  // retried once
+    expect(provider.calls[1].context).toMatch(/did not write the required artifact/);
+  } finally {
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("gives up after exhausting retries when JSON parse keeps failing", async () => {
   const dir = newDir();
   // Always returns the same bad JSON — the retry will also fail

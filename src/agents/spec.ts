@@ -193,7 +193,19 @@ export async function runStructuredAgent<In, Out>(
       if (fromText) return fromText;
     }
 
+    // The agent finished without writing the artifact (e.g. it answered in prose). This grew more likely
+    // once code-reading agents (#108) investigate before answering — so retry with a pointed reminder,
+    // same as invalid_json / schema_invalid, instead of failing the whole tick on a single flaky run.
     lastFailure = { reason: "missing_artifact", agent: spec.name, artifactPath: p, repairAttempts: attempt };
+    console.warn(formatFailure(lastFailure));
+    if (attempt < maxRetries) {
+      repairHint = [
+        `You did not write the required artifact ${spec.artifact}.`,
+        `Investigation is fine, but your FINAL step MUST be to write the file ${spec.artifact} (and nothing else), as schema-valid JSON.`,
+        `Write ${spec.artifact} now.`,
+      ].join("\n");
+      continue;
+    }
     throw new StructuredAgentError(lastFailure);
   }
 

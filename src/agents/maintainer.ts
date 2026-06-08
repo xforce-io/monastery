@@ -172,7 +172,9 @@ export const maintainerSpec: StructuredAgentSpec<MaintainerInput, { actions: Act
   role: "Read one open item + its context and propose the governance actions to take this tick.",
   persona: PERSONA,
   sandbox: "readonly-clone",
-  policy: { failThreshold: 3 },
+  // #108: an investigating agent (reads code, then answers) occasionally finishes without writing the
+  // artifact; give it 2 repair retries (capped) so one flaky run doesn't drop the item for the tick.
+  policy: { failThreshold: 3, repairAttempts: 2 },
   artifact: "actions.json",
   schema: BatchSchema,
   buildContext,
