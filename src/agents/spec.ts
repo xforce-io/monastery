@@ -5,6 +5,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ZodType, ZodTypeDef } from "zod";
 import type { AgentProvider } from "../provider/interface.js";
+import { ApiProvider } from "../provider/api-provider.js";
+import { zodToJsonSchema } from "../provider/json-schema.js";
 
 /** A zod schema whose validated OUTPUT is `Out` (its input may differ, e.g. a transforming union). */
 export type OutSchema<Out> = ZodType<Out, ZodTypeDef, unknown>;
@@ -87,6 +89,8 @@ export class StructuredAgentError extends Error {
   }
 }
 
+const fallbackWarned = new Set<string>();
+
 /**
  * Run a structured agent: prompt -> schema-valid artifact (or stdout fallback) -> typed output.
  * Invalid JSON and schema-invalid artifacts get a bounded repair attempt, then fail fast with diagnostics.
@@ -97,7 +101,14 @@ export async function runStructuredAgent<In, Out>(
   ctx: RunCtx,
 ): Promise<Out | null> {
   const baseContext = spec.buildContext(input);
-  const maxRetries = Math.min(spec.policy.repairAttempts ?? 1, 2);
+  const apiProvider = spec.sandbox === "artifact-only" ? ApiProvider.fromEnv() : null;
+  const provider = apiProvider ?? ctx.provider;
+  if (spec.sandbox === "artifact-only" && !apiProvider && !fallbackWarned.has(spec.name)) {
+    fallbackWarned.add(spec.name);
+    console.warn(`[monastery] ${spec.name}: structured API not configured; falling back to active provider`);
+  }
+  const maxRetries = apiProvider ? 0 : Math.min(spec.policy.repairAttempts ?? 1, 2);
+  const schema = zodToJsonSchema(spec.schema);
   let repairHint: string | undefined;
   let lastFailure: StructuredAgentFailure | null = null;
   const p = join(ctx.artifactDir, spec.artifact);
@@ -109,7 +120,14 @@ export async function runStructuredAgent<In, Out>(
 
     let res;
     try {
-      res = await ctx.provider.run({ persona: spec.persona, context, artifactDir: ctx.artifactDir, model: ctx.model });
+      res = await provider.run({
+        persona: spec.persona,
+        context,
+        artifactDir: ctx.artifactDir,
+        model: ctx.model,
+        schema,
+        artifact: spec.artifact,
+      });
     } catch (e) {
       throw new StructuredAgentError({
         reason: "provider_failed",

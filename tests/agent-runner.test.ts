@@ -1,6 +1,6 @@
 // tests/agent-runner.test.ts — the shared structured-agent runner (DRYs maintainer/reviewer parse+fallback).
 import { expect, test, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -29,7 +29,97 @@ test("hands the spec's persona and built context to the provider", async () => {
   await runStructuredAgent(spec, { n: 2 }, rt(provider, dir));
   expect(provider.calls[0].persona).toBe("You double numbers.");
   expect(provider.calls[0].context).toContain("double 2");
+  expect(provider.calls[0].schema).toBeDefined();
+  expect(provider.calls[0].artifact).toBe("out.json");
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("artifact-only agents use OpenAI-compatible structured API when configured", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "out.json": '{"value":0}' });
+  const oldEndpoint = process.env.MONASTERY_STRUCTURED_ENDPOINT;
+  const oldKey = process.env.MONASTERY_STRUCTURED_API_KEY;
+  const oldModel = process.env.MONASTERY_STRUCTURED_MODEL;
+  process.env.MONASTERY_STRUCTURED_ENDPOINT = "https://structured.example/v1";
+  process.env.MONASTERY_STRUCTURED_API_KEY = "secret";
+  process.env.MONASTERY_STRUCTURED_MODEL = "fast-json";
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    expect(body.model).toBe("fast-json");
+    expect(body.messages[0].role).toBe("system");
+    expect(body.messages[1].content).toContain("double 2");
+    expect(body.tools[0].function.name).toBe("output");
+    expect(body.tools[0].function.parameters.properties.value.type).toBe("number");
+    expect(body.tool_choice).toEqual({ type: "function", function: { name: "output" } });
+    return new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [{ function: { name: "output", arguments: "{\"value\":4}" } }] } }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const oldFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    const out = await runStructuredAgent(spec, { n: 2 }, rt(provider, dir));
+    expect(out).toEqual({ value: 4 });
+    expect(provider.calls).toHaveLength(0);
+    expect(JSON.parse(readFileSync(join(dir, "out.json"), "utf8"))).toEqual({ value: 4 });
+  } finally {
+    if (oldEndpoint === undefined) delete process.env.MONASTERY_STRUCTURED_ENDPOINT;
+    else process.env.MONASTERY_STRUCTURED_ENDPOINT = oldEndpoint;
+    if (oldKey === undefined) delete process.env.MONASTERY_STRUCTURED_API_KEY;
+    else process.env.MONASTERY_STRUCTURED_API_KEY = oldKey;
+    if (oldModel === undefined) delete process.env.MONASTERY_STRUCTURED_MODEL;
+    else process.env.MONASTERY_STRUCTURED_MODEL = oldModel;
+    vi.stubGlobal("fetch", oldFetch);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("artifact-only agents fall back to the active provider when structured API is not configured", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "out.json": '{"value":4}' });
+  const oldEndpoint = process.env.MONASTERY_STRUCTURED_ENDPOINT;
+  const oldKey = process.env.MONASTERY_STRUCTURED_API_KEY;
+  delete process.env.MONASTERY_STRUCTURED_ENDPOINT;
+  delete process.env.MONASTERY_STRUCTURED_API_KEY;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const out = await runStructuredAgent({ ...spec, name: "fallback-demo" }, { n: 2 }, rt(provider, dir));
+    expect(out).toEqual({ value: 4 });
+    expect(provider.calls).toHaveLength(1);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("structured API not configured"))).toBe(true);
+  } finally {
+    warn.mockRestore();
+    if (oldEndpoint === undefined) delete process.env.MONASTERY_STRUCTURED_ENDPOINT;
+    else process.env.MONASTERY_STRUCTURED_ENDPOINT = oldEndpoint;
+    if (oldKey === undefined) delete process.env.MONASTERY_STRUCTURED_API_KEY;
+    else process.env.MONASTERY_STRUCTURED_API_KEY = oldKey;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("workspace agents do not route through the structured API", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "out.json": '{"value":4}' });
+  const oldEndpoint = process.env.MONASTERY_STRUCTURED_ENDPOINT;
+  const oldKey = process.env.MONASTERY_STRUCTURED_API_KEY;
+  process.env.MONASTERY_STRUCTURED_ENDPOINT = "https://structured.example/v1";
+  process.env.MONASTERY_STRUCTURED_API_KEY = "secret";
+  const fetchMock = vi.fn();
+  const oldFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    const out = await runStructuredAgent({ ...spec, sandbox: "workspace-clone" }, { n: 2 }, rt(provider, dir));
+    expect(out).toEqual({ value: 4 });
+    expect(provider.calls).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  } finally {
+    if (oldEndpoint === undefined) delete process.env.MONASTERY_STRUCTURED_ENDPOINT;
+    else process.env.MONASTERY_STRUCTURED_ENDPOINT = oldEndpoint;
+    if (oldKey === undefined) delete process.env.MONASTERY_STRUCTURED_API_KEY;
+    else process.env.MONASTERY_STRUCTURED_API_KEY = oldKey;
+    vi.stubGlobal("fetch", oldFetch);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("falls back to fenced JSON in stdout when no artifact file is written", async () => {
