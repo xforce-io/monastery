@@ -574,6 +574,54 @@ test("#95: a 👀 on the gate sends it back to active (non-terminal) — strips 
   expect((c.provider as FakeProvider).calls).toHaveLength(0);
 });
 
+// --- #79: rework is a heavy, human-gated action — symmetric to implement ---
+
+/** An active issue with monastery's OPEN draft PR + human feedback on it (so rework is meaningful). */
+function withOpenDraftPrAndFeedback(num: number, title: string, prNum: number): FakeGitHub {
+  const gh = ghWith({ number: num, title, body: "broken", labels: [], state: "open" });
+  const branch = branchName(num, title);
+  gh.prStates[branch] = "open";
+  gh.prDetailsByBranch[branch] = { number: prNum, url: `u/${prNum}`, title: "t", body: "b", isDraft: true };
+  gh.prCommentsByPr[prNum] = [{ id: "pc", body: "please rename X", author: "alice" }];
+  return gh;
+}
+
+test("#79 active: a proposed rework opens an approval gate (needs-approval), does NOT run the patcher", async () => {
+  const gh = ghWith({ number: 7, title: "fix it", body: "broken", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "rework", num: 7, draft: "## address the review" }]));
+  const out = await issueStep(ctxWith(gh, provider), 7);
+  expect(out.kind).toBe("progressed");
+  expect(gh.comments[7][0]).toContain("action: rework");   // gate opened, not executed
+  expect(gh.comments[7][0]).toContain("## address the review");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+  expect(gh.prs).toHaveLength(0);
+});
+
+test("#79 awaiting-gate: a 👍 on a rework gate runs runRework, updating the existing PR (no new PR)", async () => {
+  const gh = withOpenDraftPrAndFeedback(7, "fix it", 9);
+  await proposeGate(gh, "o/r", 7, "rework", "## plan");
+  gh.commentReactions["0"] = ["+1"];
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 7);
+  expect(out.kind).toBe("progressed");
+  expect((c.ws as FakeWorkspace).checkedOut).toHaveLength(1); // reworked the existing branch in place
+  expect(gh.prs).toHaveLength(0);                             // no second PR
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL);            // gate consumed
+});
+
+test("#79+#86 a rework gate is also under the one-heavy-per-tick budget (deferImplement reports, doesn't run)", async () => {
+  const gh = withOpenDraftPrAndFeedback(7, "fix it", 9);
+  await proposeGate(gh, "o/r", 7, "rework", "## plan");
+  gh.commentReactions["0"] = ["+1"];
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), deferImplement: true, ws: new FakeWorkspace({ diff: "patch", tests: true }) };
+  const out = await issueStep(c, 7);
+  expect(out.readyImplement).toBe(true);                     // reported to the tick scheduler, not run
+  expect((c.ws as FakeWorkspace).checkedOut).toHaveLength(0);
+  expect(out.entry?.approvalKind).toBe("rework");
+});
+
 // --- #108: read-only checkout provisioning (shared by reconcile and the single-issue CLI path) ---
 
 test("#108 withReadOnlyCheckout threads a read-only clone into ctx.repoDir, then cleans it up", async () => {

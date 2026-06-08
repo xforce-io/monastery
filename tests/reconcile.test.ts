@@ -8,6 +8,7 @@ import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { reconcile, MAX_ITEMS_PER_TICK } from "../src/engine/reconcile.js";
+import { branchName } from "../src/engine/patch.js";
 import { executeSafe, proposeGate } from "../src/shell/actions.js";
 import type { AgentConfig, AgentProvider, AgentResult } from "../src/provider/interface.js";
 
@@ -230,6 +231,27 @@ test("#86 lightweight actions are NOT limited by the implement budget", async ()
   expect(gh.prs).toHaveLength(1);                              // still only one heavy implement
   const i3 = (await gh.listOpenIssues("o/r", 0)).find((i) => i.number === 3)!;
   expect(i3.labels).toContain("type:bug");                    // lightweight relabel ran regardless
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("#79+#86 implement and rework compete for the SAME one-heavy-per-tick slot", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "impl me", body: "b", labels: [], state: "open" },
+    { number: 2, title: "rework me", body: "b", labels: [], state: "open" },
+  ]});
+  await proposeGate(gh, "o/r", 1, "implement", "## impl");            // gate comment "0"
+  const b2 = branchName(2, "rework me");
+  gh.prStates[b2] = "open";
+  gh.prDetailsByBranch[b2] = { number: 8, url: "u/8", title: "t", body: "b", isDraft: true };
+  gh.prCommentsByPr[8] = [{ id: "f", body: "tweak it", author: "alice" }];
+  await proposeGate(gh, "o/r", 2, "rework", "## rework");            // gate comment "1"
+  gh.commentReactions["0"] = ["+1"];
+  gh.commentReactions["1"] = ["+1"];
+  const ws = new FakeWorkspace({ diff: "patch", tests: true });
+  const c = { ...baseCtx(gh, new FakeProvider({})), ws, review: async () => ({ findings: [] }) };
+  await reconcile(c);
+  // exactly ONE heavy executor ran: a new PR (implement) OR a branch checkout (rework), never both.
+  expect(gh.prs.length + ws.checkedOut.length).toBe(1);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 

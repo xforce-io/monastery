@@ -12,6 +12,8 @@ test("ActionSchema accepts each proposable action kind", () => {
     { kind: "propose", num: 1, proposal: "close", draft: "because X" },
     { kind: "propose", num: 1, proposal: "merge", draft: "looks good" },
     { kind: "implement", num: 1 },
+    { kind: "rework", num: 1 },                                  // #79: rework an open draft PR from feedback
+    { kind: "rework", num: 1, draft: "address the review: rename X, add a test" },
     { kind: "spec", num: 1, body: "draft", parties: ["a-bot", "b-bot"] },
     { kind: "endorse", num: 1, version: 2 },
   ];
@@ -21,6 +23,11 @@ test("ActionSchema accepts each proposable action kind", () => {
 test("executeSafe refuses 'implement' — it is a shell executor (runImplement), not a cheap safe write", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
   await expect(executeSafe(gh, "o/r", { kind: "implement", num: 1 })).rejects.toThrow(/implement/);
+});
+
+test("#79 executeSafe refuses 'rework' — it is a shell executor (runRework), not a cheap safe write", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
+  await expect(executeSafe(gh, "o/r", { kind: "rework", num: 1 })).rejects.toThrow(/rework/);
 });
 
 test("ActionSchema rejects unknown kind and gated executors", () => {

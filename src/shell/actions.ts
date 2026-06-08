@@ -6,7 +6,7 @@ import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./c
 // Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
 // `implement` joins close/merge (issue #88): the agent may PROPOSE a patch, but the patcher
 // (runImplement) only runs after a real human endorses it — the agent can never self-approve.
-export const GatedKindSchema = z.enum(["close", "merge", "implement"]);
+export const GatedKindSchema = z.enum(["close", "merge", "implement", "rework"]);
 export type GatedKind = z.infer<typeof GatedKindSchema>;
 
 /**
@@ -26,6 +26,10 @@ export const ActionSchema = z.discriminatedUnion("kind", [
   // patcher (runImplement): it writes code in a sandbox clone and opens a human-gated draft PR. The agent
   // still never touches git/gh (constitution §3); the only path to main is a human Merge (§4).
   z.object({ kind: z.literal("implement"), num: z.number(), draft: z.string().optional() }),
+  // rework (#79): "the open draft PR for this issue needs changes per human feedback." Like implement it is
+  // human-gated and routed to a shell executor (runRework): it checks out the EXISTING branch, re-patches from
+  // the feedback, and updates the SAME PR — never opens a new one. The agent still never touches git/gh (§3).
+  z.object({ kind: z.literal("rework"), num: z.number(), draft: z.string().optional() }),
   // spec / endorse: the multi-party consensus core (#48). `spec` appends a versioned shared spec comment;
   // `endorse` records this party's agreement to a spec version. Consensus = all parties endorsed the
   // current version (src/shell/consensus.ts). Both are agent-level, reversible; the merge gate stays the floor.
@@ -103,6 +107,9 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
       // Not a cheap safe write — it needs the full StepCtx (provider/workspace/self-review). The engine
       // routes `implement` to runImplement; reaching it here is a wiring bug, so fail loudly.
       throw new Error("'implement' is a shell executor (runImplement), not an executeSafe action");
+    case "rework":
+      // #79: like implement, a shell executor (runRework) — needs StepCtx. Routed by the engine, never here.
+      throw new Error("'rework' is a shell executor (runRework), not an executeSafe action");
   }
 }
 

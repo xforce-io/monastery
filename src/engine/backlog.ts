@@ -18,9 +18,9 @@ export function deriveEntry(
   const kinds = actions.map((a) => a.kind);
   let priority: Priority;
   let rationale: string;
-  if (kinds.includes("implement")) {
+  if (kinds.includes("implement") || kinds.includes("rework")) {
     priority = "now";
-    rationale = "proposed implement → patcher";
+    rationale = kinds.includes("rework") ? "proposed rework → patcher (update PR)" : "proposed implement → patcher";
   } else if (kinds.some((k) => ADVANCING.has(k))) {
     priority = "soon";
     rationale = `advancing: ${kinds.join(", ")}`;
