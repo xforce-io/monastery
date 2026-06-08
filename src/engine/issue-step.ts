@@ -37,6 +37,10 @@ export interface StepCtx {
   repoPolicy?: RepoPolicy;
   /** Preview mode: don't execute the heavy patcher (the DryRunAdapter only mocks gh, not the workspace). */
   dryRun?: boolean;
+  /** #86: when true, an approved implement gate is NOT run here — it's reported (readyImplement) so the
+   *  reconcile tick scheduler can run at most one runImplement per tick. The single-issue CLI path leaves
+   *  this false so `step --issue N` still implements immediately. */
+  deferImplement?: boolean;
   /** Sink for the per-repo backlog snapshot (issue #82); reconcile writes through it. */
   backlog?: BacklogWriter;
   /** #108: read-only repo checkout for code-reading agents (maintainer). Shared per tick; the shell never
@@ -194,6 +198,18 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     return { kind: "done" };
   }
   if (kind === "implement") {
+    // #86: defer to the tick scheduler — don't run the heavy patcher here. Report this as a ready candidate
+    // (gate left intact, so it re-enters awaitingGate next tick) and let reconcile run at most one per tick.
+    if (ctx.deferImplement) {
+      return {
+        kind: "waiting", on: "human", readyImplement: true,
+        entry: {
+          number: issue.number, title: issue.title, priority: "now",
+          rationale: "✅ approved implement — ready (tick scheduler)",
+          awaitingApproval: true, approvalKind: "implement", approvalCommentId: gate.id,
+        },
+      };
+    }
     // #88: the human endorsed (👍) the implement proposal — run the patcher (sandbox + draft PR).
     // #100: feed the ENDORSED spec (not the possibly-stale issue body) to the patcher. The stale-gate
     // guard above (#95) already ensured currentSpec.version == the gate's `spec: N`, so this is exactly

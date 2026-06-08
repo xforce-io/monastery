@@ -8,7 +8,7 @@ import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { reconcile, MAX_ITEMS_PER_TICK } from "../src/engine/reconcile.js";
-import { executeSafe } from "../src/shell/actions.js";
+import { executeSafe, proposeGate } from "../src/shell/actions.js";
 import type { AgentConfig, AgentProvider, AgentResult } from "../src/provider/interface.js";
 
 // #108: the maintainer's cwd is a shared read-only repo checkout, so the issue number comes from the
@@ -154,6 +154,82 @@ test("#108 clones the repo read-only ONCE per tick, runs the maintainer in it, t
   const roDir = ws.clonedReadOnly[0].dir;
   expect(provider.calls.map((x) => x.artifactDir)).toEqual([roDir, roDir]); // maintainer cwd = the read-only checkout
   expect(ws.cleaned).toContain(roDir);                                    // checkout removed after the tick
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+// --- #86: at most one implement (runImplement / patcher) per tick, chosen by backlog priority ---
+
+import type { BacklogSnapshot as Snap } from "../src/types.js";
+
+/** Two issues, each with a human-approved (👍) implement gate. Both are "ready" to runImplement. */
+async function twoApprovedImplements(): Promise<FakeGitHub> {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "fix a", body: "broken a", labels: [], state: "open" },
+    { number: 2, title: "fix b", body: "broken b", labels: [], state: "open" },
+  ]});
+  await proposeGate(gh, "o/r", 1, "implement", "## Plan A"); // gate comment id "0"
+  await proposeGate(gh, "o/r", 2, "implement", "## Plan B"); // gate comment id "1"
+  gh.commentReactions["0"] = ["+1"];
+  gh.commentReactions["1"] = ["+1"];
+  return gh;
+}
+
+function implCtx(gh: FakeGitHub, written?: Snap[]) {
+  return {
+    ...baseCtx(gh, new FakeProvider({ "actions.json": JSON.stringify({ actions: [] }) })),
+    ws: new FakeWorkspace({ diff: "patch", tests: true }),
+    review: async () => ({ findings: [] }),
+    ...(written ? { backlog: { writeBacklog: (_r: string, s: Snap) => { written.push(s); } } } : {}),
+  };
+}
+
+test("#86 two approved implements in one tick → only ONE PR opens; the other defers (gate intact)", async () => {
+  const gh = await twoApprovedImplements();
+  const written: Snap[] = [];
+  const c = implCtx(gh, written);
+  await reconcile(c);
+  expect(gh.prs).toHaveLength(1);                              // exactly one heavy runImplement this tick
+  expect(gh.prs[0].body).toContain("Closes #1");              // backlog tiebreak: lower number wins
+  const [i1, i2] = await gh.listOpenIssues("o/r", 0);
+  expect(i1.labels).not.toContain("monastery:needs-approval"); // winner's gate consumed
+  expect(i2.labels).toContain("monastery:needs-approval");     // deferred candidate's gate untouched
+  // backlog reflects executed vs deferred
+  const entries = written[0].entries;
+  expect(entries.find((e) => e.number === 1)?.rationale).toMatch(/executed/i);
+  expect(entries.find((e) => e.number === 2)?.rationale).toMatch(/defer/i);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
+test("#86 a deferred implement runs on the NEXT tick (not lost)", async () => {
+  const gh = await twoApprovedImplements();
+  const c1 = implCtx(gh);
+  await reconcile(c1);                                         // tick 1: #1 runs, #2 deferred
+  expect(gh.prs).toHaveLength(1);
+  rmSync(c1.artifactRoot, { recursive: true, force: true });
+  const c2 = implCtx(gh);
+  await reconcile(c2);                                         // tick 2: #2 (still approved) now runs
+  expect(gh.prs).toHaveLength(2);
+  expect(gh.prs.some((p) => p.body.includes("Closes #2"))).toBe(true);
+  rmSync(c2.artifactRoot, { recursive: true, force: true });
+});
+
+test("#86 lightweight actions are NOT limited by the implement budget", async () => {
+  // two approved implements + one active issue whose maintainer relabels it (lightweight)
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "fix a", body: "broken a", labels: [], state: "open" },
+    { number: 2, title: "fix b", body: "broken b", labels: [], state: "open" },
+    { number: 3, title: "light", body: "z", labels: [], state: "open" },
+  ]});
+  await proposeGate(gh, "o/r", 1, "implement", "## Plan A"); // comment "0"
+  await proposeGate(gh, "o/r", 2, "implement", "## Plan B"); // comment "1"
+  gh.commentReactions["0"] = ["+1"];
+  gh.commentReactions["1"] = ["+1"];
+  const provider = new PerIssueProvider({ 3: [{ kind: "relabel", num: 3, add: ["type:bug"], remove: [] }] });
+  const c = { ...baseCtx(gh, provider), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  await reconcile(c);
+  expect(gh.prs).toHaveLength(1);                              // still only one heavy implement
+  const i3 = (await gh.listOpenIssues("o/r", 0)).find((i) => i.number === 3)!;
+  expect(i3.labels).toContain("type:bug");                    // lightweight relabel ran regardless
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
