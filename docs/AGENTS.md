@@ -33,7 +33,7 @@ AgentPolicy    = { model?, timeoutMs?, failThreshold?, maxIters? }
 ## 不变量(测试钉死,`tests/agents.test.ts`)
 
 - **每个 persona 都声明「不碰 git/gh」**(宪法 §3)——边界写进定义,不靠各自口头。
-- **沙箱显式**:结构化 agent `artifact-only`;patcher `workspace-clone`。
+- **沙箱显式**:maintainer `readonly-clone`(只读代码,验真后才提 implement,#108);reviewer `artifact-only`;patcher `workspace-clone`。
 - **运维策略在 spec.policy**:`failThreshold`/`maxIters` 等的单一归宿。**默认值在 spec,per-repo 覆盖在 `RepoPolicy.agents`**——运行时 `effectivePolicy(spec, repoPolicy)` 合并(`config.json` 配 → `Store.repoPolicy` → `ctx.repoPolicy` → 引擎)。
 
 ## 边界回顾
