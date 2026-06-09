@@ -45,6 +45,24 @@ test("an empty actions array is valid (explicitly: nothing to do this tick)", as
   rmSync(dir, { recursive: true, force: true });
 });
 
+// #76: the maintainer writes outward text (reply/panel/spec/proposal drafts) — it gets the language policy.
+test("language policy: when set, the maintainer context carries the language directive", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", { ...input, language: "zh-CN" }, dir);
+  expect(provider.calls[0].context).toContain("<language-policy");
+  expect(provider.calls[0].context).toContain("zh-CN");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("language policy: when unset, no language-policy block is injected (back-compat)", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", input, dir);
+  expect(provider.calls[0].context).not.toContain("<language-policy");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("missing file and no stdout => structured failure", async () => {
   const dir = newDir();
   await expect(maintainer(new FakeProvider({}), "sonnet", input, dir))

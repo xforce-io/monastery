@@ -4,6 +4,7 @@ import type { AgentProvider } from "../provider/interface.js";
 import type { Issue } from "../types.js";
 import { ActionSchema, ActionsSchema, type Action } from "../shell/actions.js";
 import { runStructuredAgent, type StructuredAgentSpec } from "./spec.js";
+import { languageDirective } from "../shell/language.js";
 
 /** What the maintainer agent gets to look at this tick (all GitHub-observable, read by the shell). */
 export interface MaintainerInput {
@@ -37,6 +38,8 @@ export interface MaintainerInput {
   };
   /** The rest of the open backlog (other issues, summarized) — so the PM can judge what's most worth doing now. */
   backlog?: { number: number; title: string; state: string; labels: string[] }[];
+  /** #76: this repo's outward-text language — reply/panel/spec/proposal drafts must be written in it. */
+  language?: string;
 }
 
 /** Accept either `{ "actions": [...] }` or a bare `[...]`. */
@@ -94,7 +97,7 @@ function buildPrBlock(pr: MaintainerInput["pr"]): string {
 }
 
 function buildContext(input: MaintainerInput): string {
-  const { thesis, issue, comments, pr, deps, backlog } = input;
+  const { thesis, issue, comments, pr, deps, backlog, language } = input;
   const commentBlock = comments.length
     ? comments.map((c) => `<comment id="${c.id}" author="${c.author}">\n${c.body}\n</comment>`).join("\n")
     : "(no comments)";
@@ -107,6 +110,8 @@ function buildContext(input: MaintainerInput): string {
     : "(no other open issues)";
 
   return [
+    // #76: every outward write below (reply/panel/spec/proposal draft) must follow the repo's language policy.
+    ...(language ? [languageDirective(language)] : []),
     `<thesis>\n${thesis}\n</thesis>`,
     `<issue number="${issue.number}" state="${issue.state}" labels="${issue.labels.join(", ")}">\ntitle: ${issue.title}\n\n${issue.body}\n</issue>`,
     `<backlog>\n${backlogBlock}\n</backlog>`,

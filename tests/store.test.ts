@@ -1,6 +1,6 @@
 // tests/store.test.ts
 import { expect, test } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/config/store.js";
@@ -124,5 +124,31 @@ test("backlog is isolated per repo", () => {
   store.writeBacklog("a/x", snap("a/x"));
   expect(store.readBacklog("a/x")).not.toBeNull();
   expect(store.readBacklog("b/y")).toBeNull();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// --- repoLanguage: outward-text language policy, three-layer resolution (#76) ---
+
+test("repoLanguage: defaults to en-US when nothing is configured", () => {
+  const { store, dir } = tmpStore();
+  expect(store.repoLanguage("o/r")).toBe("en-US");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("repoLanguage: per-repo policy.language wins", () => {
+  const { store, dir } = tmpStore();
+  store.addRepo("o/r", { language: "zh-CN" });
+  expect(store.repoLanguage("o/r")).toBe("zh-CN");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("repoLanguage: falls back to defaults.language when the repo has none", () => {
+  const { store, dir } = tmpStore();
+  // defaults.language is the global layer (config.json top-level); write it directly.
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ defaults: { language: "zh-CN" }, repos: { "o/r": {} } }));
+  expect(store.repoLanguage("o/r")).toBe("zh-CN");
+  // and the repo layer still overrides the default
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ defaults: { language: "zh-CN" }, repos: { "o/r": { language: "en-US" } } }));
+  expect(store.repoLanguage("o/r")).toBe("en-US");
   rmSync(dir, { recursive: true, force: true });
 });

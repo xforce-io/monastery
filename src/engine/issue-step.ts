@@ -35,6 +35,9 @@ export interface StepCtx {
   review?: ReviewFn;
   /** This repo's policy — overrides each agent's spec-default policy at runtime (effectivePolicy). */
   repoPolicy?: RepoPolicy;
+  /** #76: this repo's resolved outward-text language (Store.repoLanguage). Threaded into every agent that
+   *  writes outward GitHub text (maintainer/reviewer context, patcher persona) and the enforcement warn. */
+  language?: string;
   /** Preview mode: don't execute the heavy patcher (the DryRunAdapter only mocks gh, not the workspace). */
   dryRun?: boolean;
   /** #86: when true, an approved implement gate is NOT run here — it's reported (readyImplement) so the
@@ -89,7 +92,8 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const rejected = await recoverRejectedImpl(ctx, issue);
   if (rejected) return rejected;
   // The context layer (src/engine/context.ts) gathers this item's semantic context from GitHub.
-  const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue);
+  // #76: thread the repo's outward-text language so the maintainer writes reply/panel/spec in it.
+  const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue, ctx.language);
   const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
   // #108: run the maintainer in the tick's read-only repo checkout (so it can verify root cause from code)
   // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).
