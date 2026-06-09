@@ -56,6 +56,8 @@ export interface StepCtx {
   progressPath?: string;
   /** #75: inject phase-event sinks (tests only); production defaults to process.stderr/stdout. */
   logSink?: { err?: (line: string) => void; out?: (line: string) => void };
+  /** #121: the tick's already-listed open set, threaded down so per-item steps don't each re-list. */
+  openIssues?: Issue[];
 }
 
 /**
@@ -85,7 +87,7 @@ const APPROVAL_MARK = "protocol: approval";
 
 /** One step over one item. Routes by the two control labels the shell owns (PROTOCOL §2). */
 export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
-  const issue = (await ctx.gh.listOpenIssues(ctx.repo, 0)).find((i) => i.number === num);
+  const issue = (ctx.openIssues ?? await ctx.gh.listOpenIssues(ctx.repo, 0)).find((i) => i.number === num);
   if (!issue) return { kind: "noop" };                       // closed = terminal (left the open list)
   if (issue.labels.includes(DECLINED)) return { kind: "noop" }; // terminal
   if (issue.labels.includes(NEEDS_APPROVAL)) return awaitingGate(ctx, issue); // awaiting-gate (no agent)
@@ -100,7 +102,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   if (rejected) return rejected;
   // The context layer (src/engine/context.ts) gathers this item's semantic context from GitHub.
   // #76: thread the repo's outward-text language so the maintainer writes reply/panel/spec in it.
-  const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue, ctx.language);
+  const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue, ctx.language, ctx.openIssues);
   const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
   // #108: run the maintainer in the tick's read-only repo checkout (so it can verify root cause from code)
   // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).

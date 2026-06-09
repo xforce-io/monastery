@@ -264,3 +264,25 @@ test("#108 a tick with only awaiting-gate items does not clone (no agent runs)",
   expect(ws.clonedReadOnly).toHaveLength(0);                             // nothing active -> no code checkout
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+// --- #121: a tick lists open issues ONCE; per-item steps reuse the threaded set ---
+
+/** Counts listOpenIssues calls to prove the open set is threaded down, not re-fetched per item (#121). */
+class CountingGitHub extends FakeGitHub {
+  public listCalls = 0;
+  async listOpenIssues(repo?: string, since?: number) { this.listCalls++; return super.listOpenIssues(repo, since); }
+}
+
+test("#121 a tick calls listOpenIssues exactly once — issueStep & context reuse the threaded open set", async () => {
+  // Two active issues. Without threading: 1 (reconcile) + 2 (issueStep find) + 2 (context backlog) = 5 calls.
+  const gh = new CountingGitHub({ thesis: "T", issues: [
+    { number: 1, title: "a", body: "b", labels: [], state: "open" },
+    { number: 2, title: "c", body: "d", labels: [], state: "open" },
+  ]});
+  const provider = new RelabelEachProvider();
+  const c = baseCtx(gh, provider);
+  await reconcile(c);
+  expect(provider.calls.length).toBe(2);   // both active items were stepped (maintainer ran)
+  expect(gh.listCalls).toBe(1);            // ...yet open was listed only once for the whole tick
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
