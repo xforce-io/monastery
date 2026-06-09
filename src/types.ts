@@ -6,6 +6,7 @@ export type Outcome = (
   | { kind: "progressed"; note?: string }
   | { kind: "waiting"; on: WaitReason }
   | { kind: "done" }
+  | { kind: "failed"; error: string }
   | { kind: "noop" }
 ) & {
   entry?: BacklogEntry;
@@ -18,6 +19,7 @@ export type Outcome = (
 export interface ReconcileResult {
   repo: string;
   advanced: number;
+  failed: number;
   waiting: { on: WaitReason; count: number }[];
   idle: boolean;
   nextPollMs: number;

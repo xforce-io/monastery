@@ -57,6 +57,7 @@ test("explainOutcome: each outcome gets a human-readable line; awaiting-👍 is 
   expect(explainOutcome({ kind: "waiting", on: "human" })).toContain("👍");
   expect(explainOutcome({ kind: "waiting", on: "ci" })).toContain("ci");
   expect(explainOutcome({ kind: "done" })).toContain("terminal");
+  expect(explainOutcome({ kind: "failed", error: "label not found" })).toContain("label not found");
   expect(explainOutcome({ kind: "noop" })).toBe("nothing to do this tick");
   expect(explainOutcome({
     kind: "noop",

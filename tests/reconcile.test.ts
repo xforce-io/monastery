@@ -286,3 +286,25 @@ test("#121 a tick calls listOpenIssues exactly once — issueStep & context reus
   expect(gh.listCalls).toBe(1);            // ...yet open was listed only once for the whole tick
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
+
+test("#125 a safe-action failure is counted as failed while the tick continues", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "bad", body: "b", labels: [], state: "open" },
+    { number: 2, title: "good", body: "b", labels: [], state: "open" },
+  ]});
+  const addLabel = gh.addLabel.bind(gh);
+  gh.addLabel = (repo, num, label) => label === "missing"
+    ? Promise.reject(new Error("label not found"))
+    : addLabel(repo, num, label);
+  const provider = new PerIssueProvider({
+    1: [{ kind: "relabel", num: 1, add: ["missing"], remove: [] }],
+    2: [{ kind: "relabel", num: 2, add: ["type:bug"], remove: [] }],
+  });
+  const c = baseCtx(gh, provider);
+  const r = await reconcile(c);
+  const i2 = await gh.getIssue("o/r", 2);
+  expect(r.failed).toBe(1);
+  expect(r.advanced).toBe(1);
+  expect(i2?.labels).toContain("type:bug");
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});

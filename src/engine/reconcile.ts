@@ -22,6 +22,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
 
   const waiting: Record<WaitReason, number> = { human: 0, peer: 0, ci: 0 };
   let advanced = 0;
+  let failed = 0;
   const entries: BacklogEntry[] = [];
 
   // #86: a tick runs at most ONE implement (the heavy runImplement / patcher). Pass 1 steps the whole batch
@@ -39,8 +40,10 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
         if (out.readyImplement) { ready.push({ number: i.number, title: i.title, entry: out.entry }); continue; }
         if (out.entry) entries.push(out.entry);
         if (out.kind === "progressed" || out.kind === "done") advanced++;
+        else if (out.kind === "failed") failed++;
         else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
       } catch (e) {
+        failed++;
         console.warn(`[monastery] step ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
       }
     }
@@ -64,6 +67,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
         if (out.kind === "progressed" || out.kind === "done") advanced++;
         entries.push({ number: r.number, title: r.title, priority: "now", rationale: "✅ approved implement → executed this tick" });
       } catch (e) {
+        failed++;
         console.warn(`[monastery] implement ${ctx.repo}#${r.number} failed (skipped): ${(e as Error).message}`);
         entries.push({ number: r.number, title: r.title, priority: "now", rationale: "approved implement → failed this tick" });
       }
@@ -99,6 +103,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   return {
     repo: ctx.repo,
     advanced,
+    failed,
     waiting: (Object.entries(waiting) as [WaitReason, number][])
       .filter(([, n]) => n > 0).map(([on, count]) => ({ on, count })),
     idle,

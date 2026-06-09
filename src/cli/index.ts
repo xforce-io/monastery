@@ -13,7 +13,8 @@ import { reconcile } from "../engine/reconcile.js";
 import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
-import type { ReconcileResult } from "../types.js";
+import type { Outcome, ReconcileResult } from "../types.js";
+import type { GitHubAdapter } from "../github/adapter.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, type StatusEntry } from "./status.js";
 import { formatBacklog, formatPending, type PendingItem } from "./backlog.js";
@@ -124,6 +125,7 @@ async function main(): Promise<void> {
     const provider = new ClaudeCodeProvider();
     const stepLock = new StepLock(join(homedir(), ".monastery"));
     const results: Awaited<ReturnType<typeof reconcile>>[] = [];
+    let singleIssueOutcome: Outcome | undefined;
     const rawCmd = process.argv.slice(2).join(" ");
     const exitCode = await stepRepos({
       repos, lock: stepLock, rawCmd, json: args.json, force: args.forceStaleLock,
@@ -131,6 +133,7 @@ async function main(): Promise<void> {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
         const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
+        await prepareRepoForStep(gh, repo, args.json ? (s) => console.error(s) : undefined);
         // #75: thread the json flag (outlet A machine stream) and the per-repo progress sidecar path
         // (outlet B) so PhaseLogger emits NDJSON to stdout and overwrites the snapshot `status` reads.
         const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now(), json: args.json, progressPath: stepLock.progressPath(repo) };
@@ -138,6 +141,7 @@ async function main(): Promise<void> {
           // #108: a single-issue run gets the same read-only code checkout as a reconcile tick, so the
           // maintainer can verify root cause from source here too (parity between the two entry points).
           const out = await withReadOnlyCheckout(ctx, (c) => issueStep(c, Number(args.issue)));
+          singleIssueOutcome = out;
           // #75: in json mode stdout is the NDJSON event stream; the human summary goes to stderr.
           const line = `${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`;
           if (args.json) console.error(line); else console.log(line);
@@ -160,12 +164,23 @@ async function main(): Promise<void> {
     });
     // #75 AC#2: stdout is the NDJSON event stream; the batch summary is its final {type:"summary"} event.
     if (!args.issue) console.log(args.json ? JSON.stringify({ type: "summary", results }) : summarize(results));
-    if (exitCode !== 0) process.exit(exitCode);
+    const finalExitCode = stepExitCode(exitCode, results, singleIssueOutcome);
+    if (finalExitCode !== 0) process.exit(finalExitCode);
     return;
   }
 
   console.error(`unknown command: ${args.cmd}`);
   process.exit(2); // usage error
+}
+
+export async function prepareRepoForStep(gh: GitHubAdapter, repo: string, log?: (line: string) => void): Promise<void> {
+  const r = await initRepo(gh, repo);
+  if (r.thesisCreated) log?.(`[monastery] initialized ${repo}: scaffolded .monastery/thesis.md; edit it to define repo scope`);
+}
+
+export function stepExitCode(lockExitCode: number, results: ReconcileResult[], singleIssueOutcome?: Outcome): number {
+  if (singleIssueOutcome?.kind === "failed" || results.some((r) => r.failed > 0)) return 1;
+  return lockExitCode;
 }
 
 export interface StepReposDeps {
@@ -216,7 +231,7 @@ export async function stepRepos(deps: StepReposDeps): Promise<number> {
 export function summarize(results: ReconcileResult[]): string {
   return results.map((r) => {
     const awaiting = r.waiting.find((w) => w.on === "human")?.count ?? 0;
-    const base = `${r.repo}: advanced=${r.advanced} idle=${r.idle} next=${Math.round(r.nextPollMs / 1000)}s`;
+    const base = `${r.repo}: advanced=${r.advanced} failed=${r.failed} idle=${r.idle} next=${Math.round(r.nextPollMs / 1000)}s`;
     return awaiting > 0 ? `${base} awaiting-your-👍=${awaiting}` : base; // #88: surface items blocked on you
   }).join("\n");
 }

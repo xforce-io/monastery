@@ -152,9 +152,9 @@ test("active issue: the maintainer is told the state of monastery's open PR (so 
   expect(provider.calls[0].context).toMatch(/state: open/);
 });
 
-// --- active: a single failing action must not crash the tick (CONSTITUTION §10: failure = noise) ---
+// --- #125: failing safe actions stay isolated but surface as a failed outcome ---
 
-test("active issue: one action that throws is isolated — later actions still run, no crash", async () => {
+test("active issue: one action that throws is isolated, later actions still run, and the outcome is failed", async () => {
   const gh = ghWith({ number: 80, title: "x", body: "y", labels: [], state: "open" });
   // addLabel rejects for an undefined label (mirrors `gh --add-label` on a missing repo label)
   const orig = gh.addLabel.bind(gh);
@@ -163,8 +163,9 @@ test("active issue: one action that throws is isolated — later actions still r
     { kind: "relabel", num: 80, add: ["type:enhancement"], remove: [] }, // this one fails
     { kind: "panel", num: 80, body: "status still posted" },             // this one must still run
   ]));
-  const out = await issueStep(ctxWith(gh, provider), 80); // must NOT throw
-  expect(out.kind).toBe("progressed");
+  const out = await issueStep(ctxWith(gh, provider), 80); // must NOT throw, but must not look successful
+  expect(out.kind).toBe("failed");
+  expect(out).toMatchObject({ error: expect.stringContaining("label not found") });
   expect(gh.panels[80]).toContain("status still posted"); // later action executed despite the earlier failure
 });
 
