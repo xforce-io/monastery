@@ -1,6 +1,7 @@
 // src/shell/actions.ts
 import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
+import { LABEL_DEFS, NEEDS_APPROVAL } from "../github/labels.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
 
 // Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
@@ -50,7 +51,6 @@ export type Action = z.infer<typeof ActionSchema>;
 /** A batch of proposed actions (the maintainer agent's output shape). */
 export const ActionsSchema = z.object({ actions: z.array(ActionSchema) });
 
-const NEEDS_APPROVAL = "monastery:needs-approval";
 // Shell-owned control labels (PROTOCOL §2): the agent may NEVER set/clear these via relabel — they encode
 // approval/terminal state, and faking them would bypass the human gate (issue #92).
 const CONTROL_LABELS: ReadonlySet<string> = new Set([NEEDS_APPROVAL, "monastery:declined"]);
@@ -124,8 +124,15 @@ export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, 
   // Visible banner (issue #90): the approval marker is an HTML comment a human can't see, so without this
   // they can't tell which comment to 👍. This line is plain text — it shows up on the issue page.
   const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
-  await gh.postComment(repo, num, `${approvalMarker(proposal, specVersion)}\n${banner}\n\n${draft}`);
+  await ensureControlLabel(gh, repo, NEEDS_APPROVAL);
   await gh.addLabel(repo, num, NEEDS_APPROVAL);
+  await gh.postComment(repo, num, `${approvalMarker(proposal, specVersion)}\n${banner}\n\n${draft}`);
+}
+
+export async function ensureControlLabel(gh: GitHubAdapter, repo: string, name: string): Promise<void> {
+  const def = LABEL_DEFS.find((l) => l.name === name);
+  if (!def) throw new Error(`unknown control label: ${name}`);
+  await gh.ensureLabel(repo, def.name, def.color, def.description);
 }
 
 /**
