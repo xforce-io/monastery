@@ -151,6 +151,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // Each action is fault-isolated: one failing action (e.g. an undefined label) is noise, not a crash
   // that takes down the tick (constitution §10 — the safety layer always holds, even for a bad agent).
   const sa = log.phase("safe-actions", { count: actions.length });
+  const actionErrors: string[] = [];
   for (const a of actions) {
     try {
       if (a.kind === "implement" || a.kind === "rework") {
@@ -163,11 +164,15 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
         else await proposeGate(ctx.gh, ctx.repo, issue.number, a.kind, draft);
       } else await executeSafe(ctx.gh, ctx.repo, a);
     } catch (e) {
-      console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      actionErrors.push(`${a.kind}: ${msg}`);
+      console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${msg}`);
     }
   }
-  sa.done();
+  if (actionErrors.length) sa.fail("action-failed", { failures: actionErrors.length });
+  else sa.done();
   const entry = deriveEntry(issue, actions, blockedBy, ctx.fails.failCount(ctx.repo, issue.number));
+  if (actionErrors.length) return { kind: "failed", error: actionErrors.join("; "), entry };
   return actions.length ? { kind: "progressed", entry } : { kind: "noop", entry };
 }
 

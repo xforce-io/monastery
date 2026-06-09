@@ -119,6 +119,7 @@ export function explainOutcome(out: Outcome): string {
     case "progressed": return out.note ? `progressed (${out.note})` : "progressed";
     case "waiting":    return out.on === "human" ? "awaiting your 👍 on the approval comment" : `waiting on ${out.on}`;
     case "done":       return "done (terminal)";
+    case "failed":     return `failed: ${out.error}`;
     case "noop":
       if (out.entry?.priority === "parked") return "awaiting your 👍 on the approval comment";
       if (out.entry?.rationale) return out.entry.rationale;

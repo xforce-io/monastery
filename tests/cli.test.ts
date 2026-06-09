@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs, stepRepos, summarize } from "../src/cli/index.js";
+import { prepareRepoForStep, stepExitCode } from "../src/cli/index.js";
 import { StepLock } from "../src/config/step-lock.js";
+import { FakeGitHub } from "../src/github/fake.js";
+import { LABEL_DEFS } from "../src/github/labels.js";
+import { THESIS_PATH } from "../src/engine/init.js";
 
 test("parses `step --repo o/r --dry-run --json`", () => {
   expect(parseArgs(["step", "--repo", "o/r", "--dry-run", "--json"]))
@@ -119,11 +123,31 @@ test("formatBacklog renders header + ranked lines with priority, rationale, bloc
 
 test("summarize surfaces awaiting-your-👍 count when a repo has items blocked on the human (#88)", () => {
   const r = (repo: string, awaiting: number) => ({
-    repo, advanced: 0, idle: true, nextPollMs: 60000,
+    repo, advanced: 0, failed: 0, idle: true, nextPollMs: 60000,
     waiting: awaiting > 0 ? [{ on: "human" as const, count: awaiting }] : [],
   });
   expect(summarize([r("o/a", 2)])).toContain("awaiting-your-👍=2");
   expect(summarize([r("o/b", 0)])).not.toContain("awaiting-your-👍");
+});
+
+test("#125 summarize surfaces failed count", () => {
+  const out = summarize([{ repo: "o/r", advanced: 0, failed: 2, idle: true, nextPollMs: 60000, waiting: [] }]);
+  expect(out).toContain("failed=2");
+});
+
+test("#125 step exit code is non-zero for batch and single-issue failures", () => {
+  expect(stepExitCode(0, [{ repo: "o/r", advanced: 0, failed: 1, idle: true, nextPollMs: 60000, waiting: [] }])).toBe(1);
+  expect(stepExitCode(0, [], { kind: "failed", error: "label not found" })).toBe(1);
+  expect(stepExitCode(4, [], { kind: "noop" })).toBe(4);
+});
+
+test("#126 step preflight initializes labels and thesis for a repos-add-only repo", async () => {
+  const gh = new FakeGitHub({ thesis: "", issues: [] });
+  const logs: string[] = [];
+  await prepareRepoForStep(gh, "o/r", (line) => logs.push(line));
+  expect(gh.ensuredLabels.map((l) => l.name).sort()).toEqual(LABEL_DEFS.map((l) => l.name).sort());
+  expect(gh.files[THESIS_PATH]).toContain("Thesis");
+  expect(logs.join("\n")).toContain("initialized o/r");
 });
 
 import { formatPending } from "../src/cli/backlog.js";
