@@ -11,7 +11,7 @@ import { currentSpec, consensusReached } from "../shell/consensus.js";
 /** Gather everything the maintainer needs for one item, from the resource layer.
  *  `language` (#76) is the repo's resolved outward-text language, threaded onto the input so the maintainer
  *  writes reply/panel/spec/proposal drafts in it; omitted -> no policy block (back-compat). */
-export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, issue: Issue, language?: string): Promise<MaintainerInput> {
+export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, issue: Issue, language?: string, openIssues?: Issue[]): Promise<MaintainerInput> {
   const thesis = await gh.readThesis(repo);
   const comments = await gh.listComments(repo, issue.number);
   // monastery's PR for this issue's branch: gather state + rich context so the agent sees human PR feedback.
@@ -43,8 +43,8 @@ export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, i
     : [];
   const consensus = { spec, endorsedCurrent, reached: consensusReached(spec, endorsedCurrent) };
   // backlog awareness (ARCHITECTURE §2.3): the other open issues, summarized, so the PM can prioritize.
-  // (Re-listed per item — cheap, and self-contained; thread the open list down only if scale needs it.)
-  const open = await gh.listOpenIssues(repo, 0);
+  // #121: reuse the tick's already-listed open set when threaded down; only re-list when called standalone.
+  const open = openIssues ?? await gh.listOpenIssues(repo, 0);
   const backlog = open
     .filter((i) => i.number !== issue.number)
     .map((i) => ({ number: i.number, title: i.title, state: i.state, labels: i.labels }));

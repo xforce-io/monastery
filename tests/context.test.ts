@@ -128,3 +128,31 @@ test("gatherMaintainerContext includes PR checks summary in pr.checks", async ()
 
   expect(input.pr?.checks).toBe("fail");
 });
+
+/** Counts listOpenIssues calls so we can assert the open set is reused, not re-fetched (#121). */
+class CountingGitHub extends FakeGitHub {
+  public listCalls = 0;
+  async listOpenIssues(repo?: string, since?: number) { this.listCalls++; return super.listOpenIssues(repo, since); }
+}
+
+test("#121: a threaded-down open list is reused for the backlog — no extra listOpenIssues call", async () => {
+  const issues: Issue[] = [
+    { number: 5, title: "this one", body: "b", labels: [], state: "open" },
+    { number: 7, title: "another", body: "b", labels: ["type:bug"], state: "open" },
+  ];
+  const gh = new CountingGitHub({ thesis: "T", issues });
+  const input = await gatherMaintainerContext(gh, "o/r", issues[0], undefined, issues);
+  expect(gh.listCalls).toBe(0);                                  // reused the passed-in set, didn't re-list
+  expect(input.backlog).toEqual([{ number: 7, title: "another", state: "open", labels: ["type:bug"] }]);
+});
+
+test("#121: called standalone (no open list threaded) it still lists once — back-compat fallback", async () => {
+  const issues: Issue[] = [
+    { number: 5, title: "this one", body: "b", labels: [], state: "open" },
+    { number: 7, title: "another", body: "b", labels: [], state: "open" },
+  ];
+  const gh = new CountingGitHub({ thesis: "T", issues });
+  const input = await gatherMaintainerContext(gh, "o/r", issues[0]);
+  expect(gh.listCalls).toBe(1);                                  // no set threaded -> falls back to listing
+  expect(input.backlog).toEqual([{ number: 7, title: "another", state: "open", labels: [] }]);
+});

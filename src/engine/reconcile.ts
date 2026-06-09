@@ -12,6 +12,8 @@ const NEW_ISSUE_BACKOFF_MS = 7_200_000;  // fully idle, only watching for new is
 
 export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
   const open = await ctx.gh.listOpenIssues(ctx.repo, 0);
+  // #121: thread the tick's open set into every per-item step so issueStep/gatherMaintainerContext don't re-list.
+  const octx: StepCtx = { ...ctx, openIssues: open };
 
   // terminal (declined) is ignored; everything else is stepped. issueStep itself splits the rest into
   // active (-> agent) vs awaiting-gate (-> signal check) by the needs-approval control label (PROTOCOL §1).
@@ -44,8 +46,8 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
     }
   };
   const hasActive = batch.some((i) => !i.labels.includes(NEEDS_APPROVAL));
-  if (hasActive) await withReadOnlyCheckout(ctx, stepBatch);
-  else await stepBatch(ctx);
+  if (hasActive) await withReadOnlyCheckout(octx, stepBatch);
+  else await stepBatch(octx);
 
   // Pass 2: schedule the single heavy slot. Pick the backlog-top approved candidate and run only it (re-step
   // with deferImplement off → the normal approved-gate path: runImplement + gate consumed). The rest keep their
@@ -58,7 +60,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
         continue;
       }
       try {
-        const out = await issueStep({ ...ctx, deferImplement: false }, r.number);
+        const out = await issueStep({ ...octx, deferImplement: false }, r.number);
         if (out.kind === "progressed" || out.kind === "done") advanced++;
         entries.push({ number: r.number, title: r.title, priority: "now", rationale: "✅ approved implement → executed this tick" });
       } catch (e) {
