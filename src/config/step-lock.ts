@@ -41,7 +41,7 @@ const STALE_LOCK_MS = 12 * 60 * 60 * 1000; // 12h
 
 function repoSlug(repo: string): string { return repo.replace(/\//g, "__"); }
 
-function isAlive(pid: number): boolean {
+export function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -63,6 +63,11 @@ export class StepLock {
 
   private lockPath(repo: string): string {
     return join(this.root, "repos", repoSlug(repo), "step.lock");
+  }
+
+  /** Sidecar path for the per-repo phase-progress snapshot (issue #75), next to the lock. */
+  progressPath(repo: string): string {
+    return join(this.root, "repos", repoSlug(repo), "step.progress");
   }
 
   /**

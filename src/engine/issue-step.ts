@@ -18,6 +18,7 @@ import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
+import { makePhaseLogger } from "../phase-logger.js";
 
 export interface StepCtx {
   repo: string;
@@ -49,6 +50,12 @@ export interface StepCtx {
   /** #108: read-only repo checkout for code-reading agents (maintainer). Shared per tick; the shell never
    *  commits it. When set, the maintainer runs with this as its cwd so it can verify root cause from code. */
   repoDir?: string;
+  /** #75: emit NDJSON phase events to stdout (outlet A, machine stream). Human lines go to stderr regardless. */
+  json?: boolean;
+  /** #75: sidecar path for the per-repo phase-progress snapshot (outlet B). Threaded from StepLock.progressPath. */
+  progressPath?: string;
+  /** #75: inject phase-event sinks (tests only); production defaults to process.stderr/stdout. */
+  logSink?: { err?: (line: string) => void; out?: (line: string) => void };
 }
 
 /**
@@ -100,7 +107,10 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const dir = ctx.repoDir ?? join(ctx.artifactRoot, `${issue.number}`);
   // #72: the maintainer's model comes from its effective policy (agents.maintainer.model), not just ctx.model.
   const model = effectivePolicy(maintainerSpec, ctx.repoPolicy).model ?? ctx.model;
+  const log = makePhaseLogger(ctx, issue.number);
+  const mt = log.phase("maintainer", { model });
   const actions = await maintainer(ctx.provider, model, input, dir);
+  if (actions === null) mt.fail("no-output"); else mt.done({ actions: actions.length });
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole
   // batch (constitution §2: constrain, don't trust) and treat it as a transient, self-healing failure.
@@ -127,6 +137,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // cheap idempotent GitHub writes. The agent never touches git/gh either way (constitution §3).
   // Each action is fault-isolated: one failing action (e.g. an undefined label) is noise, not a crash
   // that takes down the tick (constitution §10 — the safety layer always holds, even for a bad agent).
+  const sa = log.phase("safe-actions", { count: actions.length });
   for (const a of actions) {
     try {
       if (a.kind === "implement" || a.kind === "rework") {
@@ -142,6 +153,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${(e as Error).message}`);
     }
   }
+  sa.done();
   const entry = deriveEntry(issue, actions, blockedBy, ctx.fails.failCount(ctx.repo, issue.number));
   return actions.length ? { kind: "progressed", entry } : { kind: "noop", entry };
 }

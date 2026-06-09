@@ -67,3 +67,50 @@ test("explainOutcome: each outcome gets a human-readable line; awaiting-👍 is 
     entry: { number: 1, title: "x", priority: "later", rationale: "no valid output" },
   })).toContain("no valid output");
 });
+
+// #75 — phase progress overlay on status
+import { enrichWithProgress, type ProgressSnapshot } from "../src/cli/status.js";
+
+const baseEntry = { repo: "o/r", number: 73, title: "t", state: "active" as const, thesis: undefined, type: undefined };
+
+test("enrichWithProgress attaches phase/attempt/elapsed for the matching live issue", () => {
+  const snap: ProgressSnapshot = { issue: 73, phase: "review", status: "start", since: 1000, pid: 999, attempt: "2/3" };
+  const out = enrichWithProgress(baseEntry, snap, { now: 253000, alive: true });
+  expect(out.progress).toMatchObject({ phase: "review", attempt: "2/3", elapsedMs: 252000, stale: false });
+});
+
+test("enrichWithProgress ignores a snapshot for a different issue", () => {
+  const snap: ProgressSnapshot = { issue: 99, phase: "patch", status: "start", since: 0, pid: 999 };
+  expect(enrichWithProgress(baseEntry, snap, { now: 1000, alive: true }).progress).toBeUndefined();
+});
+
+test("enrichWithProgress is a no-op when there is no snapshot", () => {
+  expect(enrichWithProgress(baseEntry, null, { now: 1000, alive: true }).progress).toBeUndefined();
+});
+
+test("dead pid marks progress stale; a fail snapshot carries the reason (tombstone)", () => {
+  const snap: ProgressSnapshot = { issue: 73, phase: "patch", status: "fail", since: 0, pid: 999, reason: "timeout" };
+  const out = enrichWithProgress(baseEntry, snap, { now: 5000, alive: false });
+  expect(out.progress).toMatchObject({ phase: "patch", stale: true, reason: "timeout" });
+});
+
+test("formatStatus appends live phase progress with humanized elapsed", () => {
+  const entry = enrichWithProgress(baseEntry, { issue: 73, phase: "review", status: "start", since: 1000, pid: 999, attempt: "2/3" }, { now: 253000, alive: true });
+  expect(formatStatus([entry])).toContain("phase=review attempt=2/3 elapsed=4m12s");
+});
+
+test("formatStatus marks a stale tombstone", () => {
+  const entry = enrichWithProgress(baseEntry, { issue: 73, phase: "patch", status: "fail", since: 0, pid: 999, reason: "timeout" }, { now: 5000, alive: false });
+  expect(formatStatus([entry])).toContain("phase=patch");
+  expect(formatStatus([entry])).toContain("stale");
+});
+
+test("a finished run's leftover (done + dead pid) is not shown as in-progress", () => {
+  const snap: ProgressSnapshot = { issue: 73, phase: "pr", status: "done", since: 0, pid: 999 };
+  expect(enrichWithProgress(baseEntry, snap, { now: 5000, alive: false }).progress).toBeUndefined();
+});
+
+test("a crash mid-phase (start + dead pid) is shown stale", () => {
+  const snap: ProgressSnapshot = { issue: 73, phase: "patch", status: "start", since: 0, pid: 999 };
+  expect(enrichWithProgress(baseEntry, snap, { now: 5000, alive: false }).progress).toMatchObject({ phase: "patch", stale: true });
+});

@@ -5,7 +5,7 @@ import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { StepLock, RepoLockError } from "../src/config/step-lock.js";
+import { StepLock, RepoLockError, isAlive } from "../src/config/step-lock.js";
 
 function tmpLock() {
   const dir = mkdtempSync(join(tmpdir(), "monastery-lock-"));
@@ -293,3 +293,14 @@ test("SIGTERM releases the held lock end-to-end (a real child process is signall
 
   rmSync(dir, { recursive: true, force: true });
 }, 20000);
+
+test("progressPath returns the sidecar path next to the lock", () => {
+  const { lock, dir } = tmpLock();
+  expect(lock.progressPath("owner/repo")).toBe(join(dir, "repos", "owner__repo", "step.progress"));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("isAlive is true for this process and false for a definitely-dead pid", () => {
+  expect(isAlive(process.pid)).toBe(true);
+  expect(isAlive(2147483646)).toBe(false); // pid out of range -> EINVAL -> not alive
+});

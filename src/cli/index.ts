@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Store } from "../config/store.js";
-import { StepLock, RepoLockError } from "../config/step-lock.js";
+import { StepLock, RepoLockError, isAlive } from "../config/step-lock.js";
 import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { ClaudeCodeProvider } from "../provider/claude-code.js";
@@ -15,7 +15,7 @@ import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
 import type { ReconcileResult } from "../types.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
-import { formatStatus, toStatusEntry, explainOutcome, type StatusEntry } from "./status.js";
+import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, type StatusEntry } from "./status.js";
 import { formatBacklog, formatPending, type PendingItem } from "./backlog.js";
 import type { BacklogSnapshot } from "../types.js";
 
@@ -54,10 +54,17 @@ async function main(): Promise<void> {
   if (args.cmd === "status") {
     const repos = args.repo ? [args.repo] : store.listRepos();
     const gh = new GhAdapter();
+    const lock = new StepLock(join(homedir(), ".monastery"));
+    const now = Date.now();
     const allEntries: StatusEntry[] = [];
     for (const repo of repos) {
+      // #75: overlay the per-repo phase-progress snapshot onto the issue being stepped right now.
+      const snap = readProgress(lock.progressPath(repo));
       const issues = await gh.listOpenIssues(repo, 0);
-      allEntries.push(...issues.map((i) => toStatusEntry(repo, i)));
+      for (const i of issues) {
+        const entry = toStatusEntry(repo, i);
+        allEntries.push(snap ? enrichWithProgress(entry, snap, { now, alive: isAlive(snap.pid) }) : entry);
+      }
     }
     console.log(args.json ? JSON.stringify(allEntries, null, 2) : formatStatus(allEntries));
     return;
@@ -96,28 +103,35 @@ async function main(): Promise<void> {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
         const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
-        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
+        // #75: thread the json flag (outlet A machine stream) and the per-repo progress sidecar path
+        // (outlet B) so PhaseLogger emits NDJSON to stdout and overwrites the snapshot `status` reads.
+        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now(), json: args.json, progressPath: stepLock.progressPath(repo) };
         if (args.issue) {
           // #108: a single-issue run gets the same read-only code checkout as a reconcile tick, so the
           // maintainer can verify root cause from source here too (parity between the two entry points).
           const out = await withReadOnlyCheckout(ctx, (c) => issueStep(c, Number(args.issue)));
-          console.log(`${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`);
+          // #75: in json mode stdout is the NDJSON event stream; the human summary goes to stderr.
+          const line = `${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`;
+          if (args.json) console.error(line); else console.log(line);
         } else {
           results.push(await reconcile(ctx));
         }
         if (args.dryRun) {
           const dry = gh as DryRunAdapter;
+          // #75: keep stdout a clean NDJSON stream in json mode — dry-run's human lines go to stderr there.
+          const emit = (s: string) => (args.json ? console.error(s) : console.log(s));
           if (dry.actions.length === 0) {
-            console.log(`[dry-run] ${repo}: no writes would occur`);
+            emit(`[dry-run] ${repo}: no writes would occur`);
           } else {
             for (const a of dry.actions) {
-              console.log(`[dry-run] ${a.op}(${JSON.stringify(a.args)})`);
+              emit(`[dry-run] ${a.op}(${JSON.stringify(a.args)})`);
             }
           }
         }
       },
     });
-    if (!args.issue) console.log(args.json ? JSON.stringify(results, null, 2) : summarize(results));
+    // #75 AC#2: stdout is the NDJSON event stream; the batch summary is its final {type:"summary"} event.
+    if (!args.issue) console.log(args.json ? JSON.stringify({ type: "summary", results }) : summarize(results));
     if (exitCode !== 0) process.exit(exitCode);
     return;
   }

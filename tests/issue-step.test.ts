@@ -643,3 +643,17 @@ test("#108 withReadOnlyCheckout degrades to text-only (no repoDir) when the clon
   expect(hadDir).toBe(false);                                // text-only fallback, fn still ran
   expect(ws.cleaned).toHaveLength(0);                        // nothing to clean
 });
+
+// #75 — phase-level observability: active() emits maintainer + safe-actions boundaries.
+test("#75 active issue emits maintainer and safe-actions phase boundaries", async () => {
+  const gh = ghWith({ number: 5, title: "x", body: "y", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "relabel", num: 5, add: ["type:bug"], remove: [] }]));
+  const lines: string[] = [];
+  const c = ctxWith(gh, provider);
+  c.logSink = { err: (l) => lines.push(l) };
+  await issueStep(c, 5);
+  const starts = lines.filter((l) => l.includes(":start")).map((l) => l.match(/ ([\w:-]+):start/)![1]);
+  expect(starts).toContain("maintainer");
+  expect(starts).toContain("safe-actions");
+  expect(lines.some((l) => l.includes("maintainer:done"))).toBe(true);
+});
