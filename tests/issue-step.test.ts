@@ -323,6 +323,58 @@ test("#88: a 👍 made AFTER the gate was opened approves it (fresh reaction)", 
   expect(gh.prs).toHaveLength(1);
 });
 
+// --- #124-style inconsistent gates: every half-written gate state must self-repair from GitHub facts. ---
+
+test("#124 regression: an approval comment without needs-approval is still consumed when 👍'd", async () => {
+  const gh = ghWith({ number: 124, title: "fix it", body: "broken", labels: [], state: "open" });
+  await gh.postComment("o/r", 124,
+    "<!--monastery-state\nprotocol: approval\naction: implement\nspec: 0\n-->\n⏳ **NEEDS YOUR APPROVAL**\n\n## Plan");
+  gh.commentReactions["0"] = ["+1"];
+  const c: StepCtx = {
+    ...ctxWith(gh, new FakeProvider(actionsJson([]))),
+    ws: new FakeWorkspace({ diff: "patch", tests: true }),
+    review: async () => ({ findings: [] }),
+  };
+
+  const out = await issueStep(c, 124);
+
+  expect(out.kind).toBe("progressed");
+  expect(gh.prs).toHaveLength(1);
+  expect((c.provider as FakeProvider).calls[0].context).toContain("Fix issue #124"); // shell routed to patcher, not maintainer guesswork
+});
+
+test("#124 mirror: needs-approval without an approval comment is repaired back to active", async () => {
+  const gh = ghWith({ number: 125, title: "fix it", body: "broken", labels: [NEEDS_APPROVAL], state: "open" });
+
+  const out = await issueStep(ctxWith(gh, new FakeProvider(actionsJson([]))), 125);
+
+  expect(out.kind).toBe("progressed");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL);
+  expect(gh.panels[125]).toContain("protocol: note");
+});
+
+test("#124 sibling: a 👎 gate ensures the declined control label before terminalizing", async () => {
+  const gh = ghWith({ number: 126, title: "fix it", body: "broken", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 126, "implement", "## Plan");
+  gh.commentReactions["0"] = ["-1"];
+  const addLabel = gh.addLabel.bind(gh);
+  gh.addLabel = async (repo, num, label) => {
+    if (label === DECLINED && !gh.ensuredLabels.some((l) => l.name === DECLINED)) {
+      throw new Error("'monastery:declined' not found");
+    }
+    await addLabel(repo, num, label);
+  };
+
+  const out = await issueStep(ctxWith(gh, new FakeProvider(actionsJson([]))), 126);
+
+  expect(out.kind).toBe("done");
+  expect(gh.ensuredLabels.some((l) => l.name === DECLINED)).toBe(true);
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(DECLINED);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL);
+});
+
 // --- #100: an approved implement feeds the ENDORSED spec (not a stale issue body) to the patcher ---
 
 test("#100: approved implement feeds the endorsed currentSpec, not the stale issue body, to the patcher", async () => {

@@ -7,11 +7,11 @@ export interface Endorsement { version: number; by: string }
 export type Comment = { id: string; body: string; author: string };
 
 const SPEC_RE = /<!--monastery-spec version=(\d+) parties=([^>]*?)-->\n?([\s\S]*)/;
-const ENDORSE_RE = /<!--monastery-endorse version=(\d+)-->/;
+const ENDORSE_RE = /<!--monastery-endorse version=(\d+)(?: source=shell)?-->/;
 
 export const SPEC_MARKER = (version: number, parties: string[]): string =>
   `<!--monastery-spec version=${version} parties=${parties.join(",")}-->`;
-export const ENDORSE_MARKER = (version: number): string => `<!--monastery-endorse version=${version}-->`;
+export const ENDORSE_MARKER = (version: number): string => `<!--monastery-endorse version=${version} source=shell-->`;
 
 /** All spec revisions found in the comments (append-only; each is one version). */
 export function parseSpecs(comments: Comment[]): Spec[] {

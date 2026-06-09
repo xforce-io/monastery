@@ -2,6 +2,7 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
 import { gatherMaintainerContext } from "../src/engine/context.js";
+import { executeSafe } from "../src/shell/actions.js";
 import type { Issue } from "../src/types.js";
 
 test("gatherMaintainerContext assembles thesis + comments + pr + deps + self + consensus from GitHub", async () => {
@@ -49,6 +50,19 @@ test("#92: a self-endorse COMMENT does NOT reach consensus — only a 👍 react
   // NO 👍 reaction on the spec comment.
   const input = await gatherMaintainerContext(gh, "o/r", issue);
   expect(input.consensus?.reached).toBe(false); // self-endorse comment doesn't count; needs a real 👍
+});
+
+test("regression: an executed endorse action is visible to consensus", async () => {
+  const issue: Issue = { number: 6, title: "x", body: "y", labels: [], state: "open" };
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  gh.selfLogin = "monastery-bot";
+  await executeSafe(gh, "o/r", { kind: "spec", num: 6, body: "plan", parties: ["monastery-bot"] });
+  await executeSafe(gh, "o/r", { kind: "endorse", num: 6, version: 1 });
+
+  const input = await gatherMaintainerContext(gh, "o/r", issue);
+
+  expect(input.consensus?.endorsedCurrent).toContain("monastery-bot");
+  expect(input.consensus?.reached).toBe(true);
 });
 
 test("gatherMaintainerContext surfaces the backlog (other open issues, summarized, excluding self)", async () => {

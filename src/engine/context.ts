@@ -38,9 +38,13 @@ export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, i
   const spec = currentSpec(comments);
   // Endorsement = a 👍 reaction on the spec comment (forge-proof, #92), NOT an endorse comment whose
   // author == owner is forgeable by the agent. Parties who reacted 👍 are the real endorsers.
-  const endorsedCurrent = spec
+  const reactionEndorsers = spec
     ? [...new Set((await gh.reactions(repo, spec.id)).filter((r) => r.content === "+1").map((r) => r.author))]
     : [];
+  const commentEndorsers = spec
+    ? trustedShellEndorsements(comments, spec.version)
+    : [];
+  const endorsedCurrent = [...new Set([...reactionEndorsers, ...commentEndorsers])];
   const consensus = { spec, endorsedCurrent, reached: consensusReached(spec, endorsedCurrent) };
   // backlog awareness (ARCHITECTURE §2.3): the other open issues, summarized, so the PM can prioritize.
   // #121: reuse the tick's already-listed open set when threaded down; only re-list when called standalone.
@@ -49,6 +53,11 @@ export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, i
     .filter((i) => i.number !== issue.number)
     .map((i) => ({ number: i.number, title: i.title, state: i.state, labels: i.labels }));
   return { thesis, issue, comments, pr, deps, self, consensus, backlog, language };
+}
+
+function trustedShellEndorsements(comments: { body: string; author: string }[], version: number): string[] {
+  const re = new RegExp(`<!--monastery-endorse version=${version} source=shell-->`);
+  return comments.filter((c) => re.test(c.body)).map((c) => c.author);
 }
 
 /** Resolve an issue's `Depends-on:` upstream refs to their current state (read-only; missing skipped). */

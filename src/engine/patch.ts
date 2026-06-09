@@ -138,6 +138,13 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   }
   const prNum = details.number;
 
+  // If a prior run pushed the rework but failed while writing the PR-thread round marker, it leaves this
+  // issue-side recovery marker. Treat that as converged so the same feedback is not patched/pushed again.
+  const issueComments = await ctx.gh.listComments(ctx.repo, issue.number);
+  if (issueComments.some((c) => c.body.includes(REWORK_MARKER) && c.body.includes("committed=true"))) {
+    return { kind: "progressed", note: details.url };
+  }
+
   // Guard 2: there must be actual human feedback to act on (rework is feedback-driven, never self-initiated).
   const humanComments = (await ctx.gh.listPrComments(ctx.repo, prNum)).filter(isHumanComment);
   const humanReviews = (await ctx.gh.listPrReviews(ctx.repo, prNum)).filter((rv) => isHumanComment({ body: rv.body }));
@@ -174,8 +181,13 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     await ctx.ws.commitPush(dir, branch, `fix: rework #${issue.number} (round ${round})`);
 
     const changes = r.authorSummary ? `\n\n## 本轮改动\n${r.authorSummary}` : "";
-    await ctx.gh.postComment(ctx.repo, prNum,
-      `${REWORK_MARKER} round=${round}-->\n🔁 **rework 第 ${round} 轮**（按人类反馈更新本 PR）${changes}\n\n${reviewSummary(r)}`);
+    try {
+      await ctx.gh.postComment(ctx.repo, prNum,
+        `${REWORK_MARKER} round=${round}-->\n🔁 **rework 第 ${round} 轮**（按人类反馈更新本 PR）${changes}\n\n${reviewSummary(r)}`);
+    } catch (e) {
+      await panel(`${REWORK_MARKER} round=${round} committed=true-->\n⚠️ rework 第 ${round} 轮已推送，但 PR 线程总结写入失败：${(e as Error).message}`);
+      throw e;
+    }
     pr.done({ round });
     return { kind: "progressed", note: details.url };
   } finally {

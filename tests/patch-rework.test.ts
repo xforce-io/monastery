@@ -51,6 +51,30 @@ test("happy path: checks out the existing branch, reworks from feedback, updates
   expect(ws.cleaned).toHaveLength(1);
 });
 
+test("regression: rework push succeeds but round comment fails -> next tick does NOT rework again", async () => {
+  const gh = reworkable();
+  const postComment = gh.postComment.bind(gh);
+  let failRoundComment = true;
+  gh.postComment = async (repo, num, body) => {
+    if (failRoundComment && body.includes("<!--monastery-rework")) {
+      failRoundComment = false;
+      throw new Error("comment write failed after push");
+    }
+    await postComment(repo, num, body);
+  };
+  const ws = new FakeWorkspace({ diff: "patch", tests: true });
+  const c = ctx(gh, ws, async () => clean);
+
+  await expect(runRework(c, issue)).rejects.toThrow(/comment write failed/);
+  expect(ws.committed).toHaveLength(1); // the branch was already pushed
+
+  const out = await runRework(c, issue);
+
+  expect(out.kind).toBe("progressed");
+  expect(ws.committed).toHaveLength(1);   // no second patch/push for the same feedback
+  expect(ws.checkedOut).toHaveLength(1);  // no second checkout either
+});
+
 test("no open draft PR for the issue → nothing to rework: panel + noop, no checkout", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] }); // no PR details
   const ws = new FakeWorkspace({ diff: "patch", tests: true });

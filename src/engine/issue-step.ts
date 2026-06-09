@@ -9,7 +9,7 @@ import type { Issue, Outcome } from "../types.js";
 import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
 import { maintainer, maintainerSpec } from "../agents/maintainer.js";
 import { effectivePolicy } from "../agents/spec.js";
-import { executeSafe, doClose, proposeGate, type GatedKind } from "../shell/actions.js";
+import { executeSafe, doClose, proposeGate, ensureControlLabel, type GatedKind } from "../shell/actions.js";
 import type { FailTracker, RepoPolicy, BacklogWriter } from "../config/store.js";
 import { deriveEntry } from "./backlog.js";
 import type { Workspace } from "../workspace/workspace.js";
@@ -91,6 +91,17 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   if (!issue) return { kind: "noop" };                       // closed = terminal (left the open list)
   if (issue.labels.includes(DECLINED)) return { kind: "noop" }; // terminal
   if (issue.labels.includes(NEEDS_APPROVAL)) return awaitingGate(ctx, issue); // awaiting-gate (no agent)
+  // #124 repair: an earlier gate-open may have posted the approval comment but failed before the routing
+  // label landed. The approval comment is still a shell-owned, GitHub-observable gate, so route it here
+  // instead of letting active/maintainer treat it as an ordinary marked comment forever.
+  const comments = await ctx.gh.listComments(ctx.repo, issue.number);
+  const gate = latestApprovalGate(comments);
+  const latestNoteAt = Math.max(0, ...comments.filter((c) => c.body.includes("protocol: note")).map((c) => c.updatedAt));
+  if (gate && gate.updatedAt > latestNoteAt) {
+    await ensureControlLabel(ctx.gh, ctx.repo, NEEDS_APPROVAL);
+    await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+    return awaitingGate(ctx, { ...issue, labels: [...issue.labels, NEEDS_APPROVAL] });
+  }
   return active(ctx, issue);                                  // active
 }
 
@@ -166,10 +177,12 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     number: issue.number, title: issue.title, priority: "parked" as const, rationale: "awaiting human approval",
   };
   const comments = await ctx.gh.listComments(ctx.repo, issue.number);
-  const gate = comments
-    .filter((c) => c.body.includes(APPROVAL_MARK))
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
-  if (!gate) return { kind: "waiting", on: "human", entry: parked }; // needs-approval but no approval comment: inconsistent, wait
+  const gate = latestApprovalGate(comments);
+  if (!gate) {
+    // Mirror of #124: the routing label exists but the approval comment is missing. There is no concrete
+    // proposal for a human to approve, so waiting would park forever (and `pending` cannot link anywhere).
+    return demoteGate(ctx, issue, "⟳ approval gate was inconsistent（缺少审批评论），已退回重新评估。");
+  }
 
   const reactions = await ctx.gh.reactions(ctx.repo, gate.id);
   if (reactions.some((r) => r.content === "-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
@@ -254,8 +267,15 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   return { kind: "waiting", on: "human", entry: parked };
 }
 
+function latestApprovalGate<T extends { body: string; updatedAt: number }>(comments: T[]): T | undefined {
+  return comments
+    .filter((c) => c.body.includes(APPROVAL_MARK))
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+}
+
 /** Stamp the terminal `declined` state, clear the approval ask, record why. Idempotent. */
 async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Promise<Outcome> {
+  await ensureControlLabel(ctx.gh, ctx.repo, DECLINED);
   await ctx.gh.addLabel(ctx.repo, issue.number, DECLINED);
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
   await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${note}`);
