@@ -17,7 +17,19 @@ import type { ReconcileResult } from "../types.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, type StatusEntry } from "./status.js";
 import { formatBacklog, formatPending, type PendingItem } from "./backlog.js";
+import { wantsHelp, wantsVersion, usage, readPackageVersion } from "./help.js";
+import { preflight, formatPreflightErrors, type Need } from "./preflight.js";
+import { dirname } from "node:path";
 import type { BacklogSnapshot } from "../types.js";
+
+// Which external tools each command needs, so preflight runs only when it matters
+// (offline commands like `repos`/`backlog` skip it). step is the only one needing claude.
+const NEEDS: Record<string, Need> = {
+  init: { gh: true, claude: false },
+  status: { gh: true, claude: false },
+  pending: { gh: true, claude: false },
+  step: { gh: true, claude: true },
+};
 
 export interface ParsedArgs {
   cmd: string; sub?: string; repo?: string; model?: string; issue?: string; dryRun?: boolean; json?: boolean; forceStaleLock?: boolean;
@@ -34,7 +46,23 @@ export function parseArgs(argv: string[]): ParsedArgs {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+
+  // Help/version are pure output and must short-circuit BEFORE dispatch — notably so
+  // `monastery step --help` prints usage instead of running a full reconcile (#70).
+  if (wantsHelp(argv)) { console.log(usage()); return; }
+  if (wantsVersion(argv)) { console.log(readPackageVersion(dirname(fileURLToPath(import.meta.url)))); return; }
+
+  const args = parseArgs(argv);
+
+  // Preflight: fail fast with actionable guidance when a required external tool is missing,
+  // instead of a raw execa spawn error deep in a command (#70 D3).
+  const need = NEEDS[args.cmd];
+  if (need) {
+    const pf = await preflight(need);
+    if (!pf.ok) { console.error(formatPreflightErrors(pf.errors)); process.exit(1); }
+  }
+
   const store = new Store(join(homedir(), ".monastery"));
 
   if (args.cmd === "repos") {

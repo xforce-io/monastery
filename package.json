@@ -1,14 +1,46 @@
 {
   "name": "monastery",
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "An AI repo maintainer — a per-repo reconciler that treats GitHub as the single source of truth and runs one governed agent per tick.",
+  "keywords": [
+    "ai",
+    "agent",
+    "github",
+    "automation",
+    "maintainer",
+    "reconciler",
+    "cli",
+    "claude"
+  ],
+  "homepage": "https://github.com/xforce-io/monastery#readme",
+  "bugs": {
+    "url": "https://github.com/xforce-io/monastery/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xforce-io/monastery.git"
+  },
+  "license": "MIT",
+  "author": "xforce-io",
   "type": "module",
   "bin": {
     "monastery": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepare": "tsup",
+    "prepublishOnly": "npm run test && npm run build"
   },
   "dependencies": {
     "execa": "^9.5.1",
