@@ -1,6 +1,6 @@
 // src/workspace/git-workspace.ts
 import { execa } from "execa";
-import { appendFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Workspace } from "./workspace.js";
@@ -54,11 +54,37 @@ export class GitWorkspace implements Workspace {
   }
 
   async runTests(dir: string): Promise<boolean | null> {
-    if (!existsSync(join(dir, "package.json"))) return null;
-    const ci = await this.run("npm", ["ci"], { cwd: dir });
-    if (ci.exitCode !== 0) await this.run("npm", ["install"], { cwd: dir }); // no lockfile / out of sync
-    const t = await this.run("npm", ["test"], { cwd: dir });
-    return t.exitCode === 0;
+    if (existsSync(join(dir, "package.json"))) {
+      const ci = await this.run("npm", ["ci"], { cwd: dir });
+      if (ci.exitCode !== 0) await this.run("npm", ["install"], { cwd: dir }); // no lockfile / out of sync
+      const t = await this.run("npm", ["test"], { cwd: dir });
+      return t.exitCode === 0;
+    }
+    if (existsSync(join(dir, "pyproject.toml")) || existsSync(join(dir, "setup.py"))) {
+      const r = await this.run("python", ["-m", "pytest"], { cwd: dir });
+      if (r.exitCode !== 0) {
+        const fallback = await this.run("pytest", [], { cwd: dir });
+        return fallback.exitCode === 0;
+      }
+      return true;
+    }
+    if (existsSync(join(dir, "go.mod"))) {
+      const r = await this.run("go", ["test", "./..."], { cwd: dir });
+      return r.exitCode === 0;
+    }
+    if (existsSync(join(dir, "Cargo.toml"))) {
+      const r = await this.run("cargo", ["test"], { cwd: dir });
+      return r.exitCode === 0;
+    }
+    const makefile = join(dir, "Makefile");
+    if (existsSync(makefile)) {
+      const content = readFileSync(makefile, "utf8");
+      if (/^test[ \t]*:/m.test(content)) {
+        const r = await this.run("make", ["test"], { cwd: dir });
+        return r.exitCode === 0;
+      }
+    }
+    return null;
   }
 
   async stagedDiff(dir: string): Promise<string> {

@@ -1,6 +1,6 @@
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
 import { GitWorkspace, type Runner } from "../src/workspace/git-workspace.js";
 
@@ -46,6 +46,140 @@ test("runTests returns null when there is no package.json", async () => {
   const ws = new GitWorkspace(run);
   // a path that surely has no package.json
   expect(await ws.runTests("/nonexistent-dir-xyz")).toBeNull();
+});
+
+// #129 multi-ecosystem test detection
+test("#129 runTests runs npm ci + npm test when package.json present", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "package.json"), "{}");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(true);
+    expect(calls).toContainEqual(["npm", "ci"]);
+    expect(calls).toContainEqual(["npm", "test"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests runs python -m pytest when pyproject.toml present", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "pyproject.toml"), "[build-system]\n");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(true);
+    expect(calls).toEqual([["python", "-m", "pytest"]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests runs python -m pytest when setup.py present", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "setup.py"), "from setuptools import setup\n");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(true);
+    expect(calls).toEqual([["python", "-m", "pytest"]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests falls back to pytest when python -m pytest exits non-zero", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "pyproject.toml"), "[build-system]\n");
+  try {
+    const calls: string[][] = [];
+    const run: Runner = async (file, args) => {
+      calls.push([file, ...args]);
+      if (file === "python" && args[0] === "-m") return { stdout: "", exitCode: 1 };
+      return { stdout: "", exitCode: 0 };
+    };
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(true);
+    expect(calls).toEqual([["python", "-m", "pytest"], ["pytest"]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests runs go test ./... when go.mod present", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "go.mod"), "module example.com/m\n");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(true);
+    expect(calls).toEqual([["go", "test", "./..."]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests runs cargo test when Cargo.toml present", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "Cargo.toml"), "[package]\nname = \"myapp\"\n");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(true);
+    expect(calls).toEqual([["cargo", "test"]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests runs make test when Makefile has test: target", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "Makefile"), "build:\n\techo build\ntest:\n\techo test\n");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(true);
+    expect(calls).toEqual([["make", "test"]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests returns null when Makefile has no test: target", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "Makefile"), "build:\n\techo build\n");
+  try {
+    const { run } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBeNull();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests returns false when the detected test runner exits non-zero", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "go.mod"), "module example.com/m\n");
+  try {
+    const run: Runner = async () => ({ stdout: "", exitCode: 1 });
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 runTests returns null when no ecosystem marker found", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "README.md"), "# hello\n");
+  try {
+    const { run } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir)).toBeNull();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // #87 sandbox isolation: the clone() sandbox must live under os.tmpdir(), never the
