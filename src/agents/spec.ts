@@ -132,6 +132,7 @@ export async function runStructuredAgent<In, Out>(
         model: ctx.model,
         schema,
         artifact: spec.artifact,
+        timeoutMs: spec.policy.timeoutMs, // #75 AC#4: thread the per-agent timeout (was dead config)
       });
     } catch (e) {
       throw new StructuredAgentError({

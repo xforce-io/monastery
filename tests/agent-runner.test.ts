@@ -277,3 +277,11 @@ test("does not hide an invalid artifact by falling back to stdout after repair i
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("#75 passes the spec's policy.timeoutMs to provider.run", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "out.json": '{"value":4}' });
+  await runStructuredAgent({ ...spec, policy: { timeoutMs: 5000 } }, { n: 2 }, rt(provider, dir));
+  expect(provider.calls[0].timeoutMs).toBe(5000);
+  rmSync(dir, { recursive: true, force: true });
+});

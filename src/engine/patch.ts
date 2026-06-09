@@ -10,6 +10,7 @@ import { effectivePolicy } from "../agents/spec.js";
 import { isHumanComment } from "../shell/markers.js";
 import type { Spec } from "../shell/consensus.js";
 import { languageDirective, looksOffLanguage } from "../shell/language.js";
+import { makePhaseLogger, type PhaseLogger } from "../phase-logger.js";
 
 // Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
@@ -79,21 +80,25 @@ function defaultReview(ctx: StepCtx): ReviewFn {
  */
 export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | null): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
+  const log = makePhaseLogger(ctx, issue.number);
 
   // Converge: an open PR already exists for this branch -> don't re-run the patcher (idempotent, PROTOCOL §7).
   // (Updating an OPEN PR from human feedback is rework's job, #79 — a distinct, gated action.)
   const existingPr = await ctx.gh.findPrForBranch(ctx.repo, branch);
   if (existingPr) return { kind: "progressed", note: existingPr };
 
+  const clone = log.phase("clone");
   const dir = await ctx.ws.clone(ctx.repo, branch);
+  clone.done();
   try {
     // #100: the endorsed spec (decision A) fully supersedes the issue body — the body may be stale (the very
     // failure in #99). No spec -> fall back to the body (plain-body issues are unchanged).
     const task = spec ? `endorsed spec v${spec.version}:\n\n${spec.body}` : issue.body;
     const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${task}`;
-    const r = await patchAndReview(ctx, dir, issue, context);
+    const r = await patchAndReview(ctx, dir, issue, context, log);
     if (!r) return { kind: "noop" }; // bailed (no changes / review never converged) — panel already posted
 
+    const pr = log.phase("pr");
     await ctx.ws.commitPush(dir, branch, `fix: address #${issue.number}`);
 
     const url = await ctx.gh.openDraftPR(ctx.repo, branch, `monastery: fix #${issue.number}`, prBody(issue, r));
@@ -102,6 +107,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     if (prNum !== null) {
       await ctx.gh.postComment(ctx.repo, prNum, `${PATCH_NOTE_MARKER}\n${reviewSummary(r)}`);
     }
+    pr.done({ url });
     return { kind: "progressed", note: url };
   } finally {
     await ctx.ws.cleanup(dir);
@@ -145,8 +151,11 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     await panel(`⚠️ rework 已达 ${REWORK_BUDGET} 轮上限——needs a human。`); return { kind: "noop" };
   }
   const round = priorRounds + 1;
+  const log = makePhaseLogger(ctx, issue.number);
 
+  const clone = log.phase("clone");
   const dir = await ctx.ws.checkout(ctx.repo, branch); // EXISTING branch, in place
+  clone.done();
   try {
     const feedback = [
       ...humanComments.map((c) => `<feedback author="${c.author}">\n${c.body}\n</feedback>`),
@@ -158,14 +167,16 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       `\ncurrent PR body:\n${details.body}`,
       `\nHuman feedback to address — this is WHY you are reworking; resolve every point:\n${feedback}`,
     ].join("\n");
-    const r = await patchAndReview(ctx, dir, issue, context);
+    const r = await patchAndReview(ctx, dir, issue, context, log);
     if (!r) return { kind: "noop" }; // bailed — panel already posted
 
+    const pr = log.phase("pr");
     await ctx.ws.commitPush(dir, branch, `fix: rework #${issue.number} (round ${round})`);
 
     const changes = r.authorSummary ? `\n\n## 本轮改动\n${r.authorSummary}` : "";
     await ctx.gh.postComment(ctx.repo, prNum,
       `${REWORK_MARKER} round=${round}-->\n🔁 **rework 第 ${round} 轮**（按人类反馈更新本 PR）${changes}\n\n${reviewSummary(r)}`);
+    pr.done({ round });
     return { kind: "progressed", note: details.url };
   } finally {
     await ctx.ws.cleanup(dir);
@@ -187,13 +198,15 @@ interface PatchResult {
  * bailed (no changes after the fail threshold, or review never converged) — in which case the human-facing
  * panel is already posted and the caller should return { kind: "noop" }.
  */
-async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskContext: string): Promise<PatchResult | null> {
+async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskContext: string, log: PhaseLogger): Promise<PatchResult | null> {
   const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
   const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
   const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
   const patcherModel = policy.model ?? ctx.model; // #72: agents.patcher.model takes effect, not just ctx.model
 
-  const implRes = await ctx.provider.run({ persona: withLanguage(PERSONA, ctx.language), context: taskContext, artifactDir: dir, model: patcherModel });
+  const patch = log.phase("patch", { model: patcherModel });
+  const implRes = await ctx.provider.run({ persona: withLanguage(PERSONA, ctx.language), context: taskContext, artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
+  patch.done();
   // The patcher's stdout IS the author summary (what+why). It runs in the worktree, so it can't write a file
   // (that would land in the diff) — we capture resultText and render it into the PR body / round summary.
   let authorSummary = implRes.resultText?.trim() || "";
@@ -212,7 +225,13 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   }
 
   ctx.fails.clearFail(ctx.repo, issue.number);
-  let tests = await ctx.ws.runTests(dir);
+  const runTests = async (): Promise<boolean | null> => {
+    const t = log.phase("tests");
+    const r = await ctx.ws.runTests(dir);
+    t.done({ result: r === null ? "none" : String(r) });
+    return r;
+  };
+  let tests = await runTests();
   // re-stage AFTER tests so files the test run regenerates (e.g. package-lock.json from npm install) are committed too
   diff = await ctx.ws.stagedDiff(dir);
 
@@ -222,18 +241,23 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   let lastVerdict: ReviewVerdict | null = null;
   let reviewerFailed = false;
   for (let iter = 1; iter <= REVIEW_MAX_ITERS; iter++) {
+    const attempt = `${iter}/${REVIEW_MAX_ITERS}`;
+    const rev = log.phase("review", { attempt });
     lastVerdict = await review(diff, issue);
-    if (!lastVerdict) { reviewerFailed = true; break; }                 // reviewer failed -> conservative pass
+    if (!lastVerdict) { rev.fail("reviewer-failed"); reviewerFailed = true; break; } // reviewer failed -> conservative pass
     const blocking = lastVerdict.findings.filter((f) => f.severity === "blocking");
-    if (blocking.length === 0) break;                                    // clean -> ship
+    if (blocking.length === 0) { rev.done({ blocking: 0 }); break; }      // clean -> ship
+    rev.done({ blocking: blocking.length });
     if (iter === REVIEW_MAX_ITERS) {                                     // give up -> needs a human, no PR
       await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS));
       return null;
     }
-    const fixRes = await ctx.provider.run({ persona: withLanguage(FIX_PERSONA, ctx.language), context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel });
+    const fix = log.phase("patch:fix", { attempt, model: patcherModel });
+    const fixRes = await ctx.provider.run({ persona: withLanguage(FIX_PERSONA, ctx.language), context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
+    fix.done();
     if (fixRes.resultText?.trim()) { authorSummary = fixRes.resultText.trim(); warnIfOffLanguage(ctx, issue, authorSummary); }   // keep the summary current with the final diff
     fixedTitles.push(...blocking.map((b) => b.title));
-    tests = await ctx.ws.runTests(dir);
+    tests = await runTests();
     diff = await ctx.ws.stagedDiff(dir);
   }
 

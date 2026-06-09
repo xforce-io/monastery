@@ -154,3 +154,33 @@ test("no draft PR is opened without a human-gated path: the PR is always a draft
   // FakeGitHub.openDraftPR records every PR as a draft; the body carries the merge gate
   expect(gh.prs[0].title).toContain("#7");
 });
+
+// #75 — phase-level observability: runImplement emits clone/patch/tests/review/pr boundaries.
+test("#75 runImplement emits clone/patch/tests/review/pr phase boundaries", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const lines: string[] = [];
+  const c = ctx(gh, ws, async () => clean);
+  c.logSink = { err: (l) => lines.push(l) };
+  await runImplement(c, issue);
+  const starts = lines.filter((l) => l.includes(":start")).map((l) => l.match(/ ([\w:]+):start/)![1]);
+  expect(starts).toContain("clone");
+  expect(starts).toContain("patch");
+  expect(starts).toContain("tests");
+  expect(starts).toContain("review");
+  expect(starts).toContain("pr");
+  // every started phase that succeeded prints a matching :done
+  expect(lines.some((l) => l.includes("pr:done"))).toBe(true);
+});
+
+// #75 AC#4 — the per-agent timeoutMs (dead config until now) is threaded into provider.run.
+test("#75 patcher provider.run receives the effective timeoutMs", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const provider = new FakeProvider({});
+  const c = ctx(gh, ws, async () => clean);
+  c.provider = provider;
+  c.repoPolicy = { agents: { patcher: { timeoutMs: 1234 } } };
+  await runImplement(c, issue);
+  expect(provider.calls[0].timeoutMs).toBe(1234);
+});
