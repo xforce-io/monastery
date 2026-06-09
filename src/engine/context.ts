@@ -8,8 +8,10 @@ import { branchName } from "./patch.js";
 import { parseDeps } from "./deps.js";
 import { currentSpec, consensusReached } from "../shell/consensus.js";
 
-/** Gather everything the maintainer needs for one item, from the resource layer. */
-export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, issue: Issue): Promise<MaintainerInput> {
+/** Gather everything the maintainer needs for one item, from the resource layer.
+ *  `language` (#76) is the repo's resolved outward-text language, threaded onto the input so the maintainer
+ *  writes reply/panel/spec/proposal drafts in it; omitted -> no policy block (back-compat). */
+export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, issue: Issue, language?: string): Promise<MaintainerInput> {
   const thesis = await gh.readThesis(repo);
   const comments = await gh.listComments(repo, issue.number);
   // monastery's PR for this issue's branch: gather state + rich context so the agent sees human PR feedback.
@@ -46,7 +48,7 @@ export async function gatherMaintainerContext(gh: GitHubAdapter, repo: string, i
   const backlog = open
     .filter((i) => i.number !== issue.number)
     .map((i) => ({ number: i.number, title: i.title, state: i.state, labels: i.labels }));
-  return { thesis, issue, comments, pr, deps, self, consensus, backlog };
+  return { thesis, issue, comments, pr, deps, self, consensus, backlog, language };
 }
 
 /** Resolve an issue's `Depends-on:` upstream refs to their current state (read-only; missing skipped). */

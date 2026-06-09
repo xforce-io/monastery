@@ -9,10 +9,16 @@ import { patcherSpec } from "../agents/patcher.js";
 import { effectivePolicy } from "../agents/spec.js";
 import { isHumanComment } from "../shell/markers.js";
 import type { Spec } from "../shell/consensus.js";
+import { languageDirective, looksOffLanguage } from "../shell/language.js";
 
 // Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
 const FIX_PERSONA = patcherSpec.fixPersona ?? patcherSpec.persona;
+
+/** #76: prepend the repo's outward-text language directive to a persona; a no-op when no policy is set. */
+function withLanguage(persona: string, language?: string): string {
+  return language ? `${languageDirective(language)}\n\n${persona}` : persona;
+}
 
 const PATCH_NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";
 
@@ -53,7 +59,8 @@ function defaultReview(ctx: StepCtx): ReviewFn {
     try {
       // #72: reviewer model precedence — agents.reviewer.model → legacy ctx.reviewModel (MONASTERY_REVIEW_MODEL) → ctx.model.
       const reviewModel = effectivePolicy(reviewerSpec, ctx.repoPolicy).model ?? ctx.reviewModel ?? ctx.model;
-      return await reviewer(ctx.provider, reviewModel, { diff, issue }, reviewDir);
+      // #76: a review finding can land in a PR comment — give the reviewer the repo's language policy too.
+      return await reviewer(ctx.provider, reviewModel, { diff, issue, language: ctx.language }, reviewDir);
     } finally {
       rmSync(reviewDir, { recursive: true, force: true });
     }
@@ -186,10 +193,11 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
   const patcherModel = policy.model ?? ctx.model; // #72: agents.patcher.model takes effect, not just ctx.model
 
-  const implRes = await ctx.provider.run({ persona: PERSONA, context: taskContext, artifactDir: dir, model: patcherModel });
+  const implRes = await ctx.provider.run({ persona: withLanguage(PERSONA, ctx.language), context: taskContext, artifactDir: dir, model: patcherModel });
   // The patcher's stdout IS the author summary (what+why). It runs in the worktree, so it can't write a file
   // (that would land in the diff) — we capture resultText and render it into the PR body / round summary.
   let authorSummary = implRes.resultText?.trim() || "";
+  warnIfOffLanguage(ctx, issue, authorSummary);
   let diff = await ctx.ws.stagedDiff(dir);
 
   if (!diff.trim()) {
@@ -222,14 +230,26 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
       await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS));
       return null;
     }
-    const fixRes = await ctx.provider.run({ persona: FIX_PERSONA, context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel });
-    if (fixRes.resultText?.trim()) authorSummary = fixRes.resultText.trim();   // keep the summary current with the final diff
+    const fixRes = await ctx.provider.run({ persona: withLanguage(FIX_PERSONA, ctx.language), context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel });
+    if (fixRes.resultText?.trim()) { authorSummary = fixRes.resultText.trim(); warnIfOffLanguage(ctx, issue, authorSummary); }   // keep the summary current with the final diff
     fixedTitles.push(...blocking.map((b) => b.title));
     tests = await ctx.ws.runTests(dir);
     diff = await ctx.ws.stagedDiff(dir);
   }
 
   return { diff, tests, authorSummary, reviewerFailed, fixedTitles, lastVerdict };
+}
+
+/**
+ * #76 enforcement (NON-blocking safety net): the patcher's author summary becomes the PR body, so if it
+ * drifts off the repo's outward-text language, leave a warn trail for the human. We do NOT hard-block or
+ * rewrite — the draft PR is itself the human review gate, and the issue's non-goal is "prevent obvious
+ * drift", not "detect every mixing boundary" (over-eager rewrites risk false positives that lose work).
+ */
+function warnIfOffLanguage(ctx: StepCtx, issue: Issue, summary: string): void {
+  if (ctx.language && looksOffLanguage(summary, ctx.language)) {
+    console.warn(`[monastery] off-language patcher summary ${ctx.repo}#${issue.number}: expected ${ctx.language} — opening the draft PR anyway (human review is the gate).`);
+  }
 }
 
 /** The PR body = the AUTHOR's voice only: 本次改动 + 测试状态 + Closes + diff (the reviewer's voice is a separate comment). */

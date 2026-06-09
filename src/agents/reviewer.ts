@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue } from "../types.js";
 import { runStructuredAgent, type StructuredAgentSpec } from "./spec.js";
+import { languageDirective } from "../shell/language.js";
 
 const FindingSchema = z.object({
   severity: z.enum(["blocking", "advisory"]),
@@ -18,7 +19,7 @@ export type ReviewVerdict = z.infer<typeof ReviewSchema>;
 /** Injectable reviewer: judges a staged diff against the issue. Returns null on missing/invalid output. */
 export type ReviewFn = (diff: string, issue: Issue) => Promise<ReviewVerdict | null>;
 
-export interface ReviewInput { diff: string; issue: Issue }
+export interface ReviewInput { diff: string; issue: Issue; language?: string }
 
 // reviewer = 架构/QA (CONSTITUTION §12): an architect & QA reviewer with judgment criteria, not a linter.
 // The blocking-vs-advisory criteria below are JUDGMENT, not a fixed rulebook — give principles, not steps.
@@ -35,8 +36,10 @@ const PERSONA = [
   "Do not invent work the issue didn't ask for; an empty findings list means it is good to ship.",
 ].join(" ");
 
-function buildContext({ diff, issue }: ReviewInput): string {
+function buildContext({ diff, issue, language }: ReviewInput): string {
   return [
+    // #76: a review finding can surface in a PR comment — write outward text in the policy language.
+    ...(language ? [languageDirective(language)] : []),
     `<issue number="${issue.number}">\ntitle: ${issue.title}\n\n${issue.body}\n</issue>`,
     `<diff>\n${diff}\n</diff>`,
     `Judge the diff. BLOCKING = a correctness bug, a deviation from the issue's design/acceptance, a test that passes but asserts the wrong thing, or a security problem. ADVISORY = style, naming, or simplification nits.`,

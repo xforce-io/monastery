@@ -3,13 +3,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PolicyOverrides } from "../agents/spec.js";
 import type { BacklogSnapshot } from "../types.js";
+import { DEFAULT_LANGUAGE } from "../shell/language.js";
 
 /**
  * Per-repo policy. Non-disposable (lives in config.json). `model` is the repo-wide default model;
  * `agents` overrides individual agents' spec-default policy (the layering: spec default <- per-repo).
+ * `language` is this repo's outward-text language (#76) — overrides the global `defaults.language`.
  */
-export interface RepoPolicy extends PolicyOverrides { model?: string; }
-interface ConfigFile { repos: Record<string, RepoPolicy>; }
+export interface RepoPolicy extends PolicyOverrides { model?: string; language?: string; }
+/** Global defaults applied across repos when a repo doesn't override them. */
+interface ConfigDefaults { language?: string; }
+interface ConfigFile { repos: Record<string, RepoPolicy>; defaults?: ConfigDefaults; }
 
 /** Per-repo disposable cache (rebuildable from GitHub). */
 interface CacheFile { cursor: number; fails: Record<number, number>; }
@@ -32,7 +36,7 @@ function repoSlug(repo: string): string { return repo.replace(/\//g, "__"); }
 
 /**
  * Local layout (see docs/LOCAL-LAYOUT.md):
- *   <root>/config.json                       non-disposable: { repos: { "<o>/<r>": { model } } }
+ *   <root>/config.json                       non-disposable: { defaults?: { language }, repos: { "<o>/<r>": { model, language } } }
  *   <root>/repos/<owner>__<repo>/cache.json  disposable: { cursor, fails } — rebuildable from GitHub
  * Secrets never live here — env/keychain only.
  */
@@ -68,6 +72,12 @@ export class Store implements FailTracker, BacklogWriter {
   repoModel(repo: string): string | undefined { return this.readConfig().repos[repo]?.model; }
   /** The full per-repo policy (model + per-agent overrides), or undefined if the repo isn't configured. */
   repoPolicy(repo: string): RepoPolicy | undefined { return this.readConfig().repos[repo]; }
+
+  /** #76: the resolved outward-text language for a repo — repo policy → global defaults → en-US. */
+  repoLanguage(repo: string): string {
+    const c = this.readConfig();
+    return c.repos[repo]?.language ?? c.defaults?.language ?? DEFAULT_LANGUAGE;
+  }
 
   // --- repos/<slug>/cache.json (disposable) ---
 

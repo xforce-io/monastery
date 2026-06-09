@@ -25,9 +25,11 @@
 
 ```json
 {
+  "defaults": { "language": "zh-CN" },
   "repos": {
     "xforce-io/monastery": {
       "model": "opus",
+      "language": "zh-CN",
       "agents": { "patcher": { "maxIters": 5 }, "maintainer": { "failThreshold": 1 } }
     },
     "owner/other": {}
@@ -37,6 +39,8 @@
 
 - `repos`:key 是 `<owner>/<repo>`,value 是 per-repo policy(`RepoPolicy`)。
 - `model`:仓库级默认模型;缺省时由 CLI 回退(见下)。
+- `language`(可选,#76):该仓**对外 GitHub 文本**(issue 评论 / panel / PR 标题+正文 / spec / proposal 草案)的目标语言。注入到所有产出对外文本的 agent(maintainer / patcher / reviewer);代码 identifier、commit message、branch、既有文件语言**不**翻译。解析:`repos.<repo>.language → defaults.language → "en-US"`。另有一道非阻塞安全网——patcher 的 author summary 明显偏离目标语言时 `console.warn` 留痕,但仍开 draft PR(人审才是闸)。
+- `defaults`(可选):跨仓全局默认。目前仅 `language`,在某仓未配 `language` 时兜底。
 - `agents`(可选):**按 agent 名覆盖各自 spec 默认策略**(`failThreshold`/`maxIters`/`timeoutMs`/`model`)。分层 = **spec 默认 ← per-repo 覆盖**,运行时由 `effectivePolicy(spec, repoPolicy)` 合并(`docs/AGENTS.md`)。不写 `agents` 则全用 spec 默认。
 
 ## `repos/<owner>__<repo>/cache.json`(可丢)

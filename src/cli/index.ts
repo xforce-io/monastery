@@ -96,7 +96,7 @@ async function main(): Promise<void> {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
         const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
-        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
+        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now() };
         if (args.issue) {
           // #108: a single-issue run gets the same read-only code checkout as a reconcile tick, so the
           // maintainer can verify root cause from source here too (parity between the two entry points).

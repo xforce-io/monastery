@@ -28,6 +28,16 @@ test("gatherMaintainerContext assembles thesis + comments + pr + deps + self + c
   expect(input.consensus?.reached).toBe(true); // sole party 👍'd the spec (reaction-based, #92)
 });
 
+test("#76: the resolved language flows onto the maintainer input when supplied", async () => {
+  const issue: Issue = { number: 5, title: "x", body: "y", labels: [], state: "open" };
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const input = await gatherMaintainerContext(gh, "o/r", issue, "zh-CN");
+  expect(input.language).toBe("zh-CN");
+  // omitted -> undefined (back-compat: no policy block downstream)
+  const noLang = await gatherMaintainerContext(gh, "o/r", issue);
+  expect(noLang.language).toBeUndefined();
+});
+
 test("#92: a self-endorse COMMENT does NOT reach consensus — only a 👍 reaction on the spec counts", async () => {
   const issue: Issue = { number: 5, title: "x", body: "y", labels: [], state: "open" };
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
