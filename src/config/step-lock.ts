@@ -8,9 +8,16 @@ import {
   writeSync,
 } from "node:fs";
 import { join } from "node:path";
+import { hostname } from "node:os";
+import { randomUUID } from "node:crypto";
 
 export interface LockData {
   pid: number;
+  // Stable owner identity. pid alone collides across hosts/containers that share
+  // ~/.monastery (NFS, devcontainers, multiple CI runners on one volume); host
+  // disambiguates the machine and token proves "this lock is mine" on release.
+  host: string;
+  token: string;
   repo: string;
   startedAt: string;
   cmd: string;
@@ -100,7 +107,13 @@ export class StepLock {
 
       const ageMs = Date.now() - Date.parse(existing.startedAt);
       const expired = Number.isFinite(ageMs) && ageMs > STALE_LOCK_MS;
-      if (isAlive(existing.pid) && !expired) {
+      // Owner-aware liveness: a cross-host lock's pid is meaningless locally, so
+      // process.kill would check an unrelated pid. Only trust local pid liveness
+      // when the lock is from this host (or a legacy lock with no host, for
+      // backward compat). Otherwise degrade to the age threshold alone.
+      const sameHost = existing.host === undefined || existing.host === hostname();
+      const live = sameHost ? isAlive(existing.pid) && !expired : !expired;
+      if (live) {
         throw new RepoLockError(repo, existing.pid, existing.startedAt);
       }
 
@@ -111,6 +124,8 @@ export class StepLock {
 
     const data: LockData = {
       pid: process.pid,
+      host: hostname(),
+      token: randomUUID(),
       repo,
       startedAt: new Date().toISOString(),
       cmd,
@@ -119,8 +134,34 @@ export class StepLock {
     writeSync(fd, content);
     closeSync(fd);
 
-    return () => {
+    // Safe release: only delete the lock if it is still ours. Re-read and compare
+    // the token before unlinking — if the file is gone or a different owner now
+    // holds it (we were judged stale and displaced), this is a no-op. Prevents the
+    // "A judged stale → B acquires → A's finally deletes B's lock" race.
+    const doRelease = () => {
+      try {
+        const current = JSON.parse(readFileSync(path, "utf8")) as LockData;
+        if (current.token !== data.token) return; // changed hands — not ours to delete
+      } catch {
+        return; // gone or unreadable — nothing of ours to release
+      }
       try { unlinkSync(path); } catch { /* ignore */ }
     };
+
+    // Signal cleanup: SIGINT/SIGTERM bypass try/finally, so without a handler the
+    // lock would leak until the next run's stale check. Release on signal, then
+    // re-raise with the default disposition so the process still terminates.
+    const onSignal = (sig: NodeJS.Signals) => {
+      release();
+      process.kill(process.pid, sig);
+    };
+    const release = () => {
+      process.removeListener("SIGINT", onSignal);
+      process.removeListener("SIGTERM", onSignal);
+      doRelease();
+    };
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+    return release;
   }
 }
