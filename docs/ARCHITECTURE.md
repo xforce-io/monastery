@@ -76,7 +76,7 @@ agent 层      有方法论的角色:读 context → 判断 → 从动作词表�
 | **spec** | 共享验收契约(need+acceptance+approach),👍 背书 | maintainer 著 · 各方背书 | issue body / 评论 |
 | **agent** | maintainer/patcher/reviewer;`AgentSpec={name,role,persona,sandbox,policy}` | — | `src/agents` |
 | **sandbox** | agent 访问权限分级:`artifact-only`/`readonly-clone`/`workspace-clone` | 外壳 | AgentSpec |
-| **provider** | agent 运行后端:claude-code / api | 外壳 | — |
+| **provider** | agent 运行后端:claude-code / codex / api | 外壳 | — |
 | **外壳** | L_repo(`reconcile`)+ L_item(`issueStep`) | — | `src/engine` |
 
 **两轴(外壳约束 agent 的两个维度,宪法 §13)**

@@ -19,12 +19,15 @@ import { gatherMaintainerContext } from "./context.js";
 import { currentSpec } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
 import { makePhaseLogger } from "../phase-logger.js";
+import type { ModelLevels } from "../provider/models.js";
 
 export interface StepCtx {
   repo: string;
   gh: GitHubAdapter;
   provider: AgentProvider;
   model: string;
+  /** Provider-resolved model levels. Omitted in older tests/callers; `model` remains the fallback. */
+  modelLevels?: ModelLevels;
   artifactRoot: string;
   fails: FailTracker;
   ws: Workspace;
@@ -119,7 +122,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).
   const dir = ctx.repoDir ?? join(ctx.artifactRoot, `${issue.number}`);
   // #72: the maintainer's model comes from its effective policy (agents.maintainer.model), not just ctx.model.
-  const model = effectivePolicy(maintainerSpec, ctx.repoPolicy).model ?? ctx.model;
+  const model = effectivePolicy(maintainerSpec, ctx.repoPolicy).model ?? ctx.modelLevels?.standard ?? ctx.model;
   const log = makePhaseLogger(ctx, issue.number);
   const mt = log.phase("maintainer", { model });
   const actions = await maintainer(ctx.provider, model, input, dir);

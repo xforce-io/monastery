@@ -42,6 +42,13 @@ test("maintainer falls back to ctx.model when no per-agent override", async () =
   expect(provider.calls[0].model).toBe("sonnet");
 });
 
+test("#131 maintainer falls back to the standard model level when provided", async () => {
+  const gh = ghWith({ number: 5, title: "x", body: "y", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([]));
+  await issueStep(stepCtx(gh, provider, { modelLevels: { fast: "fast", standard: "standard", strong: "strong" } }), 5);
+  expect(provider.calls[0].model).toBe("standard");
+});
+
 // --- patcher + reviewer: the issue's headline acceptance (two roles, two distinct models) ---
 
 function implCtx(over: Partial<StepCtx>): StepCtx {
@@ -66,6 +73,14 @@ test("patcher and reviewer fall back to ctx.model with no overrides", async () =
   const provider = c.provider as FakeProvider;
   expect(provider.calls[0].model).toBe("sonnet");
   expect(provider.calls[1].model).toBe("sonnet");
+});
+
+test("#131 patcher and self-review fall back to the strong model level when provided", async () => {
+  const c = implCtx({ modelLevels: { fast: "fast", standard: "standard", strong: "strong" } });
+  await runImplement(c, issue);
+  const provider = c.provider as FakeProvider;
+  expect(provider.calls[0].model).toBe("strong");
+  expect(provider.calls[1].model).toBe("strong");
 });
 
 // --- reviewModel / MONASTERY_REVIEW_MODEL back-compat, unified through effectivePolicy ---

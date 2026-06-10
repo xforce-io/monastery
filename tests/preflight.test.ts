@@ -15,14 +15,14 @@ function fakeProbe(present: Record<string, boolean>): Probe {
 
 test("all good: gh present+authed and claude present → ok, no errors", async () => {
   const probe = fakeProbe({ "gh --version": true, "gh auth status": true, "claude --version": true });
-  const r = await checkPreflight(probe, { gh: true, claude: true });
+  const r = await checkPreflight(probe, { gh: true, agent: true });
   expect(r.ok).toBe(true);
   expect(r.errors).toEqual([]);
 });
 
 test("gh missing → actionable error, not an execa stack", async () => {
   const probe = fakeProbe({ "gh --version": false, "claude --version": true });
-  const r = await checkPreflight(probe, { gh: true, claude: true });
+  const r = await checkPreflight(probe, { gh: true, agent: true });
   expect(r.ok).toBe(false);
   expect(r.errors.join("\n")).toMatch(/gh/);
   expect(r.errors.join("\n")).toMatch(/install|PATH/i);
@@ -30,21 +30,29 @@ test("gh missing → actionable error, not an execa stack", async () => {
 
 test("gh present but not authed → distinct login hint", async () => {
   const probe = fakeProbe({ "gh --version": true, "gh auth status": false, "claude --version": true });
-  const r = await checkPreflight(probe, { gh: true, claude: true });
+  const r = await checkPreflight(probe, { gh: true, agent: true });
   expect(r.ok).toBe(false);
   expect(r.errors.join("\n")).toMatch(/gh auth login/);
 });
 
-test("claude missing → actionable error", async () => {
-  const probe = fakeProbe({ "gh --version": true, "gh auth status": true, "claude --version": false });
-  const r = await checkPreflight(probe, { gh: true, claude: true });
-  expect(r.ok).toBe(false);
-  expect(r.errors.join("\n")).toMatch(/claude/);
+test("agent provider passes when claude is missing but codex is present", async () => {
+  const probe = fakeProbe({ "gh --version": true, "gh auth status": true, "claude --version": false, "codex --version": true });
+  const r = await checkPreflight(probe, { gh: true, agent: true });
+  expect(r.ok).toBe(true);
 });
 
-test("need.claude=false skips the claude probe (e.g. `status` only needs gh)", async () => {
+test("all agent providers missing → actionable error", async () => {
+  const probe = fakeProbe({ "gh --version": true, "gh auth status": true, "claude --version": false, "codex --version": false });
+  const r = await checkPreflight(probe, { gh: true, agent: true });
+  expect(r.ok).toBe(false);
+  expect(r.errors.join("\n")).toMatch(/agent provider/);
+  expect(r.errors.join("\n")).toMatch(/claude/);
+  expect(r.errors.join("\n")).toMatch(/codex/);
+});
+
+test("need.agent=false skips the agent probe (e.g. `status` only needs gh)", async () => {
   const probe = fakeProbe({ "gh --version": true, "gh auth status": true /* claude absent */ });
-  const r = await checkPreflight(probe, { gh: true, claude: false });
+  const r = await checkPreflight(probe, { gh: true, agent: false });
   expect(r.ok).toBe(true);
 });
 

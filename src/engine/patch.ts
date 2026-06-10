@@ -58,8 +58,9 @@ function defaultReview(ctx: StepCtx): ReviewFn {
     // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
     const reviewDir = mkdtempSync(join(tmpdir(), "monastery-review-"));
     try {
-      // #72: reviewer model precedence — agents.reviewer.model → legacy ctx.reviewModel (MONASTERY_REVIEW_MODEL) → ctx.model.
-      const reviewModel = effectivePolicy(reviewerSpec, ctx.repoPolicy).model ?? ctx.reviewModel ?? ctx.model;
+      // #72/#131: reviewer model precedence — agents.reviewer.model → legacy ctx.reviewModel
+      // (MONASTERY_REVIEW_MODEL) → strong model level → ctx.model.
+      const reviewModel = effectivePolicy(reviewerSpec, ctx.repoPolicy).model ?? ctx.reviewModel ?? ctx.modelLevels?.strong ?? ctx.model;
       // #76: a review finding can land in a PR comment — give the reviewer the repo's language policy too.
       return await reviewer(ctx.provider, reviewModel, { diff, issue, language: ctx.language }, reviewDir);
     } finally {
@@ -214,7 +215,7 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
   const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
   const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
-  const patcherModel = policy.model ?? ctx.model; // #72: agents.patcher.model takes effect, not just ctx.model
+  const patcherModel = policy.model ?? ctx.modelLevels?.strong ?? ctx.model; // #72/#131: agents.patcher.model wins, then strong level
 
   const patch = log.phase("patch", { model: patcherModel });
   const implRes = await ctx.provider.run({ persona: withLanguage(PERSONA, ctx.language), context: taskContext, artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
