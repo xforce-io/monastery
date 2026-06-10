@@ -14,7 +14,7 @@ const defaultRun: Runner = async (file, args, opts) => {
 };
 
 /** Provider scratch files written into the cwd; never commit these. */
-const SCRATCH = ["_prompt.md", "_claude_stdout.json"];
+const SCRATCH = ["_prompt.md", "_claude_stdout.json", "_codex_stdout.jsonl", "_codex_last_message.txt"];
 
 export class GitWorkspace implements Workspace {
   constructor(private run: Runner = defaultRun) {}

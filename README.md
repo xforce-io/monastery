@@ -12,15 +12,18 @@ schedule. That's the whole loop.
 
 ## Prerequisites
 
-monastery drives two CLIs on your `PATH` — it does not bundle them:
+monastery drives local CLIs on your `PATH` — it does not bundle them:
 
 - **[`gh`](https://cli.github.com)** — the GitHub CLI, **logged in** (`gh auth login`). This is how
   monastery reads and writes issues/PRs.
 - **[`claude`](https://docs.claude.com/claude-code)** — the Claude Code CLI, the default agent provider.
+- **`codex`** — optional fallback agent provider. Set `MONASTERY_PROVIDER=codex` to force it, or
+  leave `MONASTERY_PROVIDER=auto` to use it when Claude is unavailable.
 - **Node.js ≥ 20**.
 
-monastery runs a **preflight check** on startup: if either tool is missing or `gh` is not
-authenticated, it prints exactly what to fix and exits — no raw stack traces.
+monastery runs a **preflight check** on startup: if `gh` is missing / unauthenticated or no agent
+provider CLI is available, it prints exactly what to fix and exits — no raw stack traces. For
+`step`, it also health-checks the selected agent provider before touching GitHub.
 
 ## Install
 
@@ -80,8 +83,12 @@ Run `monastery --help` or `monastery <command> --help` any time. With no `--repo
 
 | Env var | Effect |
 |---------|--------|
-| `MONASTERY_MODEL` | Default agent model. A per-repo override (`repos add … <model>`) wins; default `sonnet`. |
-| `MONASTERY_REVIEW_MODEL` | Model for the reviewer role (defaults to `MONASTERY_MODEL`). |
+| `MONASTERY_PROVIDER` | Agent provider selection: `auto`, `claude`, or `codex`; default `auto`. |
+| `MONASTERY_MODEL_FAST` / `STANDARD` / `STRONG` | Generic model levels used when provider-specific values are unset. |
+| `MONASTERY_CLAUDE_MODEL_FAST` / `STANDARD` / `STRONG` | Claude-specific model levels; defaults are `haiku` / `sonnet` / `sonnet`. |
+| `MONASTERY_CODEX_MODEL_FAST` / `STANDARD` / `STRONG` | Codex-specific model levels; unset means use the Codex CLI default model. |
+| `MONASTERY_MODEL` | Legacy default model fallback. A per-repo override (`repos add … <model>`) still wins for the repo default. |
+| `MONASTERY_REVIEW_MODEL` | Legacy reviewer model override. |
 
 ## How it works
 

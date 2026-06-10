@@ -8,7 +8,6 @@ import { Store } from "../config/store.js";
 import { StepLock, RepoLockError, isAlive } from "../config/step-lock.js";
 import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
-import { ClaudeCodeProvider } from "../provider/claude-code.js";
 import { reconcile } from "../engine/reconcile.js";
 import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
@@ -22,14 +21,16 @@ import { wantsHelp, wantsVersion, usage, readPackageVersion } from "./help.js";
 import { preflight, formatPreflightErrors, type Need } from "./preflight.js";
 import { dirname } from "node:path";
 import type { BacklogSnapshot } from "../types.js";
+import { resolveModelLevels, resolveProviderMode } from "../provider/models.js";
+import { selectAgentProvider } from "../provider/select.js";
 
 // Which external tools each command needs, so preflight runs only when it matters
-// (offline commands like `repos`/`backlog` skip it). step is the only one needing claude.
+// (offline commands like `repos`/`backlog` skip it). step is the only one needing an agent provider.
 const NEEDS: Record<string, Need> = {
-  init: { gh: true, claude: false },
-  status: { gh: true, claude: false },
-  pending: { gh: true, claude: false },
-  step: { gh: true, claude: true },
+  init: { gh: true, agent: false },
+  status: { gh: true, agent: false },
+  pending: { gh: true, agent: false },
+  step: { gh: true, agent: true },
 };
 
 export interface ParsedArgs {
@@ -122,7 +123,17 @@ async function main(): Promise<void> {
   if (args.cmd === "step") {
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
-    const provider = new ClaudeCodeProvider();
+    let selection;
+    try {
+      const providerMode = resolveProviderMode();
+      selection = await selectAgentProvider({ mode: providerMode });
+    } catch (e) {
+      console.error(formatPreflightErrors([(e as Error).message]));
+      process.exit(1);
+    }
+    if (selection.fallbackFrom && !args.json) console.error(`[monastery] ${selection.fallbackFrom} unavailable; using ${selection.name} provider`);
+    const provider = selection.provider;
+    const modelLevels = resolveModelLevels(selection.name);
     const stepLock = new StepLock(join(homedir(), ".monastery"));
     const results: Awaited<ReturnType<typeof reconcile>>[] = [];
     let singleIssueOutcome: Outcome | undefined;
@@ -131,12 +142,12 @@ async function main(): Promise<void> {
       repos, lock: stepLock, rawCmd, json: args.json, force: args.forceStaleLock,
       runOne: async (repo) => {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
-        const model = store.repoModel(repo) ?? process.env.MONASTERY_MODEL ?? "sonnet";
+        const model = store.repoModel(repo) ?? modelLevels.standard;
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
         await prepareRepoForStep(gh, repo, args.json ? (s) => console.error(s) : undefined);
         // #75: thread the json flag (outlet A machine stream) and the per-repo progress sidecar path
         // (outlet B) so PhaseLogger emits NDJSON to stdout and overwrites the snapshot `status` reads.
-        const ctx = { repo, gh, provider, model, reviewModel: process.env.MONASTERY_REVIEW_MODEL ?? model, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now(), json: args.json, progressPath: stepLock.progressPath(repo) };
+        const ctx = { repo, gh, provider, model, modelLevels, reviewModel: process.env.MONASTERY_REVIEW_MODEL, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now(), json: args.json, progressPath: stepLock.progressPath(repo) };
         if (args.issue) {
           // #108: a single-issue run gets the same read-only code checkout as a reconcile tick, so the
           // maintainer can verify root cause from source here too (parity between the two entry points).

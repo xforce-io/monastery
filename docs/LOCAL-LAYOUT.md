@@ -59,17 +59,22 @@
 
 ## secrets
 
-**只走环境变量 / 系统 keychain,绝不落 `~/.monastery/`。** GitHub 凭据由 `gh` CLI 自管;模型凭据由 provider(`claude` CLI)自管。本布局里没有任何 secret。
+**只走环境变量 / 系统 keychain,绝不落 `~/.monastery/`。** GitHub 凭据由 `gh` CLI 自管;模型凭据由 provider(`claude` / `codex` CLI)自管。本布局里没有任何 secret。
 
 ## 模型解析顺序(CLI `step`)
 
-每仓 tick 时,**每个角色(maintainer / patcher / reviewer)各自**按此优先级取 model:
+每仓 tick 时,先按 `MONASTERY_PROVIDER=auto|claude|codex` 选择 agent provider(默认 auto: Claude 健康则用 Claude,否则尝试 Codex)。随后 **每个角色(maintainer / patcher / reviewer)各自**按此优先级取 model:
 
 ```
-agents.<role>.model(effectivePolicy)  →  config.json 的 per-repo model  →  $MONASTERY_MODEL  →  "sonnet"(默认 ≥ sonnet)
+agents.<role>.model(effectivePolicy)
+  →  config.json 的 per-repo model(旧 repos add <repo> [model])
+  →  provider-specific level env(MONASTERY_CODEX_MODEL_STRONG 等)
+  →  generic level env(MONASTERY_MODEL_STRONG 等)
+  →  $MONASTERY_MODEL(旧默认)
+  →  provider 默认 level model
 ```
 
-即 per-agent 覆盖最高;不写 `agents.<role>.model` 时该角色回退到仓库级 model 链。reviewer 额外兼容历史的 `MONASTERY_REVIEW_MODEL`(经 `reviewModel`),其位置介于 per-repo model 之后:`agents.reviewer.model → MONASTERY_REVIEW_MODEL → per-repo model → …`。
+level 分为 `fast` / `standard` / `strong`:健康检测用 fast,maintainer 用 standard,patcher 与 patcher self-review 用 strong。Codex 的 provider 默认 level model 是空值,表示不传 `-m`、使用 Codex CLI 本机默认模型。即 per-agent 覆盖最高;不写 `agents.<role>.model` 时该角色回退到仓库级 / level model 链。reviewer 额外兼容历史的 `MONASTERY_REVIEW_MODEL`(经 `reviewModel`),其位置介于 per-agent model 与 strong level 之间:`agents.reviewer.model → MONASTERY_REVIEW_MODEL → strong level → …`。
 
 `monastery repos add <owner>/<repo> [model]` 写入 config;省略 `model` 则该仓 policy 为空、走回退链。
 

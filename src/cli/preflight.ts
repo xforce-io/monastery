@@ -1,14 +1,14 @@
 // src/cli/preflight.ts
-// Startup self-check: the CLI hard-depends on `gh` (logged in) and `claude` on PATH,
-// both called via execa. Without this, a new consumer's first run dies with a raw
-// execa ENOENT/spawn stack (#70 D3). We probe up front and print actionable guidance.
+// Startup self-check: the CLI hard-depends on `gh` (logged in) and at least one
+// agent CLI (`claude` or `codex`) on PATH. Without this, a new consumer's first
+// run dies with a raw execa ENOENT/spawn stack (#70 D3).
 import { execa } from "execa";
 
 /** Returns true if `cmd args` exits 0. Injected in tests so they never spawn. */
 export type Probe = (cmd: string, args: string[]) => Promise<boolean>;
 
-/** Which external tools this command needs. `status`/`pending`/`init` need gh only; `step` needs both. */
-export interface Need { gh: boolean; claude: boolean }
+/** Which external tools this command needs. `status`/`pending`/`init` need gh only; `step` needs an agent. */
+export interface Need { gh: boolean; agent: boolean }
 
 const defaultProbe: Probe = async (cmd, args) => {
   try {
@@ -36,9 +36,11 @@ export async function checkPreflight(probe: Probe, need: Need): Promise<Prefligh
     }
   }
 
-  if (need.claude) {
-    if (!(await probe("claude", ["--version"]))) {
-      errors.push("`claude` (Claude Code CLI) is not on your PATH. Install it: https://docs.claude.com/claude-code");
+  if (need.agent) {
+    const claude = await probe("claude", ["--version"]);
+    const codex = await probe("codex", ["--version"]);
+    if (!claude && !codex) {
+      errors.push("no agent provider CLI is on your PATH. Install `claude` (https://docs.claude.com/claude-code) or `codex`.");
     }
   }
 
