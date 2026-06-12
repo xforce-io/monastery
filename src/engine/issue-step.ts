@@ -20,6 +20,8 @@ import { currentSpec } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
 import { makePhaseLogger } from "../phase-logger.js";
 import type { ModelLevels } from "../provider/models.js";
+import type { ProviderPool } from "../provider/select.js";
+import { resolveRoleRuntime } from "../provider/runtime.js";
 
 export interface StepCtx {
   repo: string;
@@ -28,6 +30,9 @@ export interface StepCtx {
   model: string;
   /** Provider-resolved model levels. Omitted in older tests/callers; `model` remains the fallback. */
   modelLevels?: ModelLevels;
+  /** #133: lazy access to non-primary providers, so `agents.<role>.provider` can route a role to a
+   *  different provider (cross-model review). Omitted in older tests/callers: the field is then inert. */
+  providerPool?: ProviderPool;
   artifactRoot: string;
   fails: FailTracker;
   ws: Workspace;
@@ -122,10 +127,16 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).
   const dir = ctx.repoDir ?? join(ctx.artifactRoot, `${issue.number}`);
   // #72: the maintainer's model comes from its effective policy (agents.maintainer.model), not just ctx.model.
-  const model = effectivePolicy(maintainerSpec, ctx.repoPolicy).model ?? ctx.modelLevels?.standard ?? ctx.model;
+  // #133: agents.maintainer.provider may route it to a non-primary provider (model re-resolved with it).
+  const policy = effectivePolicy(maintainerSpec, ctx.repoPolicy);
+  const rt = await resolveRoleRuntime({
+    agent: "maintainer", policy, level: "standard",
+    provider: ctx.provider, model: policy.model ?? ctx.modelLevels?.standard ?? ctx.model,
+    explicitModel: policy.model, pool: ctx.providerPool,
+  });
   const log = makePhaseLogger(ctx, issue.number);
-  const mt = log.phase("maintainer", { model });
-  const actions = await maintainer(ctx.provider, model, input, dir);
+  const mt = log.phase("maintainer", { model: rt.model });
+  const actions = await maintainer(rt.provider, rt.model, input, dir);
   if (actions === null) mt.fail("no-output"); else mt.done({ actions: actions.length });
 
   // The agent produced no schema-valid output OR tried to act outside this item — refuse the whole

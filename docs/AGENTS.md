@@ -25,7 +25,7 @@ agent 的定义(persona / 输入 / 输出 / 沙箱 / 策略)是 v2「发挥模�
 AgentSpec      = { name, role, persona, sandbox, policy }         // 共有身份
 StructuredAgentSpec<In,Out> extends AgentSpec { buildContext, artifact, schema }  // maintainer/reviewer
 WorkspaceAgentSpec          extends AgentSpec { fixPersona? }                     // patcher
-AgentPolicy    = { model?, timeoutMs?, failThreshold?, maxIters? }
+AgentPolicy    = { provider?, model?, timeoutMs?, failThreshold?, maxIters? }
 ```
 
 - **runner** `runStructuredAgent(spec, input, {provider, model, artifactDir})`:跑 provider → 读 `spec.artifact` → `spec.schema` 校验 → 回退 stdout 抽取 → `null`。一处实现,maintainer/reviewer 复用。`artifact-only` 档优先用 `ApiProvider.fromEnv()`(配了结构化端点时),否则降级到传入的 `ctx.provider`。
@@ -40,6 +40,8 @@ AgentPolicy    = { model?, timeoutMs?, failThreshold?, maxIters? }
 | **agentic 会话** | 工具 + 文件系统 + 多轮 | `readonly-clone` / `workspace-clone`(读 / 写代码) | `AgentProvider`(`claude -p`) |
 
 **成本是另一条轴,由模型决定(`policy.model`,#72-A 落地),两种形态都能调。** `claude -p --model haiku` 是「便宜的 agentic 会话」——服务 maintainer/patcher,**不是 ApiProvider 的替代**:形态不同(agentic 的进程启动 + 多轮开销照付),且其结构化输出靠「写文件 + repair 重试」,不如 API 的 schema 约束可靠。换句话说,fast 模型替代的是「贵的 agentic」,替代不了「结构化调用」这个形态。
+
+**第三条轴是「同形态内的厂商」(`policy.provider`,#133)**:agentic 形态下 `AgentProvider` 有 claude / codex 两个实现(#131),`agents.<role>.provider` 可让某角色跑在与全局不同的那个上(相对值 `"different"`),用于跨模型交叉评审。best-effort:目标不健康回退全局 provider;跨 provider 时该角色 model 按目标 provider 的 level 重新解析(见 `docs/LOCAL-LAYOUT.md`)。
 
 落到三个 agent:
 
