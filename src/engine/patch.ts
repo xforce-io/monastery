@@ -7,6 +7,7 @@ import type { Issue, Outcome } from "../types.js";
 import { reviewer, reviewerSpec, type ReviewFinding, type ReviewFn, type ReviewVerdict } from "../agents/reviewer.js";
 import { patcherSpec } from "../agents/patcher.js";
 import { effectivePolicy } from "../agents/spec.js";
+import { resolveRoleRuntime } from "../provider/runtime.js";
 import { isHumanComment } from "../shell/markers.js";
 import type { Spec } from "../shell/consensus.js";
 import { languageDirective, looksOffLanguage } from "../shell/language.js";
@@ -60,9 +61,17 @@ function defaultReview(ctx: StepCtx): ReviewFn {
     try {
       // #72/#131: reviewer model precedence — agents.reviewer.model → legacy ctx.reviewModel
       // (MONASTERY_REVIEW_MODEL) → strong model level → ctx.model.
-      const reviewModel = effectivePolicy(reviewerSpec, ctx.repoPolicy).model ?? ctx.reviewModel ?? ctx.modelLevels?.strong ?? ctx.model;
+      // #133: agents.reviewer.provider may route the review to a non-primary provider (cross-model
+      // review); the model is then re-resolved at that provider's strong level instead of the chain above.
+      const policy = effectivePolicy(reviewerSpec, ctx.repoPolicy);
+      const explicitModel = policy.model ?? ctx.reviewModel;
+      const rt = await resolveRoleRuntime({
+        agent: "reviewer", policy, level: "strong",
+        provider: ctx.provider, model: explicitModel ?? ctx.modelLevels?.strong ?? ctx.model,
+        explicitModel, pool: ctx.providerPool,
+      });
       // #76: a review finding can land in a PR comment — give the reviewer the repo's language policy too.
-      return await reviewer(ctx.provider, reviewModel, { diff, issue, language: ctx.language }, reviewDir);
+      return await reviewer(rt.provider, rt.model, { diff, issue, language: ctx.language }, reviewDir);
     } finally {
       rmSync(reviewDir, { recursive: true, force: true });
     }
@@ -215,10 +224,17 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
   const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
   const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
-  const patcherModel = policy.model ?? ctx.modelLevels?.strong ?? ctx.model; // #72/#131: agents.patcher.model wins, then strong level
+  // #72/#131: agents.patcher.model wins, then strong level. #133: agents.patcher.provider may route the
+  // patcher to a non-primary provider — the impl run and every fix round share the same resolved runtime.
+  const rt = await resolveRoleRuntime({
+    agent: "patcher", policy, level: "strong",
+    provider: ctx.provider, model: policy.model ?? ctx.modelLevels?.strong ?? ctx.model,
+    explicitModel: policy.model, pool: ctx.providerPool,
+  });
+  const patcherModel = rt.model;
 
   const patch = log.phase("patch", { model: patcherModel });
-  const implRes = await ctx.provider.run({ persona: withLanguage(PERSONA, ctx.language), context: taskContext, artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
+  const implRes = await rt.provider.run({ persona: withLanguage(PERSONA, ctx.language), context: taskContext, artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
   patch.done();
   // The patcher's stdout IS the author summary (what+why). It runs in the worktree, so it can't write a file
   // (that would land in the diff) — we capture resultText and render it into the PR body / round summary.
@@ -266,7 +282,7 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
       return null;
     }
     const fix = log.phase("patch:fix", { attempt, model: patcherModel });
-    const fixRes = await ctx.provider.run({ persona: withLanguage(FIX_PERSONA, ctx.language), context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
+    const fixRes = await rt.provider.run({ persona: withLanguage(FIX_PERSONA, ctx.language), context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
     fix.done();
     if (fixRes.resultText?.trim()) { authorSummary = fixRes.resultText.trim(); warnIfOffLanguage(ctx, issue, authorSummary); }   // keep the summary current with the final diff
     fixedTitles.push(...blocking.map((b) => b.title));

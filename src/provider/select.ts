@@ -46,6 +46,35 @@ export async function selectAgentProvider(opts: SelectAgentProviderOptions): Pro
   ].join("\n"));
 }
 
+/** #133: lazy access to NON-primary providers, for roles configured with `agents.<role>.provider`.
+ *  A non-primary provider is health-checked on first use only (probe + smoke cost nothing until some
+ *  role actually asks for it); the verdict — provider or null when unhealthy — is cached for the run. */
+export interface ProviderPool {
+  primary: ProviderSelection;
+  resolve(name: ProviderName): Promise<AgentProvider | null>;
+}
+
+export function makeProviderPool(
+  primary: ProviderSelection,
+  opts: { health?: ProviderHealthProbe; makeProvider?: (name: ProviderName) => AgentProvider } = {},
+): ProviderPool {
+  const health = opts.health ?? realProviderHealth;
+  const makeProvider = opts.makeProvider ?? defaultProvider;
+  const cache = new Map<ProviderName, Promise<AgentProvider | null>>();
+  return {
+    primary,
+    resolve(name: ProviderName): Promise<AgentProvider | null> {
+      if (name === primary.name) return Promise.resolve(primary.provider);
+      let p = cache.get(name);
+      if (!p) {
+        p = health(name).then((h) => (h.ok ? makeProvider(name) : null));
+        cache.set(name, p);
+      }
+      return p;
+    },
+  };
+}
+
 export async function realProviderHealth(name: ProviderName): Promise<ProviderHealth> {
   const version = await probeVersion(name === "claude" ? "claude" : "codex");
   if (!version.ok) return version;

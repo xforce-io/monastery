@@ -41,7 +41,8 @@
 - `model`:仓库级默认模型;缺省时由 CLI 回退(见下)。
 - `language`(可选,#76):该仓**对外 GitHub 文本**(issue 评论 / panel / PR 标题+正文 / spec / proposal 草案)的目标语言。注入到所有产出对外文本的 agent(maintainer / patcher / reviewer);代码 identifier、commit message、branch、既有文件语言**不**翻译。解析:`repos.<repo>.language → defaults.language → "en-US"`。另有一道非阻塞安全网——patcher 的 author summary 明显偏离目标语言时 `console.warn` 留痕,但仍开 draft PR(人审才是闸)。
 - `defaults`(可选):跨仓全局默认。目前仅 `language`,在某仓未配 `language` 时兜底。
-- `agents`(可选):**按 agent 名覆盖各自 spec 默认策略**(`failThreshold`/`maxIters`/`timeoutMs`/`model`)。分层 = **spec 默认 ← per-repo 覆盖**,运行时由 `effectivePolicy(spec, repoPolicy)` 合并(`docs/AGENTS.md`)。不写 `agents` 则全用 spec 默认。
+- `agents`(可选):**按 agent 名覆盖各自 spec 默认策略**(`failThreshold`/`maxIters`/`timeoutMs`/`model`/`provider`)。分层 = **spec 默认 ← per-repo 覆盖**,运行时由 `effectivePolicy(spec, repoPolicy)` 合并(`docs/AGENTS.md`)。不写 `agents` 则全用 spec 默认。
+- `agents.<role>.provider`(可选,#133):让某个角色跑在指定 provider 上——`"claude"` / `"codex"`,或相对值 `"different"`(取与全局选中 provider **相反**的那个,用于跨模型交叉评审,如 `agents.reviewer.provider: "different"`)。**best-effort**:目标 provider 首次被用到时才做健康检查(惰性);不健康则回退全局 provider 并 warn 一次,不阻塞 tick。跨 provider 时该角色的 model 按目标 provider 的 level 重新解析(model 名是 provider 相关的),显式 `agents.<role>.model` 覆盖此时被忽略并 warn。
 
 ## `repos/<owner>__<repo>/cache.json`(可丢)
 
@@ -75,6 +76,8 @@ agents.<role>.model(effectivePolicy)
 ```
 
 level 分为 `fast` / `standard` / `strong`:健康检测用 fast,maintainer 用 standard,patcher 与 patcher self-review 用 strong。Codex 的 provider 默认 level model 是空值,表示不传 `-m`、使用 Codex CLI 本机默认模型。即 per-agent 覆盖最高;不写 `agents.<role>.model` 时该角色回退到仓库级 / level model 链。reviewer 额外兼容历史的 `MONASTERY_REVIEW_MODEL`(经 `reviewModel`),其位置介于 per-agent model 与 strong level 之间:`agents.reviewer.model → MONASTERY_REVIEW_MODEL → strong level → …`。
+
+例外(#133):配置了 `agents.<role>.provider` 且该角色实际跑在**非全局** provider 上时,上面的链不适用——model 直接按目标 provider 的 level 解析(provider-specific level env → generic level env → `$MONASTERY_MODEL` → provider 默认),显式的 per-agent / 仓库级 model 覆盖被忽略并 warn(model 名是 provider 相关的,跨 provider 沿用会出错)。
 
 `monastery repos add <owner>/<repo> [model]` 写入 config;省略 `model` 则该仓 policy 为空、走回退链。
 

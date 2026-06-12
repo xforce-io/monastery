@@ -21,6 +21,9 @@ export type Sandbox = "artifact-only" | "readonly-clone" | "workspace-clone";
 
 /** Per-agent operational defaults (the SLA-ish knobs). Per-repo overrides live in RepoPolicy (PR2). */
 export interface AgentPolicy {
+  /** #133: run this role on a specific provider, or "different" = whichever the global selection is NOT
+   *  (cross-model review). Best-effort: an unhealthy target falls back to the global provider. */
+  provider?: "claude" | "codex" | "different";
   model?: string;
   timeoutMs?: number;
   failThreshold?: number; // consecutive no-valid-output ticks before escalating to a human

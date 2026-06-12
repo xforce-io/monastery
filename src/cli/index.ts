@@ -22,7 +22,7 @@ import { preflight, formatPreflightErrors, type Need } from "./preflight.js";
 import { dirname } from "node:path";
 import type { BacklogSnapshot } from "../types.js";
 import { resolveModelLevels, resolveProviderMode } from "../provider/models.js";
-import { selectAgentProvider } from "../provider/select.js";
+import { makeProviderPool, selectAgentProvider } from "../provider/select.js";
 
 // Which external tools each command needs, so preflight runs only when it matters
 // (offline commands like `repos`/`backlog` skip it). step is the only one needing an agent provider.
@@ -134,6 +134,9 @@ async function main(): Promise<void> {
     if (selection.fallbackFrom && !args.json) console.error(`[monastery] ${selection.fallbackFrom} unavailable; using ${selection.name} provider`);
     const provider = selection.provider;
     const modelLevels = resolveModelLevels(selection.name);
+    // #133: lazy pool for `agents.<role>.provider` — a non-primary provider is health-checked only
+    // if some role's policy actually asks for it.
+    const providerPool = makeProviderPool(selection);
     const stepLock = new StepLock(join(homedir(), ".monastery"));
     const results: Awaited<ReturnType<typeof reconcile>>[] = [];
     let singleIssueOutcome: Outcome | undefined;
@@ -147,7 +150,7 @@ async function main(): Promise<void> {
         await prepareRepoForStep(gh, repo, args.json ? (s) => console.error(s) : undefined);
         // #75: thread the json flag (outlet A machine stream) and the per-repo progress sidecar path
         // (outlet B) so PhaseLogger emits NDJSON to stdout and overwrites the snapshot `status` reads.
-        const ctx = { repo, gh, provider, model, modelLevels, reviewModel: process.env.MONASTERY_REVIEW_MODEL, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now(), json: args.json, progressPath: stepLock.progressPath(repo) };
+        const ctx = { repo, gh, provider, model, modelLevels, providerPool, reviewModel: process.env.MONASTERY_REVIEW_MODEL, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now(), json: args.json, progressPath: stepLock.progressPath(repo) };
         if (args.issue) {
           // #108: a single-issue run gets the same read-only code checkout as a reconcile tick, so the
           // maintainer can verify root cause from source here too (parity between the two entry points).
