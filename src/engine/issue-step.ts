@@ -9,7 +9,7 @@ import type { Issue, Outcome } from "../types.js";
 import { LABEL_DEFS, NEEDS_APPROVAL, DECLINED, NEEDS_HUMAN } from "../github/labels.js";
 import { maintainer, maintainerSpec } from "../agents/maintainer.js";
 import { effectivePolicy } from "../agents/spec.js";
-import { executeSafe, doClose, proposeGate, ensureControlLabel, type GatedKind } from "../shell/actions.js";
+import { executeSafe, doClose, proposeGate, ensureControlLabel, applyStateLabels, type GatedKind } from "../shell/actions.js";
 import type { FailTracker, RepoPolicy, BacklogWriter } from "../config/store.js";
 import { deriveEntry } from "./backlog.js";
 import type { Workspace } from "../workspace/workspace.js";
@@ -18,7 +18,7 @@ import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec, parseSpecs } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
-import { approvalKind, approvalSpecVersion, isStateMessage, renderStateMessage, stripStateMessage } from "../shell/messages.js";
+import { approvalKind, approvalSpecVersion, isStateMessage, renderStateMessage, stripStateMessage, type StateStatus } from "../shell/messages.js";
 import { makePhaseLogger } from "../phase-logger.js";
 import type { ModelLevels } from "../provider/models.js";
 import type { ProviderPool } from "../provider/select.js";
@@ -91,7 +91,8 @@ export async function withReadOnlyCheckout<T>(ctx: StepCtx, fn: (ctx: StepCtx) =
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
 export const FAIL_THRESHOLD = maintainerSpec.policy.failThreshold ?? 3;
-const noteMessage = (body: string, provenance: { agent?: string; model?: string } = {}) => renderStateMessage({ kind: "note", body, ...provenance });
+const stateMessage = (status: StateStatus, body: string, provenance: { agent?: string; model?: string } = {}) =>
+  renderStateMessage({ status, body, ...provenance });
 
 /** One step over one item. Routes by the two control labels the shell owns (PROTOCOL §2). */
 export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
@@ -145,8 +146,9 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     const fails = ctx.fails.recordFail(ctx.repo, issue.number);
     const failThreshold = effectivePolicy(maintainerSpec, ctx.repoPolicy).failThreshold ?? FAIL_THRESHOLD;
     if (fails >= failThreshold) {
+      await applyStateLabels(ctx.gh, ctx.repo, issue.number, "blocked");
       await ctx.gh.upsertPanel(ctx.repo, issue.number,
-        noteMessage(`⚠️ the maintainer agent has produced no valid actions for ${fails} consecutive ticks — needs a human.`, { agent: "maintainer", model: rt.model }));
+        stateMessage("blocked", `the maintainer agent has produced no valid actions for ${fails} consecutive ticks.`, { agent: "maintainer", model: rt.model }));
     } else {
       console.warn(`[monastery] maintainer skip ${ctx.repo}#${issue.number} (${fails}/${failThreshold})`);
     }
@@ -285,11 +287,11 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     // Consume the gate on success: clear needs-approval + rewrite the panel to a plain note, so the item
     // doesn't re-enter awaitingGate on the stale 👍 every tick (which would re-count as advanced forever).
     if (out.kind === "progressed") {
-      await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+      await applyStateLabels(ctx.gh, ctx.repo, issue.number, "done");
       const done = kind === "rework"
-        ? `✅ rework approved — the draft PR was updated${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`
-        : `✅ implement approved — draft PR opened${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`;
-      await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(done));
+        ? `rework approved — the draft PR was updated${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`
+        : `implement approved — draft PR opened${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`;
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, stateMessage("done", done));
     }
     return out;
   }
@@ -313,7 +315,7 @@ async function approvedImplementSpec(
   const found = parseSpecs(comments).map((s) => s.version).sort((a, b) => a - b);
   const detail = found.length ? `found spec versions: ${found.join(", ")}` : "no monastery spec comments found";
   const error = `approved spec v${stamped} missing; ${detail}`;
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(`⚠️ ${error} — refusing to run patcher without the approved task.`));
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, stateMessage("blocked", `${error} — refusing to run patcher without the approved task.`));
   return {
     kind: "failed",
     out: {
@@ -325,9 +327,7 @@ async function approvedImplementSpec(
 }
 
 async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
-  const def = LABEL_DEFS.find((l) => l.name === NEEDS_HUMAN);
-  if (def) await ctx.gh.ensureLabel(ctx.repo, def.name, def.color, def.description);
-  await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
+  await applyStateLabels(ctx.gh, ctx.repo, issue.number, "blocked");
 }
 
 function latestApprovalGate<T extends { body: string; updatedAt: number }>(comments: T[]): T | undefined {
@@ -341,7 +341,7 @@ async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Pr
   await ensureControlLabel(ctx.gh, ctx.repo, DECLINED);
   await ctx.gh.addLabel(ctx.repo, issue.number, DECLINED);
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(note));
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, stateMessage("note", note));
   return { kind: "done" };
 }
 
@@ -371,7 +371,7 @@ function hasNewUnansweredHumanComment(
  */
 async function demoteGate(ctx: StepCtx, issue: Issue, note: string): Promise<Outcome> {
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(note));
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, stateMessage("note", note));
   return { kind: "progressed", entry: { number: issue.number, title: issue.title, priority: "now", rationale: note } };
 }
 
@@ -394,7 +394,7 @@ async function recoverRejectedImpl(ctx: StepCtx, issue: Issue): Promise<Outcome 
 
   const note = `实现被拒：PR #${pr.number} 已关闭且未合并。请在 issue 中说明希望调整的方向，monastery 会重新评估并提出新的实现。`;
   await ctx.gh.postComment(ctx.repo, issue.number, `${marker}\n${note}`);
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(note));
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, stateMessage("note", note));
   return {
     kind: "waiting",
     on: "human",
