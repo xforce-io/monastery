@@ -149,10 +149,13 @@ test("an open but non-draft PR (human marked ready) is not reworked", async () =
   expect(ws.checkedOut).toHaveLength(0);
 });
 
-test("patcher made no changes on rework: transient skip, no commit, no PR comment", async () => {
+test("#135 patcher made no changes on rework: failed, no commit, keeps checkout for forensics", async () => {
   const gh = reworkable();
   const ws = new FakeWorkspace({ diff: "", tests: true }); // patcher produced nothing
   const out = await runRework(ctx(gh, ws, async () => clean), issue);
-  expect(out.kind).toBe("noop");
+  expect(out.kind).toBe("failed");
+  if (out.kind === "failed") expect(out.error).toMatch(/no changes/i);
   expect(ws.committed).toHaveLength(0);
+  expect(ws.cleaned).toHaveLength(0);
+  expect(gh.panels[7]).toMatch(/made no changes|workdir/i);
 });

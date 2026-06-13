@@ -11,6 +11,7 @@ import { isHumanComment } from "../shell/markers.js";
 import type { Spec } from "../shell/consensus.js";
 import { languageDirective, looksOffLanguage } from "../shell/language.js";
 import { makePhaseLogger, type PhaseLogger } from "../phase-logger.js";
+import { LABEL_DEFS, NEEDS_HUMAN } from "../github/labels.js";
 
 // Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
@@ -53,6 +54,12 @@ function reviewPanel(blocking: ReviewFinding[], iters: number): string {
   return `${PATCH_NOTE_MARKER}\n⚠️ 自审在 ${iters} 轮后仍有未解决的 blocking — needs a human：\n${list}`;
 }
 
+async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
+  const def = LABEL_DEFS.find((l) => l.name === NEEDS_HUMAN);
+  if (def) await ctx.gh.ensureLabel(ctx.repo, def.name, def.color, def.description);
+  await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
+}
+
 function defaultReview(ctx: StepCtx): ReviewFn {
   return async (diff, issue) => {
     // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
@@ -91,13 +98,18 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
   const clone = log.phase("clone");
   const dir = await ctx.ws.clone(ctx.repo, branch);
   clone.done();
+  let keepWorkdir = false;
   try {
     // #100: the endorsed spec (decision A) fully supersedes the issue body — the body may be stale (the very
     // failure in #99). No spec -> fall back to the body (plain-body issues are unchanged).
     const task = spec ? `endorsed spec v${spec.version}:\n\n${spec.body}` : issue.body;
     const context = `Fix issue #${issue.number}:\ntitle: ${issue.title}\n\n${task}`;
-    const r = await patchAndReview(ctx, dir, issue, context, log);
-    if (!r) return { kind: "noop" }; // bailed (no changes / review never converged) — panel already posted
+    const attempt = await patchAndReview(ctx, dir, issue, context, log);
+    if (attempt.kind === "failed") {
+      keepWorkdir = true;
+      return { kind: "failed", error: attempt.error };
+    }
+    const r = attempt.result;
 
     const pr = log.phase("pr");
     await ctx.ws.commitPush(dir, branch, `fix: address #${issue.number}`);
@@ -111,7 +123,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     pr.done({ url });
     return { kind: "progressed", note: url };
   } finally {
-    await ctx.ws.cleanup(dir);
+    if (!keepWorkdir) await ctx.ws.cleanup(dir);
   }
 }
 
@@ -164,6 +176,7 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const clone = log.phase("clone");
   const dir = await ctx.ws.checkout(ctx.repo, branch); // EXISTING branch, in place
   clone.done();
+  let keepWorkdir = false;
   try {
     const feedback = [
       ...humanComments.map((c) => `<feedback author="${c.author}">\n${c.body}\n</feedback>`),
@@ -175,8 +188,12 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       `\ncurrent PR body:\n${details.body}`,
       `\nHuman feedback to address — this is WHY you are reworking; resolve every point:\n${feedback}`,
     ].join("\n");
-    const r = await patchAndReview(ctx, dir, issue, context, log);
-    if (!r) return { kind: "noop" }; // bailed — panel already posted
+    const attempt = await patchAndReview(ctx, dir, issue, context, log);
+    if (attempt.kind === "failed") {
+      keepWorkdir = true;
+      return { kind: "failed", error: attempt.error };
+    }
+    const r = attempt.result;
 
     const pr = log.phase("pr");
     await ctx.ws.commitPush(dir, branch, `fix: rework #${issue.number} (round ${round})`);
@@ -192,7 +209,7 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     pr.done({ round });
     return { kind: "progressed", note: details.url };
   } finally {
-    await ctx.ws.cleanup(dir);
+    if (!keepWorkdir) await ctx.ws.cleanup(dir);
   }
 }
 
@@ -205,13 +222,16 @@ interface PatchResult {
   lastVerdict: ReviewVerdict | null;
 }
 
+type PatchAttempt =
+  | { kind: "ok"; result: PatchResult }
+  | { kind: "failed"; error: string };
+
 /**
  * Shared patch core (runImplement #88 + runRework #79): run the patcher in `dir` against `taskContext`, gate on
- * a non-empty diff, run tests, then the bounded self-review fix loop. Returns the artifacts, or null when it
- * bailed (no changes after the fail threshold, or review never converged) — in which case the human-facing
- * panel is already posted and the caller should return { kind: "noop" }.
+ * a non-empty diff, run tests, then the bounded self-review fix loop. Returns artifacts or an explicit failure;
+ * approved heavy work must never collapse into ordinary noop semantics (#135).
  */
-async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskContext: string, log: PhaseLogger): Promise<PatchResult | null> {
+async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskContext: string, log: PhaseLogger): Promise<PatchAttempt> {
   const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
   const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
   const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
@@ -228,13 +248,16 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
 
   if (!diff.trim()) {
     const fails = ctx.fails.recordFail(ctx.repo, issue.number);
+    const error = `patcher made no changes (${fails}/${PATCH_FAIL_THRESHOLD}); workdir kept at ${dir}`;
     if (fails < PATCH_FAIL_THRESHOLD) {
       console.warn(`[monastery] patcher made no changes ${ctx.repo}#${issue.number} (${fails}/${PATCH_FAIL_THRESHOLD})`);
-      return null;
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PATCH_NOTE_MARKER}\n⚠️ ${error}`);
+      return { kind: "failed", error };
     }
+    await markNeedsHuman(ctx, issue);
     await ctx.gh.upsertPanel(ctx.repo, issue.number,
-      `${PATCH_NOTE_MARKER}\n⚠️ patcher made no changes after ${fails} attempts — needs a human.`);
-    return null;
+      `${PATCH_NOTE_MARKER}\n⚠️ patcher made no changes after ${fails} attempts — needs a human.\n\nworkdir kept at ${dir}`);
+    return { kind: "failed", error };
   }
 
   ctx.fails.clearFail(ctx.repo, issue.number);
@@ -262,8 +285,9 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     if (blocking.length === 0) { rev.done({ blocking: 0 }); break; }      // clean -> ship
     rev.done({ blocking: blocking.length });
     if (iter === REVIEW_MAX_ITERS) {                                     // give up -> needs a human, no PR
+      await markNeedsHuman(ctx, issue);
       await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS));
-      return null;
+      return { kind: "failed", error: `self-review never converged after ${REVIEW_MAX_ITERS} iterations; workdir kept at ${dir}` };
     }
     const fix = log.phase("patch:fix", { attempt, model: patcherModel });
     const fixRes = await ctx.provider.run({ persona: withLanguage(FIX_PERSONA, ctx.language), context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
@@ -274,7 +298,7 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     diff = await ctx.ws.stagedDiff(dir);
   }
 
-  return { diff, tests, authorSummary, reviewerFailed, fixedTitles, lastVerdict };
+  return { kind: "ok", result: { diff, tests, authorSummary, reviewerFailed, fixedTitles, lastVerdict } };
 }
 
 /**

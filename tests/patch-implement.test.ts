@@ -98,21 +98,40 @@ test("idempotent: an open PR for the branch already exists -> converge, do NOT r
   expect(gh.prs).toHaveLength(1);                    // no second PR
 });
 
-test("the patcher made no changes: transient skip, no PR", async () => {
+test("#135 the patcher made no changes: failed, no PR, keeps workdir for forensics", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
   const ws = new FakeWorkspace({ diff: "", tests: true });
   const out = await runImplement(ctx(gh, ws, async () => clean), issue);
-  expect(out.kind).toBe("noop");
+  expect(out.kind).toBe("failed");
+  if (out.kind === "failed") expect(out.error).toMatch(/no changes/i);
   expect(gh.prs).toHaveLength(0);
+  expect(ws.committed).toHaveLength(0);
+  expect(ws.cleaned).toHaveLength(0);
+  expect(gh.panels[7]).toMatch(/made no changes|workdir/i);
+});
+
+test("#135 repeated empty diff escalates to needs-human after ensuring the label", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "", tests: true });
+  const c = ctx(gh, ws, async () => clean);
+  c.fails = { recordFail: () => 3, failCount: () => 2, clearFail: () => {} };
+  const out = await runImplement(c, issue);
+  expect(out.kind).toBe("failed");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(gh.ensuredLabels.map((l) => l.name)).toContain("monastery:needs-human");
+  expect(i.labels).toContain("monastery:needs-human");
+  expect(gh.panels[7]).toMatch(/needs a human|workdir/i);
 });
 
 test("self-review keeps finding blocking issues -> gives up with a panel, opens NO PR", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
   const ws = new FakeWorkspace({ diff: "some patch", tests: true });
   const out = await runImplement(ctx(gh, ws, async () => blocking), issue); // never clears
-  expect(out.kind).toBe("noop");
+  expect(out.kind).toBe("failed");
+  if (out.kind === "failed") expect(out.error).toMatch(/self-review/i);
   expect(gh.prs).toHaveLength(0);                    // unreviewable -> no PR shipped
   expect(gh.panels[7]).toMatch(/human/i);            // escalated to a human-visible panel
+  expect(ws.cleaned).toHaveLength(0);                // keep the sandbox for inspection
 });
 
 test("#100: an endorsed spec supersedes a stale issue body as the patcher's task description", async () => {
