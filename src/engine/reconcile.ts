@@ -39,7 +39,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
         const out = await issueStep({ ...sctx, deferImplement: true }, i.number);
         if (out.readyImplement) { ready.push({ number: i.number, title: i.title, entry: out.entry }); continue; }
         if (out.entry) entries.push(out.entry);
-        if (out.kind === "progressed" || out.kind === "done") advanced++;
+        if (out.kind === "progressed" || out.kind === "done" || (out.kind === "partial" && out.applied > 0)) advanced++;
         else if (out.kind === "failed") failed++;
         else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
       } catch (e) {
@@ -64,7 +64,7 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
       }
       try {
         const out = await issueStep({ ...octx, deferImplement: false }, r.number);
-        if (out.kind === "progressed" || out.kind === "done") {
+        if (out.kind === "progressed" || out.kind === "done" || (out.kind === "partial" && out.applied > 0)) {
           advanced++;
           entries.push({ number: r.number, title: r.title, priority: "now", rationale: "✅ approved implement → executed this tick" });
         } else if (out.kind === "failed") {
