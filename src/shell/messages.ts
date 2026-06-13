@@ -43,21 +43,30 @@ export interface StateMessage {
   spec?: number;
   agent?: string;
   model?: string;
+  status?: StateStatus;
 }
 
 const STATE_RE = /<!--monastery-state\s*([\s\S]*?)-->\n?/;
 
-export function renderStateMessage(msg: StateMessage): string {
-  const lines = [
-    "v: 1",
-    `kind: ${msg.kind}`,
-    `protocol: ${msg.kind}`,
-  ];
+type RenderInput =
+  | { status: StateStatus; action?: GatedKind; spec?: number; agent?: string; model?: string; body: string }
+  | { kind: StateMessageKind; action?: GatedKind; spec?: number; agent?: string; model?: string; body: string }; // legacy, removed in Task 7
+
+export function renderStateMessage(msg: RenderInput): string {
+  const status: StateStatus | undefined = "status" in msg ? msg.status : undefined;
+  const derived = status ? deriveState(status) : null;
+  const kind = derived ? derived.kind : (msg as { kind: StateMessageKind }).kind;
+  const head = derived ? derived.head : "";
+
+  const lines = ["v: 1", `kind: ${kind}`, `protocol: ${kind}`];
+  if (status) lines.push(`status: ${status}`);
   if (msg.action) lines.push(`action: ${msg.action}`);
   if (msg.spec !== undefined) lines.push(`spec: ${msg.spec}`);
   if (msg.agent) lines.push(`agent: ${msg.agent}`);
   if (msg.model) lines.push(`model: ${msg.model}`);
-  return `<!--monastery-state\n${lines.join("\n")}\n-->\n${msg.body}`;
+
+  const body = head ? `${head}\n\n${msg.body}` : msg.body;
+  return `${STATE_MARKER}\n${lines.join("\n")}\n-->\n${body}`;
 }
 
 export function parseStateMessage(body: string): StateMessage | null {
@@ -68,6 +77,7 @@ export function parseStateMessage(body: string): StateMessage | null {
   if (kind !== "note" && kind !== "approval") return null;
   const action = parseAction(meta.action);
   const spec = meta.spec && /^\d+$/.test(meta.spec) ? Number(meta.spec) : undefined;
+  const status = isStateStatus(meta.status) ? meta.status : undefined;
   return {
     kind,
     body: body.replace(STATE_RE, "").trim(),
@@ -75,6 +85,7 @@ export function parseStateMessage(body: string): StateMessage | null {
     ...(spec !== undefined ? { spec } : {}),
     ...(meta.agent ? { agent: meta.agent } : {}),
     ...(meta.model ? { model: meta.model } : {}),
+    ...(status ? { status } : {}),
   };
 }
 
@@ -107,4 +118,8 @@ function parseMeta(raw: string): Record<string, string> {
 function parseAction(raw: string | undefined): GatedKind | null {
   if (raw === "close" || raw === "merge" || raw === "implement" || raw === "rework") return raw;
   return null;
+}
+
+function isStateStatus(raw: string | undefined): raw is StateStatus {
+  return raw === "awaiting-approval" || raw === "blocked" || raw === "done" || raw === "note";
 }
