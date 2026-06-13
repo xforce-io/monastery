@@ -18,6 +18,7 @@ import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec, parseSpecs } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
+import { approvalKind, approvalSpecVersion, isStateMessage, renderStateMessage, stripStateMessage } from "../shell/messages.js";
 import { makePhaseLogger } from "../phase-logger.js";
 import type { ModelLevels } from "../provider/models.js";
 import type { ProviderPool } from "../provider/select.js";
@@ -90,8 +91,7 @@ export async function withReadOnlyCheckout<T>(ctx: StepCtx, fn: (ctx: StepCtx) =
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
 export const FAIL_THRESHOLD = maintainerSpec.policy.failThreshold ?? 3;
-const NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";
-const APPROVAL_MARK = "protocol: approval";
+const noteMessage = (body: string) => renderStateMessage({ kind: "note", body });
 
 /** One step over one item. Routes by the two control labels the shell owns (PROTOCOL §2). */
 export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
@@ -104,7 +104,7 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   // instead of letting active/maintainer treat it as an ordinary marked comment forever.
   const comments = await ctx.gh.listComments(ctx.repo, issue.number);
   const gate = latestApprovalGate(comments);
-  const latestNoteAt = Math.max(0, ...comments.filter((c) => c.body.includes("protocol: note")).map((c) => c.updatedAt));
+  const latestNoteAt = Math.max(0, ...comments.filter((c) => isStateMessage(c.body, "note")).map((c) => c.updatedAt));
   if (gate && gate.updatedAt > latestNoteAt) {
     await ensureControlLabel(ctx.gh, ctx.repo, NEEDS_APPROVAL);
     await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
@@ -146,7 +146,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     const failThreshold = effectivePolicy(maintainerSpec, ctx.repoPolicy).failThreshold ?? FAIL_THRESHOLD;
     if (fails >= failThreshold) {
       await ctx.gh.upsertPanel(ctx.repo, issue.number,
-        `${NOTE_MARKER}\n⚠️ the maintainer agent has produced no valid actions for ${fails} consecutive ticks — needs a human.`);
+        noteMessage(`⚠️ the maintainer agent has produced no valid actions for ${fails} consecutive ticks — needs a human.`));
     } else {
       console.warn(`[monastery] maintainer skip ${ctx.repo}#${issue.number} (${fails}/${failThreshold})`);
     }
@@ -166,6 +166,8 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // that takes down the tick (constitution §10 — the safety layer always holds, even for a bad agent).
   const sa = log.phase("safe-actions", { count: actions.length });
   const actionErrors: string[] = [];
+  const actionWarnings: string[] = [];
+  let applied = 0;
   for (const a of actions) {
     try {
       if (a.kind === "implement" || a.kind === "rework") {
@@ -177,16 +179,23 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
         if (ctx.dryRun) console.warn(`[dry-run] would propose ${a.kind} ${ctx.repo}#${issue.number} (awaiting human 👍)`);
         else await proposeGate(ctx.gh, ctx.repo, issue.number, a.kind, draft);
       } else await executeSafe(ctx.gh, ctx.repo, a);
+      applied++;
     } catch (e) {
       const msg = (e as Error).message;
-      actionErrors.push(`${a.kind}: ${msg}`);
-      console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed (skipped): ${msg}`);
+      if (a.kind === "relabel") {
+        actionWarnings.push(`${a.kind}: ${msg}`);
+        console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} skipped: ${msg}`);
+      } else {
+        actionErrors.push(`${a.kind}: ${msg}`);
+        console.warn(`[monastery] action ${a.kind} on ${ctx.repo}#${issue.number} failed: ${msg}`);
+      }
     }
   }
   if (actionErrors.length) sa.fail("action-failed", { failures: actionErrors.length });
-  else sa.done();
+  else sa.done(actionWarnings.length ? { applied, warnings: actionWarnings.length } : undefined);
   const entry = deriveEntry(issue, actions, blockedBy, ctx.fails.failCount(ctx.repo, issue.number));
   if (actionErrors.length) return { kind: "failed", error: actionErrors.join("; "), entry };
+  if (actionWarnings.length) return { kind: "partial", warning: actionWarnings.join("; "), applied, failed: actionWarnings.length, entry };
   return actions.length ? { kind: "progressed", entry } : { kind: "noop", entry };
 }
 
@@ -280,7 +289,7 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       const done = kind === "rework"
         ? `✅ rework approved — the draft PR was updated${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`
         : `✅ implement approved — draft PR opened${out.note ? ` (${out.note})` : ""}. Awaiting your review/merge.`;
-      await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${done}`);
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(done));
     }
     return out;
   }
@@ -304,7 +313,7 @@ async function approvedImplementSpec(
   const found = parseSpecs(comments).map((s) => s.version).sort((a, b) => a - b);
   const detail = found.length ? `found spec versions: ${found.join(", ")}` : "no monastery spec comments found";
   const error = `approved spec v${stamped} missing; ${detail}`;
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n⚠️ ${error} — refusing to run patcher without the approved task.`);
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(`⚠️ ${error} — refusing to run patcher without the approved task.`));
   return {
     kind: "failed",
     out: {
@@ -323,7 +332,7 @@ async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
 
 function latestApprovalGate<T extends { body: string; updatedAt: number }>(comments: T[]): T | undefined {
   return comments
-    .filter((c) => c.body.includes(APPROVAL_MARK))
+    .filter((c) => isStateMessage(c.body, "approval"))
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 
@@ -332,20 +341,8 @@ async function terminalizeDeclined(ctx: StepCtx, issue: Issue, note: string): Pr
   await ensureControlLabel(ctx.gh, ctx.repo, DECLINED);
   await ctx.gh.addLabel(ctx.repo, issue.number, DECLINED);
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${note}`);
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(note));
   return { kind: "done" };
-}
-
-/** Read the proposed gated kind from the approval comment marker (`action: close|merge|implement|rework`). */
-function approvalKind(body: string): GatedKind | null {
-  const m = body.match(/^action:\s*(close|merge|implement|rework)\s*$/m);
-  return m ? (m[1] as GatedKind) : null;
-}
-
-/** #95: the spec version a gate was opened against (`spec: N` in the approval marker); 0 if absent. */
-function approvalSpecVersion(body: string): number {
-  const m = body.match(/^spec:\s*(\d+)\s*$/m);
-  return m ? Number(m[1]) : 0;
 }
 
 /**
@@ -374,7 +371,7 @@ function hasNewUnansweredHumanComment(
  */
 async function demoteGate(ctx: StepCtx, issue: Issue, note: string): Promise<Outcome> {
   await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${note}`);
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(note));
   return { kind: "progressed", entry: { number: issue.number, title: issue.title, priority: "now", rationale: note } };
 }
 
@@ -397,7 +394,7 @@ async function recoverRejectedImpl(ctx: StepCtx, issue: Issue): Promise<Outcome 
 
   const note = `实现被拒：PR #${pr.number} 已关闭且未合并。请在 issue 中说明希望调整的方向，monastery 会重新评估并提出新的实现。`;
   await ctx.gh.postComment(ctx.repo, issue.number, `${marker}\n${note}`);
-  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n${note}`);
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, noteMessage(note));
   return {
     kind: "waiting",
     on: "human",
@@ -407,8 +404,7 @@ async function recoverRejectedImpl(ctx: StepCtx, issue: Issue): Promise<Outcome 
 
 /** The human-facing draft = the panel body with monastery markers stripped. */
 function stripMarkers(body: string): string {
-  return body
-    .replace(/<!--monastery-state[\s\S]*?-->\s*/g, "")
+  return stripStateMessage(body)
     .replace(/^⏳ \*\*NEEDS YOUR APPROVAL\*\*[^\n]*\n*/m, "") // drop the #90 approval banner from the human draft
     .trim();
 }
@@ -427,7 +423,7 @@ export async function pendingApprovals(
   for (const i of open) {
     if (i.labels.includes(DECLINED) || !i.labels.includes(NEEDS_APPROVAL)) continue;
     const comments = await gh.listComments(repo, i.number);
-    const gate = comments.filter((c) => c.body.includes(APPROVAL_MARK)).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    const gate = latestApprovalGate(comments);
     if (!gate) continue; // needs-approval but no panel: inconsistent, skip
     const reactions = await gh.reactions(repo, gate.id);
     if (reactions.some((r) => r.content === "+1")) continue; // already approved

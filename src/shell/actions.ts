@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { LABEL_DEFS, NEEDS_APPROVAL } from "../github/labels.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
+import { renderStateMessage } from "./messages.js";
 
 // Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
 // `implement` joins close/merge (issue #88): the agent may PROPOSE a patch, but the patcher
@@ -55,11 +56,6 @@ export const ActionsSchema = z.object({ actions: z.array(ActionSchema) });
 // approval/terminal state, and faking them would bypass the human gate (issue #92).
 const CONTROL_LABELS: ReadonlySet<string> = new Set([NEEDS_APPROVAL, "monastery:declined"]);
 const replyMarker = (toCommentId: string) => `<!--monastery-reply to=${toCommentId}-->`;
-// The approval marker records the gated action AND the spec version the gate was opened against (#95),
-// so awaitingGate can tell a stale implement gate (a newer spec landed under it) from a current one.
-const approvalMarker = (proposal: GatedKind, specVersion: number) =>
-  `<!--monastery-state\nprotocol: approval\naction: ${proposal}\nspec: ${specVersion}\n-->`;
-
 /** Execute a SAFE action, idempotently (constitution §3, §6). */
 export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): Promise<void> {
   switch (a.kind) {
@@ -78,7 +74,7 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
     case "panel":
       // Carry the panel marker so upsertPanel finds its single sticky comment AND it's never mistaken
       // for a human comment (constitution §6, §7). The agent supplies content; the shell stamps the marker.
-      await gh.upsertPanel(repo, a.num, `<!--monastery-state\nprotocol: note\n-->\n${a.body}`);
+      await gh.upsertPanel(repo, a.num, renderStateMessage({ kind: "note", body: a.body }));
       return;
     case "openDraftPR":
       if (await gh.findPrForBranch(repo, a.branch)) return; // already open
@@ -126,7 +122,7 @@ export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, 
   const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
   await ensureControlLabel(gh, repo, NEEDS_APPROVAL);
   await gh.addLabel(repo, num, NEEDS_APPROVAL);
-  await gh.postComment(repo, num, `${approvalMarker(proposal, specVersion)}\n${banner}\n\n${draft}`);
+  await gh.postComment(repo, num, renderStateMessage({ kind: "approval", action: proposal, spec: specVersion, body: `${banner}\n\n${draft}` }));
 }
 
 export async function ensureControlLabel(gh: GitHubAdapter, repo: string, name: string): Promise<void> {

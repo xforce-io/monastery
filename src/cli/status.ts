@@ -117,6 +117,7 @@ export function formatStatus(entries: StatusEntry[]): string {
 export function explainOutcome(out: Outcome): string {
   switch (out.kind) {
     case "progressed": return out.note ? `progressed (${out.note})` : "progressed";
+    case "partial":    return `partial: ${out.applied} applied, ${out.failed} skipped: ${out.warning}`;
     case "waiting":    return out.on === "human" ? "awaiting your 👍 on the approval comment" : `waiting on ${out.on}`;
     case "done":       return "done (terminal)";
     case "failed":     return `failed: ${out.error}`;

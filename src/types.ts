@@ -4,6 +4,7 @@
 export type WaitReason = "human" | "peer" | "ci";
 export type Outcome = (
   | { kind: "progressed"; note?: string }
+  | { kind: "partial"; warning: string; applied: number; failed: number }
   | { kind: "waiting"; on: WaitReason }
   | { kind: "done" }
   | { kind: "failed"; error: string }

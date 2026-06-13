@@ -30,6 +30,8 @@
 | `<!--monastery-reply to=<id>-->` | 对某条人类评论的回复 |
 | 审批评论:`protocol: approval` + `action: close\|merge\|implement\|rework` | 一个待放行的 gated 提议 |
 
+`monastery-state` 由 `src/shell/messages.ts` 统一渲染/解析。v1 块包含 `v: 1`、`kind: note|approval`，并保留 `protocol: note|approval` 以兼容旧读者；approval 还带 `action` 和 gate 绑定的 `spec` 版本。解析器必须继续读取历史 v0 块（只有 `protocol`/`action`/`spec`）。
+
 **铁律:monastery 发的每条评论都带 marker。人类评论 = 无 marker。** 外壳/agent 据此排除自己,绝不自问自答。
 
 ## 4. 信号(人 → 外壳,放行 gated 动作)
