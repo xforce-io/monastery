@@ -1,6 +1,6 @@
 // src/engine/reconcile.ts — L_repo (PROTOCOL §6).
 // Each tick: list open items, classify into the three coarse states, step each non-terminal one.
-import type { BacklogEntry, BacklogSnapshot, ReconcileResult, WaitReason } from "../types.js";
+import type { BacklogEntry, ReconcileResult, WaitReason } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { issueStep, withReadOnlyCheckout, type StepCtx } from "./issue-step.js";
 import { sortEntries } from "./backlog.js";
@@ -94,18 +94,6 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
     : waiting.human > 0
       ? HUMAN_BACKOFF_MS
       : NEW_ISSUE_BACKOFF_MS;
-
-  // Backlog snapshot (issue #82): maintainer-written projection of this tick's decisions.
-  // Disposable; rebuilt every tick. Skipped under dry-run (no persistent side effects).
-  if (!ctx.dryRun && ctx.backlog) {
-    const snapshot: BacklogSnapshot = {
-      generatedAt: new Date(ctx.now()).toISOString(),
-      repo: ctx.repo,
-      rankedOf: { ranked: entries.length, open: runnable.length },
-      entries: sortEntries(entries),
-    };
-    ctx.backlog.writeBacklog(ctx.repo, snapshot);
-  }
 
   return {
     repo: ctx.repo,

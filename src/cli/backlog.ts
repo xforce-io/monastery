@@ -21,8 +21,8 @@ export function formatBacklog(s: BacklogSnapshot): string {
 
 export function missingBacklog(repo: string, tracked: boolean): MissingBacklog {
   const hint = tracked
-    ? `run monastery step --repo ${repo} to create the first backlog snapshot`
-    : `run monastery repos add ${repo}, then monastery step --repo ${repo}`;
+    ? `run monastery backlog --repo ${repo} to create the first backlog snapshot`
+    : `run monastery repos add ${repo}, then monastery backlog --repo ${repo}`;
   return { repo, error: "missing_backlog_snapshot", tracked, hint };
 }
 

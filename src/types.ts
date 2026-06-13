@@ -35,10 +35,12 @@ export interface Issue {
   body: string;
   labels: string[];
   state: "open" | "closed";
+  /** GitHub issue updated_at as epoch ms. Used for read-only backlog snapshot freshness. */
+  updatedAt?: number;
 }
 
-// Backlog snapshot (issue #82): maintainer-written, human-read, disposable. Derived
-// deterministically from the maintainer's actions — see docs/design/82-backlog-snapshot.md.
+// Backlog snapshot (issue #82/#140): local, human-read, disposable. Refreshed by the read-only
+// backlog triage path, not by step/reconcile/issueStep governance actions.
 export type Priority = "now" | "soon" | "later" | "parked";
 
 export interface BacklogEntry {
@@ -58,6 +60,7 @@ export interface BacklogEntry {
 export interface BacklogSnapshot {
   generatedAt: string;
   repo: string;
+  fingerprint?: string;
   rankedOf: { ranked: number; open: number };
   entries: BacklogEntry[]; // already sorted
 }

@@ -27,7 +27,7 @@ export interface FailTracker {
   clearFail(repo: string, num: number): void;
 }
 
-/** Writes the per-repo backlog snapshot (issue #82). Disposable — rebuilt each step. */
+/** Writes the per-repo backlog snapshot (issue #82/#140). Disposable — rebuilt by `monastery backlog`. */
 export interface BacklogWriter {
   writeBacklog(repo: string, snapshot: BacklogSnapshot): void;
 }

@@ -123,10 +123,10 @@ test("reactions returns [] when none / api fails", async () => {
 
 test("getIssue reads one issue (any repo, open or closed) and maps it to Issue", async () => {
   const captured: string[][] = [];
-  const json = JSON.stringify({ number: 42, title: "upstream", body: "b", labels: [{ name: "type:bug" }], state: "CLOSED" });
+  const json = JSON.stringify({ number: 42, title: "upstream", body: "b", labels: [{ name: "type:bug" }], state: "CLOSED", updatedAt: "1970-01-01T00:00:01.000Z" });
   const gh = new GhAdapter(async (args) => { captured.push(args); return json; });
-  expect(await gh.getIssue("owner/other", 42)).toEqual({ number: 42, title: "upstream", body: "b", labels: ["type:bug"], state: "closed" });
-  expect(captured[0]).toEqual(["issue", "view", "42", "--repo", "owner/other", "--json", "number,title,body,labels,state"]);
+  expect(await gh.getIssue("owner/other", 42)).toEqual({ number: 42, title: "upstream", body: "b", labels: ["type:bug"], state: "closed", updatedAt: 1000 });
+  expect(captured[0]).toEqual(["issue", "view", "42", "--repo", "owner/other", "--json", "number,title,body,labels,state,updatedAt"]);
 });
 
 test("getIssue returns null when the issue is missing / inaccessible", async () => {

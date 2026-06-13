@@ -53,7 +53,7 @@ export interface StepCtx {
    *  reconcile tick scheduler can run at most one runImplement per tick. The single-issue CLI path leaves
    *  this false so `step --issue N` still implements immediately. */
   deferImplement?: boolean;
-  /** Sink for the per-repo backlog snapshot (issue #82); reconcile writes through it. */
+  /** Legacy optional sink kept for older tests/callers; #140 backlog snapshots are refreshed by `monastery backlog`. */
   backlog?: BacklogWriter;
   /** #108: read-only repo checkout for code-reading agents (maintainer). Shared per tick; the shell never
    *  commits it. When set, the maintainer runs with this as its cwd so it can verify root cause from code. */
