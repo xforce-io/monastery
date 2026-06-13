@@ -301,6 +301,21 @@ test("#88: approved implement consumes the gate — clears needs-approval, rewri
   expect(gh.prs).toHaveLength(1);                        // still one PR — no re-run loop
 });
 
+test("#135: approved implement with empty diff fails but keeps the approval gate pending", async () => {
+  const gh = ghWith({ number: 61, title: "fix it", body: "broken", labels: [], state: "open" });
+  await proposeGate(gh, "o/r", 61, "implement", "## Plan");
+  gh.commentReactions["0"] = ["+1"];
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws: new FakeWorkspace({ diff: "", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 61);
+  expect(out.kind).toBe("failed");
+  expect(gh.prs).toHaveLength(0);
+  const [i1] = await gh.listOpenIssues("o/r", 0);
+  expect(i1.labels).toContain(NEEDS_APPROVAL);
+  expect(gh.comments[61][0]).toContain("action: implement");
+  expect(gh.commentReactions["0"]).toContain("+1");
+  expect(gh.panels[61]).toMatch(/made no changes|workdir/i);
+});
+
 // --- #88 review fix: stale-reaction guard — a 👍 from before the gate must not approve it ---
 
 test("#88: a 👍 left on an older gate comment does NOT approve the latest implement gate", async () => {

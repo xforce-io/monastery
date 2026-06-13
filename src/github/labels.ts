@@ -8,6 +8,7 @@ export const THESIS = { in: "thesis:in", out: "thesis:out", unclear: "thesis:unc
 // --- control labels (the shell's, PROTOCOL §2) ---
 export const NEEDS_APPROVAL = "monastery:needs-approval"; // a gated proposal is parked, awaiting a human signal
 export const DECLINED = "monastery:declined";             // terminal: a proposal was declined
+export const NEEDS_HUMAN = "monastery:needs-human";       // display: automation is blocked and needs operator help
 
 export interface LabelDef { name: string; color: string; description: string; }
 
@@ -23,4 +24,5 @@ export const LABEL_DEFS: LabelDef[] = [
   // control labels the shell routes on
   { name: NEEDS_APPROVAL, color: "D93F0B", description: "monastery proposed an outward action; awaiting approval" },
   { name: DECLINED, color: "B60205", description: "human declined the proposal" },
+  { name: NEEDS_HUMAN, color: "B60205", description: "monastery is blocked and needs a human to inspect" },
 ];

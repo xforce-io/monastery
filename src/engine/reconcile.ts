@@ -64,8 +64,15 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
       }
       try {
         const out = await issueStep({ ...octx, deferImplement: false }, r.number);
-        if (out.kind === "progressed" || out.kind === "done") advanced++;
-        entries.push({ number: r.number, title: r.title, priority: "now", rationale: "✅ approved implement → executed this tick" });
+        if (out.kind === "progressed" || out.kind === "done") {
+          advanced++;
+          entries.push({ number: r.number, title: r.title, priority: "now", rationale: "✅ approved implement → executed this tick" });
+        } else if (out.kind === "failed") {
+          failed++;
+          entries.push({ number: r.number, title: r.title, priority: "now", rationale: `approved implement → failed: ${out.error}` });
+        } else {
+          entries.push({ number: r.number, title: r.title, priority: "now", rationale: `approved implement → ${out.kind}` });
+        }
       } catch (e) {
         failed++;
         console.warn(`[monastery] implement ${ctx.repo}#${r.number} failed (skipped): ${(e as Error).message}`);
