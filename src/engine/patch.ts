@@ -63,30 +63,38 @@ async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
   await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
 }
 
-type ReviewRun = (diff: string, issue: Issue) => Promise<{ verdict: ReviewVerdict | null; model?: string }>;
-
-function defaultReview(ctx: StepCtx): ReviewRun {
-  return async (diff, issue) => {
+/**
+ * Resolve the review runner AND its model ONCE, before the fix loop — so #144 provenance and the
+ * `review:start` phase log carry the accurate model on every iteration (including the first), and so a
+ * cross-provider review (#133) is resolved a single time and shared across all fix rounds (mirrors the
+ * patcher resolution). An injected `ctx.review` (tests) reports a best-effort model from the same chain.
+ */
+async function resolveReview(ctx: StepCtx): Promise<{ run: ReviewFn; model: string }> {
+  if (ctx.review) {
+    return { run: ctx.review, model: ctx.reviewModel ?? ctx.modelLevels?.strong ?? ctx.model };
+  }
+  // #72/#131: reviewer model precedence — agents.reviewer.model → legacy ctx.reviewModel
+  // (MONASTERY_REVIEW_MODEL) → strong model level → ctx.model.
+  // #133: agents.reviewer.provider may route the review to a non-primary provider (cross-model
+  // review); the model is then re-resolved at that provider's strong level instead of the chain above.
+  const policy = effectivePolicy(reviewerSpec, ctx.repoPolicy);
+  const explicitModel = policy.model ?? ctx.reviewModel;
+  const rt = await resolveRoleRuntime({
+    agent: "reviewer", policy, level: "strong",
+    provider: ctx.provider, model: explicitModel ?? ctx.modelLevels?.strong ?? ctx.model,
+    explicitModel, pool: ctx.providerPool,
+  });
+  const run: ReviewFn = async (diff, issue) => {
     // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
     const reviewDir = mkdtempSync(join(tmpdir(), "monastery-review-"));
     try {
-      // #72/#131: reviewer model precedence — agents.reviewer.model → legacy ctx.reviewModel
-      // (MONASTERY_REVIEW_MODEL) → strong model level → ctx.model.
-      // #133: agents.reviewer.provider may route the review to a non-primary provider (cross-model
-      // review); the model is then re-resolved at that provider's strong level instead of the chain above.
-      const policy = effectivePolicy(reviewerSpec, ctx.repoPolicy);
-      const explicitModel = policy.model ?? ctx.reviewModel;
-      const rt = await resolveRoleRuntime({
-        agent: "reviewer", policy, level: "strong",
-        provider: ctx.provider, model: explicitModel ?? ctx.modelLevels?.strong ?? ctx.model,
-        explicitModel, pool: ctx.providerPool,
-      });
       // #76: a review finding can land in a PR comment — give the reviewer the repo's language policy too.
-      return { verdict: await reviewer(rt.provider, rt.model, { diff, issue, language: ctx.language }, reviewDir), model: rt.model };
+      return await reviewer(rt.provider, rt.model, { diff, issue, language: ctx.language }, reviewDir);
     } finally {
       rmSync(reviewDir, { recursive: true, force: true });
     }
   };
+  return { run, model: rt.model };
 }
 
 /**
@@ -293,19 +301,15 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   diff = await ctx.ws.stagedDiff(dir);
 
   // Self-review gate: review the staged diff; fix BLOCKING findings and re-review (<= REVIEW_MAX_ITERS).
-  const review: ReviewRun = ctx.review
-    ? async (diff, issue) => ({ verdict: await ctx.review!(diff, issue), model: ctx.reviewModel ?? ctx.modelLevels?.strong ?? ctx.model })
-    : defaultReview(ctx);
+  // Resolve the reviewer (and its model) ONCE up front — accurate provenance/phase logs from iteration 1.
+  const { run: review, model: reviewerModel } = await resolveReview(ctx);
   const fixedTitles: string[] = [];
   let lastVerdict: ReviewVerdict | null = null;
   let reviewerFailed = false;
-  let reviewerModel: string | undefined;
   for (let iter = 1; iter <= REVIEW_MAX_ITERS; iter++) {
     const attempt = `${iter}/${REVIEW_MAX_ITERS}`;
-    const rev = log.phase("review", { attempt, model: reviewerModel ?? ctx.reviewModel ?? ctx.modelLevels?.strong ?? ctx.model });
-    const reviewResult = await review(diff, issue);
-    reviewerModel = reviewResult.model ?? reviewerModel;
-    lastVerdict = reviewResult.verdict;
+    const rev = log.phase("review", { attempt, model: reviewerModel });
+    lastVerdict = await review(diff, issue);
     if (!lastVerdict) { rev.fail("reviewer-failed"); reviewerFailed = true; break; } // reviewer failed -> conservative pass
     const blocking = lastVerdict.findings.filter((f) => f.severity === "blocking");
     if (blocking.length === 0) { rev.done({ blocking: 0 }); break; }      // clean -> ship
