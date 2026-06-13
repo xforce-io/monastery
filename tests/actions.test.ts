@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
-import { executeSafe, doClose, doMerge, proposeGate, ActionSchema } from "../src/shell/actions.js";
+import { executeSafe, doClose, doMerge, proposeGate, ActionSchema, applyStateLabels } from "../src/shell/actions.js";
 import { parseStateMessage } from "../src/shell/messages.js";
 
 const gh = () => new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
@@ -141,4 +141,21 @@ test("proposeGate adds a visible NEEDS-APPROVAL banner (not just the hidden HTML
   // still machine-readable for awaitingGate + still carries the draft:
   expect(approval).toContain("action: implement");
   expect(approval).toContain("## Plan: do the thing");
+});
+
+test("#144 applyStateLabels derives the control label from status", async () => {
+  const g = gh();
+  await applyStateLabels(g, "o/r", 1, "blocked");
+  let [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-human");
+
+  await applyStateLabels(g, "o/r", 1, "awaiting-approval");
+  [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-approval");
+
+  await applyStateLabels(g, "o/r", 1, "done");          // removes needs-approval
+  [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain("monastery:needs-approval");
+
+  await applyStateLabels(g, "o/r", 1, "note");           // no-op
 });

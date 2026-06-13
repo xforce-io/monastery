@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { LABEL_DEFS, NEEDS_APPROVAL } from "../github/labels.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
-import { renderStateMessage } from "./messages.js";
+import { renderStateMessage, deriveState, type StateStatus } from "./messages.js";
 
 // Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
 // `implement` joins close/merge (issue #88): the agent may PROPOSE a patch, but the patcher
@@ -134,6 +134,14 @@ export async function ensureControlLabel(gh: GitHubAdapter, repo: string, name: 
   const def = LABEL_DEFS.find((l) => l.name === name);
   if (!def) throw new Error(`unknown control label: ${name}`);
   await gh.ensureLabel(repo, def.name, def.color, def.description);
+}
+
+/** #144 A3: apply the control-label op implied by a state — the label NAME comes from deriveState,
+ * never hand-picked, so head/label/block can't drift. Idempotent. */
+export async function applyStateLabels(gh: GitHubAdapter, repo: string, num: number, status: StateStatus): Promise<void> {
+  const { labels } = deriveState(status);
+  if (labels.add) { await ensureControlLabel(gh, repo, labels.add); await gh.addLabel(repo, num, labels.add); }
+  if (labels.remove) await gh.removeLabel(repo, num, labels.remove);
 }
 
 /**
