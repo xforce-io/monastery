@@ -1,4 +1,36 @@
 import type { GatedKind } from "./actions.js";
+import { NEEDS_APPROVAL, NEEDS_HUMAN } from "../github/labels.js";
+
+export const STATE_MARKER = "<!--monastery-state";
+
+/** #90 approval banner — moved here so the visible head is derived, never hand-written at call sites. */
+export const AWAITING_APPROVAL_BANNER =
+  "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
+
+/** The closed set of states a class-A machine message can be in (#144 A3). */
+export type StateStatus = "awaiting-approval" | "blocked" | "done" | "note";
+
+/**
+ * #144 A3: the SINGLE source from which a class-A message's visible head, machine-block `kind`, and
+ * control-label op are all derived — so they can never drift apart. `head` is a generic prefix; the
+ * caller's `body` still carries the specifics.
+ */
+export function deriveState(status: StateStatus): {
+  head: string;
+  kind: StateMessageKind;
+  labels: { add?: string; remove?: string };
+} {
+  switch (status) {
+    case "awaiting-approval":
+      return { head: AWAITING_APPROVAL_BANNER, kind: "approval", labels: { add: NEEDS_APPROVAL } };
+    case "blocked":
+      return { head: "⚠️ **需要人工介入 / needs a human**", kind: "note", labels: { add: NEEDS_HUMAN } };
+    case "done":
+      return { head: "✅ **已完成 / done**", kind: "note", labels: { remove: NEEDS_APPROVAL } };
+    case "note":
+      return { head: "", kind: "note", labels: {} };
+  }
+}
 
 export type StateMessageKind = "note" | "approval";
 
