@@ -115,7 +115,7 @@ class PerIssueProvider implements AgentProvider {
   }
 }
 
-test("writes a sorted backlog snapshot through ctx.backlog", async () => {
+test("#140 reconcile does NOT write backlog snapshots", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [
     { number: 1, title: "a", body: "b", labels: [], state: "open" },  // relabel -> later
     { number: 2, title: "c", body: "d", labels: [], state: "open" },  // panel   -> soon
@@ -127,9 +127,7 @@ test("writes a sorted backlog snapshot through ctx.backlog", async () => {
   const written: BacklogSnapshot[] = [];
   const c = { ...baseCtx(gh, provider), backlog: { writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
   await reconcile(c);
-  expect(written.length).toBe(1);
-  expect(written[0].entries.map((e) => e.number)).toEqual([2, 1]); // soon(#2) before later(#1)
-  expect(written[0].rankedOf).toEqual({ ranked: 2, open: 2 });
+  expect(written).toEqual([]);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
@@ -158,9 +156,7 @@ test("#108 clones the repo read-only ONCE per tick, runs the maintainer in it, t
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
-// --- #86: at most one implement (runImplement / patcher) per tick, chosen by backlog priority ---
-
-import type { BacklogSnapshot as Snap } from "../src/types.js";
+// --- #86: at most one implement (runImplement / patcher) per tick, chosen by deterministic ready ordering ---
 
 /** Two issues, each with a human-approved (👍) implement gate. Both are "ready" to runImplement. */
 async function twoApprovedImplements(): Promise<FakeGitHub> {
@@ -175,29 +171,23 @@ async function twoApprovedImplements(): Promise<FakeGitHub> {
   return gh;
 }
 
-function implCtx(gh: FakeGitHub, written?: Snap[]) {
+function implCtx(gh: FakeGitHub) {
   return {
     ...baseCtx(gh, new FakeProvider({ "actions.json": JSON.stringify({ actions: [] }) })),
     ws: new FakeWorkspace({ diff: "patch", tests: true }),
     review: async () => ({ findings: [] }),
-    ...(written ? { backlog: { writeBacklog: (_r: string, s: Snap) => { written.push(s); } } } : {}),
   };
 }
 
 test("#86 two approved implements in one tick → only ONE PR opens; the other defers (gate intact)", async () => {
   const gh = await twoApprovedImplements();
-  const written: Snap[] = [];
-  const c = implCtx(gh, written);
+  const c = implCtx(gh);
   await reconcile(c);
   expect(gh.prs).toHaveLength(1);                              // exactly one heavy runImplement this tick
   expect(gh.prs[0].body).toContain("Closes #1");              // backlog tiebreak: lower number wins
   const [i1, i2] = await gh.listOpenIssues("o/r", 0);
   expect(i1.labels).not.toContain("monastery:needs-approval"); // winner's gate consumed
   expect(i2.labels).toContain("monastery:needs-approval");     // deferred candidate's gate untouched
-  // backlog reflects executed vs deferred
-  const entries = written[0].entries;
-  expect(entries.find((e) => e.number === 1)?.rationale).toMatch(/executed/i);
-  expect(entries.find((e) => e.number === 2)?.rationale).toMatch(/defer/i);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
@@ -207,12 +197,10 @@ test("#135 approved implement empty diff counts as failed and is not reported as
   ]});
   await proposeGate(gh, "o/r", 1, "implement", "## Plan A");
   gh.commentReactions["0"] = ["+1"];
-  const written: Snap[] = [];
   const c = {
     ...baseCtx(gh, new FakeProvider({ "actions.json": JSON.stringify({ actions: [] }) })),
     ws: new FakeWorkspace({ diff: "", tests: true }),
     review: async () => ({ findings: [] }),
-    backlog: { writeBacklog: (_r: string, s: Snap) => { written.push(s); } },
   };
   const r = await reconcile(c);
   expect(r.advanced).toBe(0);
@@ -220,9 +208,6 @@ test("#135 approved implement empty diff counts as failed and is not reported as
   expect(gh.prs).toHaveLength(0);
   const [i1] = await gh.listOpenIssues("o/r", 0);
   expect(i1.labels).toContain("monastery:needs-approval");
-  const entry = written[0].entries.find((e) => e.number === 1);
-  expect(entry?.rationale).toMatch(/failed|no changes/i);
-  expect(entry?.rationale).not.toMatch(/executed/i);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
@@ -233,13 +218,11 @@ test("#137 spec-backed approved implement missing spec fails during scheduling a
   await gh.postComment("o/r", 1,
     "<!--monastery-state\nprotocol: approval\naction: implement\nspec: 1\n-->\n⏳ **NEEDS YOUR APPROVAL**\n\n## Approved docs-only plan");
   gh.commentReactions["0"] = ["+1"];
-  const written: Snap[] = [];
   const ws = new FakeWorkspace({ diff: "patch", tests: true });
   const c = {
     ...baseCtx(gh, new FakeProvider({ "actions.json": JSON.stringify({ actions: [] }) })),
     ws,
     review: async () => ({ findings: [] }),
-    backlog: { writeBacklog: (_r: string, s: Snap) => { written.push(s); } },
   };
   const r = await reconcile(c);
   expect(r.advanced).toBe(0);
@@ -249,8 +232,6 @@ test("#137 spec-backed approved implement missing spec fails during scheduling a
   const [i1] = await gh.listOpenIssues("o/r", 0);
   expect(i1.labels).toContain("monastery:needs-approval");
   expect(i1.labels).toContain("monastery:needs-human");
-  const entry = written[0].entries.find((e) => e.number === 1);
-  expect(entry?.rationale).toMatch(/approved spec|missing/i);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 

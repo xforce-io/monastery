@@ -8,6 +8,12 @@ export interface MissingBacklog {
   hint: string;
 }
 
+export interface BacklogRepoError {
+  repo: string;
+  error: "backlog_refresh_failed";
+  message: string;
+}
+
 export function formatBacklog(s: BacklogSnapshot): string {
   const header = `${s.repo} — backlog (ranked ${s.rankedOf.ranked} of ${s.rankedOf.open} open, @ ${s.generatedAt})`;
   const lines = s.entries.map((e) => {
@@ -21,14 +27,18 @@ export function formatBacklog(s: BacklogSnapshot): string {
 
 export function missingBacklog(repo: string, tracked: boolean): MissingBacklog {
   const hint = tracked
-    ? `run monastery step --repo ${repo} to create the first backlog snapshot`
-    : `run monastery repos add ${repo}, then monastery step --repo ${repo}`;
+    ? `run monastery backlog --repo ${repo} to create the first backlog snapshot`
+    : `run monastery repos add ${repo}, then monastery backlog --repo ${repo}`;
   return { repo, error: "missing_backlog_snapshot", tracked, hint };
 }
 
 export function formatMissingBacklog(m: MissingBacklog): string {
   const why = m.tracked ? "has no backlog snapshot yet" : "is not tracked or has no backlog snapshot";
   return `${m.repo} — ${why}; ${m.hint}`;
+}
+
+export function formatBacklogRepoError(e: BacklogRepoError): string {
+  return `${e.repo} — backlog refresh failed: ${e.message}`;
 }
 
 export interface PendingItem { repo: string; number: number; title: string; approvalKind?: string; approvalCommentId: string }

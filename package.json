@@ -37,10 +37,11 @@
   },
   "scripts": {
     "build": "tsup",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepare": "tsup",
-    "prepublishOnly": "npm run test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "execa": "^9.5.1",

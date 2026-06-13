@@ -128,7 +128,7 @@ test("#139 missing backlog snapshot renders an actionable hint", () => {
     repo: "o/r",
     error: "missing_backlog_snapshot",
     tracked: false,
-    hint: "run monastery repos add o/r, then monastery step --repo o/r",
+    hint: "run monastery repos add o/r, then monastery backlog --repo o/r",
   });
   expect(out).toContain("not tracked or has no backlog snapshot");
   expect(out).toContain("monastery repos add o/r");

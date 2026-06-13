@@ -1,101 +1,106 @@
-# 82 — maintainer backlog snapshot
+# 82 / 140 — backlog snapshot and read-only triage
 
-> Source of truth for #82. Issue body keeps a one-line summary + link to this doc.
-> Related: #77/#81 (step lock), #34 (v2 thin governance shell), maintainer-as-PM A.2.
+> #82 introduced the local `backlog.json` snapshot.
+> #140 supersedes the original derivation rule: backlog ranking must no longer be
+> derived from per-issue maintainer actions such as `implement` or `rework`.
 
 ## Problem
 
-Short-term backlog ordering lives in a hand-written `todos.md`. Nobody owns it, so it
-drifts — it just went stale because GitHub state (`#74 merged`, `#80 merged`) was copied
-in by hand. Meanwhile the maintainer agent is already a PM: every tick it judges, per open
-issue, whether that item is "among the MOST worth advancing now" (`maintainer.ts:39-42`).
-That judgement is **not persisted and not observable** — humans can only track it via the
-hand-written file.
+The first backlog snapshot design made backlog ranking a projection of `step`:
+
+```text
+step -> reconcile -> issueStep -> maintainer actions -> deriveEntry -> backlog.json
+```
+
+That made the view observable, but it also coupled two different questions:
+
+1. What is the current repo backlog order?
+2. What governance action should be taken on this single issue now?
+
+Those are not the same. A backlog entry whose rationale is
+`proposed implement -> patcher` is not explaining why the issue matters; it is
+describing a later execution decision.
 
 ## Goal
 
-Project the maintainer's decisions into a **per-repo, observable, rebuildable** backlog
-snapshot that replaces `todos.md`'s `suggested order`, plus a view command.
+`monastery backlog` should be a read-only backlog triage view:
 
-## Non-goals
+- list the repo's non-declined open issues;
+- build a compact repo-level triage input from issue facts;
+- rank all open issues into `now` / `soon` / `later` / `parked`;
+- explain each rank with a human-readable rationale;
+- cache the result in local `backlog.json`;
+- refresh the cache only when the underlying issue set changed.
 
-- No `--concurrency`, no issue lease, no scheduler (same as #77).
-- No human-editable backlog: to change priority, change the issue (label/comment). The
-  snapshot is a read-only derived artifact (see Roles).
-- No LLM-emitted priority/score field (see Key decision).
+It must not write GitHub state or trigger `step` governance actions.
 
-## Key decision: derive priority from actions, not from a new LLM field
+## Terms
 
-The maintainer's priority judgement is **already expressed in the actions it chooses** —
-`implement` means "do this now", light governance means "not the most worth doing now".
-Asking the LLM to *also* emit a separate `priority` field would create a second judgement
-source that can contradict the first (propose `implement` yet label it `later`). It would
-also reintroduce scale drift and parse failures.
+**Triage** means analysis and prioritization. In the backlog path it is read-only.
 
-So priority is **deterministically derived from the actions the maintainer already chose**.
-The snapshot is a faithful projection of what the agent actually decided — it cannot "say
-one thing and do another", because the snapshot *is* computed from the doing. The maintainer
-agent is **not modified**; this feature lives entirely in the shell. This matches #34's
-thin-shell principle: the shell observes and projects the agent's decisions without adding
-to what it must be trusted to produce.
+**Label** means a GitHub issue label. Labels are one input feature to backlog triage,
+alongside title, body, comments, dependency state, approval state, linked PR state,
+and timestamps. Updating labels remains a `step` responsibility.
 
-## Roles & data flow
+**Governance action** means an action such as `relabel`, `spec`, `propose`,
+`implement`, `rework`, `reply`, or `close`. These belong to `step` / `issueStep`,
+not to `backlog`.
 
-`backlog.json` is **maintainer-written, human-read**, disposable and rebuildable — same
-class as `cache.json` (`store.ts:13`). Humans don't edit it; "rebuild" = next tick
-overwrites. Because nobody hand-edits it, overwrite-on-rebuild never clobbers human work.
+## Layering
 
+| Layer | Responsibility | May write GitHub? |
+|---|---|---:|
+| `backlog` | Read-only repo-level ranking and presentation | No |
+| `step` / `reconcile` | Repo-level governance scheduling | Yes |
+| `issueStep` | Single-issue governance state machine | Yes |
+| patcher executor | Code changes, PR creation, rework after approval | Yes |
+
+`reconcile` and `issueStep` remain useful for state-changing maintenance work. They
+should not be a prerequisite for viewing the backlog order.
+
+## Desired data flow
+
+```text
+monastery backlog
+  -> listOpenIssues(repo)
+  -> computeBacklogFingerprint(open issues)
+  -> readBacklog(repo)
+  -> if snapshot fingerprint is fresh:
+       render cached snapshot
+     else:
+       buildBacklogTriageInput(open issues)
+       triageBacklog(input)              [read-only, repo-level, schema-checked]
+       normalize + sort + validate
+       Store.writeBacklog(repo, snapshot)
+       render snapshot
 ```
-reconcile (tick)
-  └─ for issue in batch:
-       issueStep → active()  → maintainer() returns actions (UNCHANGED)
-                              → deriveEntry(issue, actions, deps, fails) → Outcome.entry
-                  → awaitingGate() → entry = parked
-  └─ collect out.entry across the batch
-  └─ sort (priority bucket → deterministic tiebreak)
-  └─ Store.writeBacklog(repo, snapshot)         [skipped under --dry-run]
 
-monastery backlog --repo  →  Store.readBacklog  →  render ranked list
-```
+The triage agent may use an LLM, but its schema is limited to backlog data. It must
+not return governance actions.
 
-## Derivation (pure function, `engine/backlog.ts`)
+## Fingerprint
 
-`deriveEntry(issue, actions, deps, fails)` — take the **strongest** signal among the
-proposed actions:
+Freshness should be based on content, not a wall-clock TTL.
 
-| Actions this tick | priority | rationale (mechanical) |
-|---|---|---|
-| contains `implement` | `now` | "proposed implement → patcher" |
-| contains `spec`/`endorse`/`propose`/`panel`/`openDraftPR` | `soon` | "advancing: {kinds}" |
-| only `reply`/`relabel` | `later` | "light governance: {kinds}" |
-| empty | `later` | "no action this tick" |
-| awaiting-gate (no maintainer call) | `parked` | "awaiting human approval" |
-| no valid maintainer output (null / out-of-scope) | `later` | "no valid output" |
+A sufficient fingerprint is:
 
-`blockedBy` = the issue's `Depends-on:` refs still open (from `input.deps`). `fails` =
-current consecutive-fail count (existing fail tracker).
+- the set of open, non-declined issue numbers;
+- each issue's `updatedAt`;
+- any other fetched state that affects ranking, if added later.
 
-`propose` (asks a human to approve close/merge) counts as `soon` — it is advancing
-governance this tick. Next tick the issue carries `needs-approval` and routes through
-`awaitingGate()`, becoming `parked`. This progression is intentional, not a contradiction.
+If the fingerprint is unchanged, repeated `monastery backlog` runs should not spend
+LLM tokens.
 
-## Sorting
+If the fingerprint changed, `monastery backlog` may perform one lightweight repo-level
+triage pass and update the local snapshot.
 
-Bucket order `now > soon > later > parked`. Within a bucket, deterministic tiebreak:
+## Snapshot
 
-1. not blocked by open deps first (`blockedBy` empty wins);
-2. fewer `fails` first;
-3. lower issue `number` first (older first — stable).
+`backlog.json` remains local, disposable, and rebuildable.
 
-`parked` sits last: it's already handed to a human, the agent has nothing to do on it.
-
-## Data structures
+It should contain the fingerprint used to build it, plus the ranked entries:
 
 ```ts
-// types.ts — Outcome gains an optional carrier
-interface Outcome { /* existing kind/on... */ entry?: BacklogEntry }
-
-// engine/backlog.ts (new) + config/store.ts
 type Priority = "now" | "soon" | "later" | "parked";
 
 interface BacklogEntry {
@@ -103,63 +108,79 @@ interface BacklogEntry {
   title: string;
   priority: Priority;
   rationale: string;
-  blockedBy?: string[];   // open Depends-on refs
-  fails?: number;
+  blockedBy?: string[];
+  awaitingApproval?: boolean;
+  approvalKind?: string;
+  approvalCommentId?: string;
 }
 
 interface BacklogSnapshot {
-  generatedAt: string;                       // this step's wall clock
+  generatedAt: string;
   repo: string;
-  rankedOf: { ranked: number; open: number };// honest coverage note
-  entries: BacklogEntry[];                   // already sorted
+  fingerprint: string;
+  rankedOf: { ranked: number; open: number };
+  entries: BacklogEntry[];
 }
 ```
 
-`backlog.json` lives at `<root>/repos/<owner>__<repo>/backlog.json`, beside `cache.json`
-(NOT merged into it — `cache.json` is the run cursor `{cursor, fails}`, a different concern).
+`rankedOf.ranked` should normally equal the number of non-declined open issues. Unlike
+the old `step`-derived snapshot, backlog ranking should not be capped by
+`MAX_ITEMS_PER_TICK`.
 
-## Change points (6, all shell-side)
+## Ranking Inputs
 
-1. `types.ts` — add optional `Outcome.entry`.
-2. `engine/backlog.ts` (new) — `deriveEntry` + `sortEntries`, both pure.
-3. `issue-step.ts` — `active()` calls `deriveEntry` (it already has actions / `input.deps` /
-   fails) and attaches `entry`; `awaitingGate()` attaches a `parked` entry. No other change.
-4. `reconcile.ts` — collect `out.entry` in the tick loop; after the loop, sort and
-   `Store.writeBacklog` (unless `ctx.dryRun`).
-5. `config/store.ts` — `readBacklog` / `writeBacklog` (reuse existing read/writeJson).
-6. `cli/index.ts` — `monastery backlog [--repo] [--json]`: extend `parseArgs`, add a main
-   branch, add a renderer modelled on `status.ts`.
+Backlog triage can use:
 
-## Boundaries
+- title and body;
+- existing GitHub labels;
+- recent human comments or maintainer notes;
+- dependency references and whether they are still open;
+- `needs-approval` / approval gate state;
+- linked PR state;
+- failure or progress metadata that is already locally known.
 
-- **More than `MAX_ITEMS_PER_TICK` (20) open issues**: un-stepped issues have no `entry` and
-  are omitted; `rankedOf {ranked, open}` states "ranked N of M" honestly (no silent cap).
-- **dry-run**: does NOT write `backlog.json` (pure preview, no persistent side effect).
-- **Snapshot reflects proposed intent**, not execution success. An action that fails in
-  `executeSafe` (fault-isolated) does not change the entry — the panel/log reflects failures.
+Labels are therefore an input feature, not the whole feature extraction layer.
 
-## Failure modes / LLM robustness
+## Output Boundaries
 
-The maintainer is the only LLM call; its influence is confined to *which actions it chose*,
-and action kinds are a **closed vocabulary + schema-validated**. Everything downstream
-(derive, sort, persist, render) is deterministic, so LLM nondeterminism cannot reach it.
+Backlog rationale should explain priority in terms of issue facts, for example:
 
-| LLM nondeterminism | Handling | Backlog effect |
-|---|---|---|
-| invalid JSON / invented kind | `maintainer()` → null → recordFail → noop (existing) | entry → `later`/"no valid output"; no crash |
-| out-of-scope (`num` mismatch) | `active()` rejects whole batch (existing) | same → `later` |
-| action mix drifts tick to tick | none — this is the agent's real judgement changing | priority bucket may **flicker**; semantic feature, not a bug |
-| multiple actions at once | derive takes the strongest signal (`implement` ⇒ `now`) | deterministic, no ambiguity |
+```json
+{
+  "number": 140,
+  "priority": "now",
+  "rationale": "Backlog ranking currently depends on step-side implementation decisions, blocking a reliable lightweight priority view."
+}
+```
 
-No parse of free-text scores ⇒ no scale drift. Tiebreak is fully deterministic ⇒ stable
-intra-bucket order even when a bucket flickers. If flicker is ever annoying, add an N-tick
-damping later (YAGNI for now).
+It should not contain execution-state rationales such as:
 
-## Test plan (TDD)
+- `proposed implement -> patcher`
+- `approved implement -> executed this tick`
+- `approved implement -> deferred`
+- `advancing: implement`
 
-- `deriveEntry` mapping — one test per row of the derivation table.
-- `sortEntries` — bucket order + each tiebreak rule, stable on ties.
-- `Store` `read/writeBacklog` round-trip; missing file → empty snapshot.
-- CLI `backlog` renderer + `--json`; `parseArgs(["backlog", ...])`.
-- `reconcile` integration: a batch of fake issues with known actions → expected ranked
-  snapshot written (and NOT written under dry-run).
+Those belong to `step` status/progress, not backlog priority.
+
+## Non-goals
+
+- Do not make `backlog` update GitHub labels.
+- Do not make `backlog` call `reconcile()` or `issueStep()`.
+- Do not add `--refresh`, `--cached`, or `--light` flags unless a real scripting need appears.
+- Do not solve `step` throughput or progress reporting in this design.
+
+## Acceptance Criteria
+
+- `monastery backlog` does not call `reconcile()`, `issueStep()`, or patcher paths.
+- A stale snapshot is refreshed by a read-only repo-level backlog triage pass.
+- A fresh snapshot is rendered without LLM/token spend.
+- All non-declined open issues are considered; `MAX_ITEMS_PER_TICK` does not limit backlog coverage.
+- `backlog.json` rationales do not reference `implement`, `rework`, `patcher`, or tick execution status.
+- `step` still owns `relabel`, `spec`, `propose`, `implement`, `rework`, and other governance actions.
+
+## Historical Note
+
+The original #82 design intentionally derived priority from maintainer actions to avoid
+adding another LLM output field. #140 changes that tradeoff: backlog needs a separate
+read-only triage output because action-derived priority made the view slow, partial, and
+coupled to execution decisions.

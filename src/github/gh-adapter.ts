@@ -18,21 +18,26 @@ export class GhAdapter implements GitHubAdapter {
   async listOpenIssues(repo: string, _sinceMs?: number): Promise<Issue[]> {
     const out = await this.run([
       "issue", "list", "--repo", repo, "--state", "open", "--limit", "200",
-      "--json", "number,title,body,labels,state",
+      "--json", "number,title,body,labels,state,updatedAt",
     ]);
-    const raw = JSON.parse(out || "[]") as Array<{ number: number; title: string; body: string; labels: { name: string }[]; state: string }>;
+    const raw = JSON.parse(out || "[]") as Array<{ number: number; title: string; body: string; labels: { name: string }[]; state: string; updatedAt?: string }>;
     return raw.map((i) => ({
       number: i.number, title: i.title, body: i.body ?? "",
       labels: i.labels.map((l) => l.name), state: i.state.toLowerCase() as Issue["state"],
+      updatedAt: i.updatedAt ? Date.parse(i.updatedAt) || 0 : undefined,
     }));
   }
   async getIssue(repo: string, num: number): Promise<Issue | null> {
     try {
       const out = await this.run([
-        "issue", "view", String(num), "--repo", repo, "--json", "number,title,body,labels,state",
+        "issue", "view", String(num), "--repo", repo, "--json", "number,title,body,labels,state,updatedAt",
       ]);
-      const i = JSON.parse(out) as { number: number; title: string; body: string; labels: { name: string }[]; state: string };
-      return { number: i.number, title: i.title, body: i.body ?? "", labels: i.labels.map((l) => l.name), state: i.state.toLowerCase() as Issue["state"] };
+      const i = JSON.parse(out) as { number: number; title: string; body: string; labels: { name: string }[]; state: string; updatedAt?: string };
+      return {
+        number: i.number, title: i.title, body: i.body ?? "",
+        labels: i.labels.map((l) => l.name), state: i.state.toLowerCase() as Issue["state"],
+        updatedAt: i.updatedAt ? Date.parse(i.updatedAt) || 0 : undefined,
+      };
     } catch {
       return null;
     }
