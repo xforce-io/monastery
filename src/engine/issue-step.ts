@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { GitHubAdapter } from "../github/adapter.js";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
-import { LABEL_DEFS, NEEDS_APPROVAL, DECLINED, NEEDS_HUMAN } from "../github/labels.js";
+import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
 import { maintainer, maintainerSpec } from "../agents/maintainer.js";
 import { effectivePolicy } from "../agents/spec.js";
 import { executeSafe, doClose, proposeGate, ensureControlLabel, applyStateLabels, type GatedKind } from "../shell/actions.js";
