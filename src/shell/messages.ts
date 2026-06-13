@@ -3,8 +3,12 @@ import { NEEDS_APPROVAL, NEEDS_HUMAN } from "../github/labels.js";
 
 export const STATE_MARKER = "<!--monastery-state";
 
-/** #90 approval banner — the `awaiting-approval` visible head, prepended by deriveState (never hand-written at call sites). */
-const AWAITING_APPROVAL_BANNER =
+/**
+ * #90 approval banner — the `awaiting-approval` visible head, prepended by deriveState (never hand-written
+ * at call sites). Exported so the one consumer that strips it back out (issue-step `stripMarkers`) stays in
+ * sync with this canonical text instead of re-encoding it.
+ */
+export const AWAITING_APPROVAL_BANNER =
   "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
 
 export type StateMessageKind = "note" | "approval";

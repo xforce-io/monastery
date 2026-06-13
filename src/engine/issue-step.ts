@@ -18,7 +18,7 @@ import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec, parseSpecs } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
-import { approvalKind, approvalSpecVersion, isStateMessage, renderStateMessage, stripStateMessage, type StateStatus } from "../shell/messages.js";
+import { approvalKind, approvalSpecVersion, AWAITING_APPROVAL_BANNER, isStateMessage, renderStateMessage, stripStateMessage, type StateStatus } from "../shell/messages.js";
 import { makePhaseLogger } from "../phase-logger.js";
 import type { ModelLevels } from "../provider/models.js";
 import type { ProviderPool } from "../provider/select.js";
@@ -405,7 +405,7 @@ async function recoverRejectedImpl(ctx: StepCtx, issue: Issue): Promise<Outcome 
 /** The human-facing draft = the panel body with monastery markers stripped. */
 function stripMarkers(body: string): string {
   return stripStateMessage(body)
-    .replace(/^⏳ \*\*NEEDS YOUR APPROVAL\*\*[^\n]*\n*/m, "") // drop the #90 approval banner from the human draft
+    .replace(AWAITING_APPROVAL_BANNER, "") // drop the #90 approval banner (canonical constant) from the human draft
     .trim();
 }
 
