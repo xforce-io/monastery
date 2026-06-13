@@ -31,7 +31,7 @@ test("panel upserts the single sticky panel, carrying a monastery marker", async
   expect(g.panels[1]).toContain("status B");            // upsert, not append (latest content)
   expect(g.panels[1]).not.toContain("status A");
   expect(g.panels[1]).toContain("<!--monastery-state"); // marker -> never mistaken for a human comment
-  expect(parseStateMessage(g.panels[1])).toMatchObject({ kind: "note", agent: "maintainer", model: "opus" });
+  expect(parseStateMessage(g.panels[1])).toMatchObject({ kind: "note", status: "note", agent: "maintainer", model: "opus" });
 });
 
 test("openDraftPR opens once; skips when a PR already exists", async () => {
@@ -50,7 +50,8 @@ test("propose posts a fresh approval gate comment + needs-approval label", async
   expect(g.comments[1][0]).toContain("protocol: approval");
   expect(g.comments[1][0]).toContain("action: close");
   expect(g.comments[1][0]).toContain("close because X");
-  expect(parseStateMessage(g.comments[1][0])).toMatchObject({ kind: "approval", action: "close", agent: "maintainer", model: "opus" });
+  expect(parseStateMessage(g.comments[1][0])).toMatchObject({ kind: "approval", action: "close", status: "awaiting-approval", agent: "maintainer", model: "opus" });
+  expect(g.comments[1][0]).toContain("NEEDS YOUR APPROVAL");
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-approval");
 });

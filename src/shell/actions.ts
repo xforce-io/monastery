@@ -79,7 +79,7 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
     case "panel":
       // Carry the panel marker so upsertPanel finds its single sticky comment AND it's never mistaken
       // for a human comment (constitution §6, §7). The agent supplies content; the shell stamps the marker.
-      await gh.upsertPanel(repo, a.num, renderStateMessage({ kind: "note", body: a.body, ...provenance }));
+      await gh.upsertPanel(repo, a.num, renderStateMessage({ status: "note", body: a.body, ...provenance }));
       return;
     case "openDraftPR":
       if (await gh.findPrForBranch(repo, a.branch)) return; // already open
@@ -122,12 +122,8 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
 export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string, provenance: ActionProvenance = {}): Promise<void> {
   // Stamp the spec version this gate is opened against (#95) — a later, higher-version spec makes it stale.
   const specVersion = currentSpec(await gh.listComments(repo, num))?.version ?? 0;
-  // Visible banner (issue #90): the approval marker is an HTML comment a human can't see, so without this
-  // they can't tell which comment to 👍. This line is plain text — it shows up on the issue page.
-  const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
-  await ensureControlLabel(gh, repo, NEEDS_APPROVAL);
-  await gh.addLabel(repo, num, NEEDS_APPROVAL);
-  await gh.postComment(repo, num, renderStateMessage({ kind: "approval", action: proposal, spec: specVersion, body: `${banner}\n\n${draft}`, ...provenance }));
+  await applyStateLabels(gh, repo, num, "awaiting-approval");
+  await gh.postComment(repo, num, renderStateMessage({ status: "awaiting-approval", action: proposal, spec: specVersion, body: draft, ...provenance }));
 }
 
 export async function ensureControlLabel(gh: GitHubAdapter, repo: string, name: string): Promise<void> {
