@@ -7,6 +7,8 @@ export interface StateMessage {
   body: string;
   action?: GatedKind;
   spec?: number;
+  agent?: string;
+  model?: string;
 }
 
 const STATE_RE = /<!--monastery-state\s*([\s\S]*?)-->\n?/;
@@ -19,6 +21,8 @@ export function renderStateMessage(msg: StateMessage): string {
   ];
   if (msg.action) lines.push(`action: ${msg.action}`);
   if (msg.spec !== undefined) lines.push(`spec: ${msg.spec}`);
+  if (msg.agent) lines.push(`agent: ${msg.agent}`);
+  if (msg.model) lines.push(`model: ${msg.model}`);
   return `<!--monastery-state\n${lines.join("\n")}\n-->\n${msg.body}`;
 }
 
@@ -30,7 +34,14 @@ export function parseStateMessage(body: string): StateMessage | null {
   if (kind !== "note" && kind !== "approval") return null;
   const action = parseAction(meta.action);
   const spec = meta.spec && /^\d+$/.test(meta.spec) ? Number(meta.spec) : undefined;
-  return { kind, body: body.replace(STATE_RE, "").trim(), ...(action ? { action } : {}), ...(spec !== undefined ? { spec } : {}) };
+  return {
+    kind,
+    body: body.replace(STATE_RE, "").trim(),
+    ...(action ? { action } : {}),
+    ...(spec !== undefined ? { spec } : {}),
+    ...(meta.agent ? { agent: meta.agent } : {}),
+    ...(meta.model ? { model: meta.model } : {}),
+  };
 }
 
 export function isStateMessage(body: string, kind?: StateMessageKind): boolean {

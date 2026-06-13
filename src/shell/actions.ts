@@ -49,6 +49,11 @@ export const ActionSchema = z.discriminatedUnion("kind", [
 ]);
 export type Action = z.infer<typeof ActionSchema>;
 
+export interface ActionProvenance {
+  agent?: string;
+  model?: string;
+}
+
 /** A batch of proposed actions (the maintainer agent's output shape). */
 export const ActionsSchema = z.object({ actions: z.array(ActionSchema) });
 
@@ -57,7 +62,7 @@ export const ActionsSchema = z.object({ actions: z.array(ActionSchema) });
 const CONTROL_LABELS: ReadonlySet<string> = new Set([NEEDS_APPROVAL, "monastery:declined"]);
 const replyMarker = (toCommentId: string) => `<!--monastery-reply to=${toCommentId}-->`;
 /** Execute a SAFE action, idempotently (constitution §3, §6). */
-export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): Promise<void> {
+export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, provenance: ActionProvenance = {}): Promise<void> {
   switch (a.kind) {
     case "reply": {
       const marker = replyMarker(a.toCommentId);
@@ -74,14 +79,14 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
     case "panel":
       // Carry the panel marker so upsertPanel finds its single sticky comment AND it's never mistaken
       // for a human comment (constitution §6, §7). The agent supplies content; the shell stamps the marker.
-      await gh.upsertPanel(repo, a.num, renderStateMessage({ kind: "note", body: a.body }));
+      await gh.upsertPanel(repo, a.num, renderStateMessage({ kind: "note", body: a.body, ...provenance }));
       return;
     case "openDraftPR":
       if (await gh.findPrForBranch(repo, a.branch)) return; // already open
       await gh.openDraftPR(repo, a.branch, a.title, a.body);
       return;
     case "propose":
-      await proposeGate(gh, repo, a.num, a.proposal, a.draft);
+      await proposeGate(gh, repo, a.num, a.proposal, a.draft, provenance);
       return;
     case "spec": {
       // Append-only versioned shared spec: bump the version only when the body changed (idempotent).
@@ -114,7 +119,7 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action): P
  * (so old reactions on a reused sticky panel cannot approve a new gate) + the needs-approval control label
  * (so the item moves to awaiting-gate). Shared by `propose` (close/merge) and `implement` (#88).
  */
-export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string): Promise<void> {
+export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string, provenance: ActionProvenance = {}): Promise<void> {
   // Stamp the spec version this gate is opened against (#95) — a later, higher-version spec makes it stale.
   const specVersion = currentSpec(await gh.listComments(repo, num))?.version ?? 0;
   // Visible banner (issue #90): the approval marker is an HTML comment a human can't see, so without this
@@ -122,7 +127,7 @@ export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, 
   const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
   await ensureControlLabel(gh, repo, NEEDS_APPROVAL);
   await gh.addLabel(repo, num, NEEDS_APPROVAL);
-  await gh.postComment(repo, num, renderStateMessage({ kind: "approval", action: proposal, spec: specVersion, body: `${banner}\n\n${draft}` }));
+  await gh.postComment(repo, num, renderStateMessage({ kind: "approval", action: proposal, spec: specVersion, body: `${banner}\n\n${draft}`, ...provenance }));
 }
 
 export async function ensureControlLabel(gh: GitHubAdapter, repo: string, name: string): Promise<void> {

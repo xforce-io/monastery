@@ -91,7 +91,7 @@ export async function withReadOnlyCheckout<T>(ctx: StepCtx, fn: (ctx: StepCtx) =
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
 export const FAIL_THRESHOLD = maintainerSpec.policy.failThreshold ?? 3;
-const noteMessage = (body: string) => renderStateMessage({ kind: "note", body });
+const noteMessage = (body: string, provenance: { agent?: string; model?: string } = {}) => renderStateMessage({ kind: "note", body, ...provenance });
 
 /** One step over one item. Routes by the two control labels the shell owns (PROTOCOL §2). */
 export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
@@ -146,7 +146,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     const failThreshold = effectivePolicy(maintainerSpec, ctx.repoPolicy).failThreshold ?? FAIL_THRESHOLD;
     if (fails >= failThreshold) {
       await ctx.gh.upsertPanel(ctx.repo, issue.number,
-        noteMessage(`⚠️ the maintainer agent has produced no valid actions for ${fails} consecutive ticks — needs a human.`));
+        noteMessage(`⚠️ the maintainer agent has produced no valid actions for ${fails} consecutive ticks — needs a human.`, { agent: "maintainer", model: rt.model }));
     } else {
       console.warn(`[monastery] maintainer skip ${ctx.repo}#${issue.number} (${fails}/${failThreshold})`);
     }
@@ -177,8 +177,8 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
         const verb = a.kind === "rework" ? "rework the open draft PR" : "implement";
         const draft = a.draft ?? `Proposed ${verb} for #${issue.number}. 👍 this approval comment to proceed.`;
         if (ctx.dryRun) console.warn(`[dry-run] would propose ${a.kind} ${ctx.repo}#${issue.number} (awaiting human 👍)`);
-        else await proposeGate(ctx.gh, ctx.repo, issue.number, a.kind, draft);
-      } else await executeSafe(ctx.gh, ctx.repo, a);
+        else await proposeGate(ctx.gh, ctx.repo, issue.number, a.kind, draft, { agent: "maintainer", model: rt.model });
+      } else await executeSafe(ctx.gh, ctx.repo, a, { agent: "maintainer", model: rt.model });
       applied++;
     } catch (e) {
       const msg = (e as Error).message;
