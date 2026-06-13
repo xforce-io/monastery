@@ -10,6 +10,7 @@ import { runImplement } from "../src/engine/patch.js";
 import type { StepCtx } from "../src/engine/issue-step.js";
 import type { ReviewVerdict } from "../src/agents/reviewer.js";
 import type { Spec } from "../src/shell/consensus.js";
+import { parseStateMessage } from "../src/shell/messages.js";
 import type { Issue } from "../src/types.js";
 
 const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
@@ -83,6 +84,7 @@ test("reviewer's conclusion + advisory go to a separate marked PR comment, NOT t
   const prComments = gh.comments[1] ?? [];
   expect(prComments).toHaveLength(1);
   expect(prComments[0]).toContain("<!--monastery-state");
+  expect(parseStateMessage(prComments[0])).toMatchObject({ kind: "note", agent: "reviewer", model: "sonnet" });
   expect(prComments[0]).toMatch(/自审通过/);
   expect(prComments[0]).toMatch(/advisory/);
   expect(prComments[0]).toContain("rename foo");
@@ -108,6 +110,7 @@ test("#135 the patcher made no changes: failed, no PR, keeps workdir for forensi
   expect(ws.committed).toHaveLength(0);
   expect(ws.cleaned).toHaveLength(0);
   expect(gh.panels[7]).toMatch(/made no changes|workdir/i);
+  expect(parseStateMessage(gh.panels[7])).toMatchObject({ kind: "note", agent: "patcher", model: "sonnet" });
 });
 
 test("#135 repeated empty diff escalates to needs-human after ensuring the label", async () => {
@@ -188,6 +191,7 @@ test("#75 runImplement emits clone/patch/tests/review/pr phase boundaries", asyn
   expect(starts).toContain("tests");
   expect(starts).toContain("review");
   expect(starts).toContain("pr");
+  expect(lines.some((l) => l.includes("review:start") && l.includes("model=sonnet"))).toBe(true);
   // every started phase that succeeded prints a matching :done
   expect(lines.some((l) => l.includes("pr:done"))).toBe(true);
 });

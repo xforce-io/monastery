@@ -10,6 +10,7 @@ import { issueStep, withReadOnlyCheckout, pendingApprovals, FAIL_THRESHOLD, type
 import { branchName } from "../src/engine/patch.js";
 import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
 import { SPEC_MARKER } from "../src/shell/consensus.js";
+import { parseStateMessage } from "../src/shell/messages.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
 import type { Issue } from "../src/types.js";
 
@@ -54,6 +55,14 @@ test("active issue: an empty action list is a no-op (nothing to do)", async () =
   const gh = ghWith({ number: 7, title: "x", body: "y", labels: [], state: "open" });
   const out = await issueStep(ctxWith(gh, new FakeProvider(actionsJson([]))), 7);
   expect(out.kind).toBe("noop");
+});
+
+test("#144 active maintainer safe writes carry agent/model provenance", async () => {
+  const gh = ghWith({ number: 7, title: "x", body: "y", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "panel", num: 7, body: "status" }]));
+  const out = await issueStep({ ...ctxWith(gh, provider), repoPolicy: { agents: { maintainer: { model: "opus" } } } }, 7);
+  expect(out.kind).toBe("progressed");
+  expect(parseStateMessage(gh.panels[7])).toMatchObject({ kind: "note", agent: "maintainer", model: "opus" });
 });
 
 test("active issue: actions targeting a different issue are rejected wholesale (shell constrains the agent)", async () => {

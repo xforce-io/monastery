@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
 import { executeSafe, doClose, doMerge, proposeGate, ActionSchema } from "../src/shell/actions.js";
+import { parseStateMessage } from "../src/shell/messages.js";
 
 const gh = () => new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
 
@@ -25,11 +26,12 @@ test("relabel adds and removes labels", async () => {
 
 test("panel upserts the single sticky panel, carrying a monastery marker", async () => {
   const g = gh();
-  await executeSafe(g, "o/r", { kind: "panel", num: 1, body: "status A" });
-  await executeSafe(g, "o/r", { kind: "panel", num: 1, body: "status B" });
+  await executeSafe(g, "o/r", { kind: "panel", num: 1, body: "status A" }, { agent: "maintainer", model: "opus" });
+  await executeSafe(g, "o/r", { kind: "panel", num: 1, body: "status B" }, { agent: "maintainer", model: "opus" });
   expect(g.panels[1]).toContain("status B");            // upsert, not append (latest content)
   expect(g.panels[1]).not.toContain("status A");
   expect(g.panels[1]).toContain("<!--monastery-state"); // marker -> never mistaken for a human comment
+  expect(parseStateMessage(g.panels[1])).toMatchObject({ kind: "note", agent: "maintainer", model: "opus" });
 });
 
 test("openDraftPR opens once; skips when a PR already exists", async () => {
@@ -42,12 +44,13 @@ test("openDraftPR opens once; skips when a PR already exists", async () => {
 
 test("propose posts a fresh approval gate comment + needs-approval label", async () => {
   const g = gh();
-  await executeSafe(g, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "close because X" });
+  await executeSafe(g, "o/r", { kind: "propose", num: 1, proposal: "close", draft: "close because X" }, { agent: "maintainer", model: "opus" });
   expect(g.panels[1]).toBeUndefined();
   expect(g.comments[1]).toHaveLength(1);
   expect(g.comments[1][0]).toContain("protocol: approval");
   expect(g.comments[1][0]).toContain("action: close");
   expect(g.comments[1][0]).toContain("close because X");
+  expect(parseStateMessage(g.comments[1][0])).toMatchObject({ kind: "approval", action: "close", agent: "maintainer", model: "opus" });
   const [i] = await g.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-approval");
 });

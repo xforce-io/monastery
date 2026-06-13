@@ -24,7 +24,8 @@ function withLanguage(persona: string, language?: string): string {
   return language ? `${languageDirective(language)}\n\n${persona}` : persona;
 }
 
-const patchNote = (body: string) => renderStateMessage({ kind: "note", body });
+const patchNote = (body: string, model?: string) => renderStateMessage({ kind: "note", body, agent: "patcher", ...(model ? { model } : {}) });
+const reviewerNote = (body: string, model?: string) => renderStateMessage({ kind: "note", body, agent: "reviewer", ...(model ? { model } : {}) });
 
 const BRANCH_SLUG_MAX = 50;
 
@@ -51,9 +52,9 @@ function fixContext(issue: Issue, blocking: ReviewFinding[]): string {
   return `Fix issue #${issue.number} — the reviewer found these BLOCKING problems with your patch:\n\n${items}\n\nResolve every item above.`;
 }
 
-function reviewPanel(blocking: ReviewFinding[], iters: number): string {
+function reviewPanel(blocking: ReviewFinding[], iters: number, model?: string): string {
   const list = blocking.map((b) => `- ${b.title}: ${b.detail}`).join("\n");
-  return patchNote(`⚠️ 自审在 ${iters} 轮后仍有未解决的 blocking — needs a human：\n${list}`);
+  return reviewerNote(`⚠️ 自审在 ${iters} 轮后仍有未解决的 blocking — needs a human：\n${list}`, model);
 }
 
 async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
@@ -62,7 +63,9 @@ async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
   await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
 }
 
-function defaultReview(ctx: StepCtx): ReviewFn {
+type ReviewRun = (diff: string, issue: Issue) => Promise<{ verdict: ReviewVerdict | null; model?: string }>;
+
+function defaultReview(ctx: StepCtx): ReviewRun {
   return async (diff, issue) => {
     // Review artifacts live OUTSIDE the worktree so review.json never lands in the committed patch.
     const reviewDir = mkdtempSync(join(tmpdir(), "monastery-review-"));
@@ -79,7 +82,7 @@ function defaultReview(ctx: StepCtx): ReviewFn {
         explicitModel, pool: ctx.providerPool,
       });
       // #76: a review finding can land in a PR comment — give the reviewer the repo's language policy too.
-      return await reviewer(rt.provider, rt.model, { diff, issue, language: ctx.language }, reviewDir);
+      return { verdict: await reviewer(rt.provider, rt.model, { diff, issue, language: ctx.language }, reviewDir), model: rt.model };
     } finally {
       rmSync(reviewDir, { recursive: true, force: true });
     }
@@ -128,7 +131,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     // The REVIEWER's voice = a separate marked comment on the PR (conclusion + advisory only).
     const prNum = parsePrNumber(url);
     if (prNum !== null) {
-      await ctx.gh.postComment(ctx.repo, prNum, patchNote(reviewSummary(r)));
+      await ctx.gh.postComment(ctx.repo, prNum, reviewerNote(reviewSummary(r), r.reviewerModel));
     }
     pr.done({ url });
     return { kind: "progressed", note: url };
@@ -230,6 +233,7 @@ interface PatchResult {
   reviewerFailed: boolean;
   fixedTitles: string[];
   lastVerdict: ReviewVerdict | null;
+  reviewerModel?: string;
 }
 
 type PatchAttempt =
@@ -268,12 +272,12 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     const error = `patcher made no changes (${fails}/${PATCH_FAIL_THRESHOLD}); workdir kept at ${dir}`;
     if (fails < PATCH_FAIL_THRESHOLD) {
       console.warn(`[monastery] patcher made no changes ${ctx.repo}#${issue.number} (${fails}/${PATCH_FAIL_THRESHOLD})`);
-      await ctx.gh.upsertPanel(ctx.repo, issue.number, patchNote(`⚠️ ${error}`));
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, patchNote(`⚠️ ${error}`, patcherModel));
       return { kind: "failed", error };
     }
     await markNeedsHuman(ctx, issue);
     await ctx.gh.upsertPanel(ctx.repo, issue.number,
-      patchNote(`⚠️ patcher made no changes after ${fails} attempts — needs a human.\n\nworkdir kept at ${dir}`));
+      patchNote(`⚠️ patcher made no changes after ${fails} attempts — needs a human.\n\nworkdir kept at ${dir}`, patcherModel));
     return { kind: "failed", error };
   }
 
@@ -289,21 +293,26 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   diff = await ctx.ws.stagedDiff(dir);
 
   // Self-review gate: review the staged diff; fix BLOCKING findings and re-review (<= REVIEW_MAX_ITERS).
-  const review = ctx.review ?? defaultReview(ctx);
+  const review: ReviewRun = ctx.review
+    ? async (diff, issue) => ({ verdict: await ctx.review!(diff, issue), model: ctx.reviewModel ?? ctx.modelLevels?.strong ?? ctx.model })
+    : defaultReview(ctx);
   const fixedTitles: string[] = [];
   let lastVerdict: ReviewVerdict | null = null;
   let reviewerFailed = false;
+  let reviewerModel: string | undefined;
   for (let iter = 1; iter <= REVIEW_MAX_ITERS; iter++) {
     const attempt = `${iter}/${REVIEW_MAX_ITERS}`;
-    const rev = log.phase("review", { attempt });
-    lastVerdict = await review(diff, issue);
+    const rev = log.phase("review", { attempt, model: reviewerModel ?? ctx.reviewModel ?? ctx.modelLevels?.strong ?? ctx.model });
+    const reviewResult = await review(diff, issue);
+    reviewerModel = reviewResult.model ?? reviewerModel;
+    lastVerdict = reviewResult.verdict;
     if (!lastVerdict) { rev.fail("reviewer-failed"); reviewerFailed = true; break; } // reviewer failed -> conservative pass
     const blocking = lastVerdict.findings.filter((f) => f.severity === "blocking");
     if (blocking.length === 0) { rev.done({ blocking: 0 }); break; }      // clean -> ship
     rev.done({ blocking: blocking.length });
     if (iter === REVIEW_MAX_ITERS) {                                     // give up -> needs a human, no PR
       await markNeedsHuman(ctx, issue);
-      await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS));
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS, reviewerModel));
       return { kind: "failed", error: `self-review never converged after ${REVIEW_MAX_ITERS} iterations; workdir kept at ${dir}` };
     }
     const fix = log.phase("patch:fix", { attempt, model: patcherModel });
@@ -315,7 +324,7 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     diff = await ctx.ws.stagedDiff(dir);
   }
 
-  return { kind: "ok", result: { diff, tests, authorSummary, reviewerFailed, fixedTitles, lastVerdict } };
+  return { kind: "ok", result: { diff, tests, authorSummary, reviewerFailed, fixedTitles, lastVerdict, reviewerModel } };
 }
 
 /**

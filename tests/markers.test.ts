@@ -20,13 +20,15 @@ test("isHumanComment: inverse of isMonasteryComment", () => {
 });
 
 test("#144 state messages render and parse the v1 envelope", () => {
-  const body = renderStateMessage({ kind: "approval", action: "implement", spec: 2, body: "⏳ approve\n\n## Plan" });
+  const body = renderStateMessage({ kind: "approval", action: "implement", spec: 2, agent: "maintainer", model: "opus", body: "⏳ approve\n\n## Plan" });
 
   expect(body).toContain("v: 1");
   expect(body).toContain("kind: approval");
+  expect(body).toContain("agent: maintainer");
+  expect(body).toContain("model: opus");
   expect(body).toContain("protocol: approval"); // v0 readers stay compatible
   expect(isStateMessage(body, "approval")).toBe(true);
-  expect(parseStateMessage(body)).toMatchObject({ kind: "approval", action: "implement", spec: 2, body: "⏳ approve\n\n## Plan" });
+  expect(parseStateMessage(body)).toMatchObject({ kind: "approval", action: "implement", spec: 2, agent: "maintainer", model: "opus", body: "⏳ approve\n\n## Plan" });
   expect(approvalKind(body)).toBe("implement");
   expect(approvalSpecVersion(body)).toBe(2);
   expect(stripStateMessage(body)).toBe("⏳ approve\n\n## Plan");
