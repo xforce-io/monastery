@@ -13,11 +13,11 @@ import { backlogFingerprint, isBacklogFresh, refreshBacklog } from "../engine/ba
 import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
-import type { Outcome, ReconcileResult } from "../types.js";
+import type { BacklogSnapshot, Outcome, ReconcileResult } from "../types.js";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, type StatusEntry } from "./status.js";
-import { formatBacklog, formatMissingBacklog, formatPending, missingBacklog, type PendingItem } from "./backlog.js";
+import { formatBacklog, formatBacklogRepoError, formatMissingBacklog, formatPending, missingBacklog, type BacklogRepoError, type MissingBacklog, type PendingItem } from "./backlog.js";
 import { wantsHelp, wantsVersion, usage, readPackageVersion } from "./help.js";
 import { preflight, formatPreflightErrors, type Need } from "./preflight.js";
 import { dirname } from "node:path";
@@ -130,36 +130,44 @@ async function main(): Promise<void> {
       }
       return { selection, modelLevels: modelLevels! };
     };
-    const items = [];
+    const items: (BacklogSnapshot | MissingBacklog | BacklogRepoError)[] = [];
     for (const repo of repos) {
       if (!tracked.has(repo)) {
         items.push(missingBacklog(repo, false));
         continue;
       }
-      const open = await gh.listOpenIssues(repo, 0);
-      const fingerprint = backlogFingerprint(open);
-      const cached = store.readBacklog(repo);
-      if (isBacklogFresh(cached, fingerprint)) {
-        items.push(cached);
-        continue;
+      try {
+        const open = await gh.listOpenIssues(repo, 0);
+        const fingerprint = backlogFingerprint(open);
+        const cached = store.readBacklog(repo);
+        if (isBacklogFresh(cached, fingerprint)) {
+          items.push(cached);
+          continue;
+        }
+        const { selection: selected, modelLevels: levels } = await ensureProvider();
+        if (selected.fallbackFrom && !args.json) console.error(`[monastery] ${selected.fallbackFrom} unavailable; using ${selected.name} provider`);
+        const snapshot = await refreshBacklog({
+          repo,
+          gh,
+          provider: selected.provider,
+          model: store.repoModel(repo) ?? levels.standard,
+          artifactDir: mkdtempSync(join(tmpdir(), "monastery-backlog-")),
+          now: () => Date.now(),
+          language: store.repoLanguage(repo),
+        }, open);
+        store.writeBacklog(repo, snapshot);
+        items.push(snapshot);
+      } catch (e) {
+        items.push({ repo, error: "backlog_refresh_failed", message: (e as Error).message });
       }
-      const { selection: selected, modelLevels: levels } = await ensureProvider();
-      if (selected.fallbackFrom && !args.json) console.error(`[monastery] ${selected.fallbackFrom} unavailable; using ${selected.name} provider`);
-      const snapshot = await refreshBacklog({
-        repo,
-        gh,
-        provider: selected.provider,
-        model: store.repoModel(repo) ?? levels.standard,
-        artifactDir: mkdtempSync(join(tmpdir(), "monastery-backlog-")),
-        now: () => Date.now(),
-        language: store.repoLanguage(repo),
-      }, open);
-      store.writeBacklog(repo, snapshot);
-      items.push(snapshot);
     }
     console.log(args.json
       ? JSON.stringify(items, null, 2)
-      : items.map((i) => "error" in i ? formatMissingBacklog(i) : formatBacklog(i)).join("\n\n"));
+      : items.map((i) => "error" in i
+        ? i.error === "missing_backlog_snapshot"
+          ? formatMissingBacklog(i)
+          : formatBacklogRepoError(i)
+        : formatBacklog(i)).join("\n\n"));
     return;
   }
 

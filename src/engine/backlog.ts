@@ -5,6 +5,7 @@ import type { AgentProvider } from "../provider/interface.js";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { backlogTriage } from "../agents/backlog.js";
+import { parseDeps } from "./deps.js";
 import type { BacklogEntry, BacklogSnapshot, Issue, Priority } from "../types.js";
 
 /** Actions that mean "this issue is being advanced this tick" (short of handing it to the patcher). */
@@ -93,7 +94,8 @@ export async function refreshBacklog(ctx: RefreshBacklogCtx, openIssues?: Issue[
     language: ctx.language,
   }, ctx.artifactDir);
 
-  const entries = normalizeTriageEntries(issues, output?.entries ?? []);
+  const blockedBy = await openBlockers(ctx.gh, issues);
+  const entries = normalizeTriageEntries(issues, output?.entries ?? [], blockedBy);
   return {
     generatedAt: new Date(ctx.now()).toISOString(),
     repo: ctx.repo,
@@ -112,6 +114,7 @@ function triageIssues(issues: Issue[]): Issue[] {
 function normalizeTriageEntries(
   issues: Issue[],
   proposed: { number: number; priority: Priority; rationale: string; blockedBy?: string[] }[],
+  blockedBy: Map<number, string[]> = new Map(),
 ): BacklogEntry[] {
   const issueByNumber = new Map(issues.map((i) => [i.number, i]));
   const seen = new Set<number>();
@@ -121,18 +124,17 @@ function normalizeTriageEntries(
     const issue = issueByNumber.get(p.number);
     if (!issue || seen.has(p.number)) continue;
     seen.add(p.number);
-    entries.push(normalizeEntry(issue, p));
+    entries.push(normalizeEntry(issue, p, blockedBy.get(issue.number) ?? []));
   }
 
   for (const issue of issues) {
     if (seen.has(issue.number)) continue;
     entries.push(normalizeEntry(issue, {
-      number: issue.number,
       priority: issue.labels.includes(NEEDS_APPROVAL) ? "parked" : "later",
       rationale: issue.labels.includes(NEEDS_APPROVAL)
         ? "awaiting human approval"
         : "not ranked by triage output",
-    }));
+    }, blockedBy.get(issue.number) ?? []));
   }
 
   return entries
@@ -144,6 +146,7 @@ function normalizeTriageEntries(
 function normalizeEntry(
   issue: Issue,
   proposed: { priority: Priority; rationale: string; blockedBy?: string[] },
+  blockedBy: string[] = [],
 ): BacklogEntry {
   const awaitingApproval = issue.labels.includes(NEEDS_APPROVAL);
   const entry: BacklogEntry = {
@@ -152,13 +155,29 @@ function normalizeEntry(
     priority: awaitingApproval ? "parked" : proposed.priority,
     rationale: awaitingApproval ? "awaiting human approval" : sanitizeRationale(proposed.rationale),
   };
-  if (proposed.blockedBy?.length) entry.blockedBy = proposed.blockedBy;
+  if (blockedBy.length) entry.blockedBy = blockedBy;
   if (awaitingApproval) entry.awaitingApproval = true;
   return entry;
 }
 
+async function openBlockers(gh: GitHubAdapter, issues: Issue[]): Promise<Map<number, string[]>> {
+  const out = new Map<number, string[]>();
+  for (const issue of issues) {
+    const refs: string[] = [];
+    for (const { repo, num } of parseDeps(issue.body)) {
+      const dep = await gh.getIssue(repo, num);
+      if (dep?.state === "open") refs.push(`${repo}#${num}`);
+    }
+    if (refs.length) out.set(issue.number, refs);
+  }
+  return out;
+}
+
 function sanitizeRationale(rationale: string): string {
-  return /\b(implement|rework|patcher|executed|deferred)\b/i.test(rationale)
+  return /\bpatcher\b/i.test(rationale)
+    || /\b(proposed|approved)\s+(implement|rework)\b/i.test(rationale)
+    || /\b(implement|rework)\s*->/i.test(rationale)
+    || /\b(executed|deferred)\s+this\s+tick\b/i.test(rationale)
     ? "Prioritized from issue facts and current backlog context."
     : rationale;
 }
