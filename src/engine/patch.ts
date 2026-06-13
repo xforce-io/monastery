@@ -189,7 +189,7 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // Guard 3: bounded attempt budget — count prior rework rounds already posted on the PR thread.
   const priorRounds = (await ctx.gh.listComments(ctx.repo, prNum)).filter((c) => c.body.includes(REWORK_MARKER)).length;
   if (priorRounds >= REWORK_BUDGET) {
-    await applyStateLabels(ctx.gh, ctx.repo, issue.number, "blocked");
+    await markNeedsHuman(ctx, issue); // same blocked-label path as the other escalations (#144)
     await panel(`rework 已达 ${REWORK_BUDGET} 轮上限。`, "blocked"); return { kind: "noop" };
   }
   const round = priorRounds + 1;
