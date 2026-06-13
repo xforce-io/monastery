@@ -15,6 +15,7 @@ import type { Issue } from "../src/types.js";
 
 const NEEDS_APPROVAL = "monastery:needs-approval";
 const DECLINED = "monastery:declined";
+const NEEDS_HUMAN = "monastery:needs-human";
 
 function ctxWith(gh: FakeGitHub, provider: FakeProvider, fails?: Partial<StepCtx["fails"]>): StepCtx {
   return {
@@ -357,6 +358,27 @@ test("#124 regression: an approval comment without needs-approval is still consu
   expect(out.kind).toBe("progressed");
   expect(gh.prs).toHaveLength(1);
   expect((c.provider as FakeProvider).calls[0].context).toContain("Fix issue #124"); // shell routed to patcher, not maintainer guesswork
+});
+
+test("#137: spec-backed approved implement with missing spec fails closed before patcher runs", async () => {
+  const gh = ghWith({ number: 137, title: "docs update", body: "stale body", labels: [NEEDS_APPROVAL], state: "open" });
+  await gh.postComment("o/r", 137,
+    "<!--monastery-state\nprotocol: approval\naction: implement\nspec: 1\n-->\n⏳ **NEEDS YOUR APPROVAL**\n\n## Approved docs-only plan");
+  gh.commentReactions["0"] = ["+1"];
+  const ws = new FakeWorkspace({ diff: "patch", tests: true });
+  const c: StepCtx = { ...ctxWith(gh, new FakeProvider({})), ws, review: async () => ({ findings: [] }) };
+
+  const out = await issueStep(c, 137);
+
+  expect(out.kind).toBe("failed");
+  if (out.kind === "failed") expect(out.error).toMatch(/approved spec|missing/i);
+  expect(ws.cloned).toHaveLength(0);
+  expect(gh.prs).toHaveLength(0);
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+  expect(i.labels).toContain(NEEDS_HUMAN);
+  expect(gh.ensuredLabels.map((l) => l.name)).toContain(NEEDS_HUMAN);
+  expect(gh.panels[137]).toMatch(/approved spec|missing/i);
 });
 
 test("#124 mirror: needs-approval without an approval comment is repaired back to active", async () => {

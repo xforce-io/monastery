@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { GitHubAdapter } from "../github/adapter.js";
 import type { AgentProvider } from "../provider/interface.js";
 import type { Issue, Outcome } from "../types.js";
-import { NEEDS_APPROVAL, DECLINED } from "../github/labels.js";
+import { LABEL_DEFS, NEEDS_APPROVAL, DECLINED, NEEDS_HUMAN } from "../github/labels.js";
 import { maintainer, maintainerSpec } from "../agents/maintainer.js";
 import { effectivePolicy } from "../agents/spec.js";
 import { executeSafe, doClose, proposeGate, ensureControlLabel, type GatedKind } from "../shell/actions.js";
@@ -16,7 +16,7 @@ import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
-import { currentSpec } from "../shell/consensus.js";
+import { currentSpec, parseSpecs } from "../shell/consensus.js";
 import { isHumanComment } from "../shell/markers.js";
 import { makePhaseLogger } from "../phase-logger.js";
 import type { ModelLevels } from "../provider/models.js";
@@ -249,6 +249,10 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     return { kind: "done" };
   }
   if (kind === "implement" || kind === "rework") {
+    if (kind === "implement") {
+      const specCheck = await approvedImplementSpec(ctx, issue, comments, gate);
+      if (specCheck.kind === "failed") return specCheck.out;
+    }
     // #86: defer to the tick scheduler — don't run the heavy executor here. Report this as a ready candidate
     // (gate left intact, so it re-enters awaitingGate next tick) and let reconcile run at most one per tick.
     // Both implement and rework are heavy patcher work, so both share the one-per-tick budget.
@@ -284,6 +288,37 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // issue via `Closes #N` -> terminal). The shell does not merge from an issue 👍. Keep waiting.
   // Still open + needs-approval, so it stays parked in the backlog.
   return { kind: "waiting", on: "human", entry: parked };
+}
+
+async function approvedImplementSpec(
+  ctx: StepCtx,
+  issue: Issue,
+  comments: { id: string; body: string; author: string; updatedAt: number }[],
+  gate: { body: string },
+): Promise<{ kind: "ok" } | { kind: "failed"; out: Outcome }> {
+  const stamped = approvalSpecVersion(gate.body);
+  if (stamped === 0) return { kind: "ok" };
+  const cur = currentSpec(comments);
+  if (cur?.version === stamped) return { kind: "ok" };
+  await markNeedsHuman(ctx, issue);
+  const found = parseSpecs(comments).map((s) => s.version).sort((a, b) => a - b);
+  const detail = found.length ? `found spec versions: ${found.join(", ")}` : "no monastery spec comments found";
+  const error = `approved spec v${stamped} missing; ${detail}`;
+  await ctx.gh.upsertPanel(ctx.repo, issue.number, `${NOTE_MARKER}\n⚠️ ${error} — refusing to run patcher without the approved task.`);
+  return {
+    kind: "failed",
+    out: {
+      kind: "failed",
+      error,
+      entry: { number: issue.number, title: issue.title, priority: "now", rationale: `approved implement → failed: ${error}` },
+    },
+  };
+}
+
+async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
+  const def = LABEL_DEFS.find((l) => l.name === NEEDS_HUMAN);
+  if (def) await ctx.gh.ensureLabel(ctx.repo, def.name, def.color, def.description);
+  await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
 }
 
 function latestApprovalGate<T extends { body: string; updatedAt: number }>(comments: T[]): T | undefined {

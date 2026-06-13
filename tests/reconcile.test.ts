@@ -226,6 +226,34 @@ test("#135 approved implement empty diff counts as failed and is not reported as
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
+test("#137 spec-backed approved implement missing spec fails during scheduling and never uses heavy slot", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [
+    { number: 1, title: "docs update", body: "stale body", labels: ["monastery:needs-approval"], state: "open" },
+  ]});
+  await gh.postComment("o/r", 1,
+    "<!--monastery-state\nprotocol: approval\naction: implement\nspec: 1\n-->\n⏳ **NEEDS YOUR APPROVAL**\n\n## Approved docs-only plan");
+  gh.commentReactions["0"] = ["+1"];
+  const written: Snap[] = [];
+  const ws = new FakeWorkspace({ diff: "patch", tests: true });
+  const c = {
+    ...baseCtx(gh, new FakeProvider({ "actions.json": JSON.stringify({ actions: [] }) })),
+    ws,
+    review: async () => ({ findings: [] }),
+    backlog: { writeBacklog: (_r: string, s: Snap) => { written.push(s); } },
+  };
+  const r = await reconcile(c);
+  expect(r.advanced).toBe(0);
+  expect(r.failed).toBe(1);
+  expect(ws.cloned).toHaveLength(0);
+  expect(gh.prs).toHaveLength(0);
+  const [i1] = await gh.listOpenIssues("o/r", 0);
+  expect(i1.labels).toContain("monastery:needs-approval");
+  expect(i1.labels).toContain("monastery:needs-human");
+  const entry = written[0].entries.find((e) => e.number === 1);
+  expect(entry?.rationale).toMatch(/approved spec|missing/i);
+  rmSync(c.artifactRoot, { recursive: true, force: true });
+});
+
 test("#86 a deferred implement runs on the NEXT tick (not lost)", async () => {
   const gh = await twoApprovedImplements();
   const c1 = implCtx(gh);
