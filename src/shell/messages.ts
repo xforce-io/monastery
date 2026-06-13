@@ -7,13 +7,17 @@ export const STATE_MARKER = "<!--monastery-state";
 export const AWAITING_APPROVAL_BANNER =
   "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
 
+export type StateMessageKind = "note" | "approval";
+
 /** The closed set of states a class-A machine message can be in (#144 A3). */
 export type StateStatus = "awaiting-approval" | "blocked" | "done" | "note";
 
 /**
  * #144 A3: the SINGLE source from which a class-A message's visible head, machine-block `kind`, and
  * control-label op are all derived — so they can never drift apart. `head` is a generic prefix; the
- * caller's `body` still carries the specifics.
+ * caller's `body` still carries the specifics. Only `awaiting-approval` has a named constant
+ * (AWAITING_APPROVAL_BANNER) because it is referenced from external call sites; the other heads are
+ * internal to this function.
  */
 export function deriveState(status: StateStatus): {
   head: string;
@@ -31,8 +35,6 @@ export function deriveState(status: StateStatus): {
       return { head: "", kind: "note", labels: {} };
   }
 }
-
-export type StateMessageKind = "note" | "approval";
 
 export interface StateMessage {
   kind: StateMessageKind;

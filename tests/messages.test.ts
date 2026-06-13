@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { deriveState, STATE_MARKER, type StateStatus } from "../src/shell/messages.js";
+import { deriveState, STATE_MARKER } from "../src/shell/messages.js";
 import { NEEDS_APPROVAL, NEEDS_HUMAN } from "../src/github/labels.js";
 
 test("#144 deriveState is the single source for head/kind/labels", () => {
