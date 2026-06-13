@@ -12,8 +12,8 @@ import { isHumanComment } from "../shell/markers.js";
 import type { Spec } from "../shell/consensus.js";
 import { languageDirective, looksOffLanguage } from "../shell/language.js";
 import { makePhaseLogger, type PhaseLogger } from "../phase-logger.js";
-import { LABEL_DEFS, NEEDS_HUMAN } from "../github/labels.js";
-import { renderStateMessage } from "../shell/messages.js";
+import { renderStateMessage, type StateStatus } from "../shell/messages.js";
+import { applyStateLabels } from "../shell/actions.js";
 
 // Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
@@ -24,8 +24,10 @@ function withLanguage(persona: string, language?: string): string {
   return language ? `${languageDirective(language)}\n\n${persona}` : persona;
 }
 
-const patchNote = (body: string, model?: string) => renderStateMessage({ kind: "note", body, agent: "patcher", ...(model ? { model } : {}) });
-const reviewerNote = (body: string, model?: string) => renderStateMessage({ kind: "note", body, agent: "reviewer", ...(model ? { model } : {}) });
+const patcherMsg = (status: StateStatus, body: string, model?: string) =>
+  renderStateMessage({ status, body, agent: "patcher", ...(model ? { model } : {}) });
+const reviewerMsg = (status: StateStatus, body: string, model?: string) =>
+  renderStateMessage({ status, body, agent: "reviewer", ...(model ? { model } : {}) });
 
 const BRANCH_SLUG_MAX = 50;
 
@@ -54,13 +56,11 @@ function fixContext(issue: Issue, blocking: ReviewFinding[]): string {
 
 function reviewPanel(blocking: ReviewFinding[], iters: number, model?: string): string {
   const list = blocking.map((b) => `- ${b.title}: ${b.detail}`).join("\n");
-  return reviewerNote(`⚠️ 自审在 ${iters} 轮后仍有未解决的 blocking — needs a human：\n${list}`, model);
+  return reviewerMsg("blocked", `自审在 ${iters} 轮后仍有未解决的 blocking：\n${list}`, model);
 }
 
 async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
-  const def = LABEL_DEFS.find((l) => l.name === NEEDS_HUMAN);
-  if (def) await ctx.gh.ensureLabel(ctx.repo, def.name, def.color, def.description);
-  await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_HUMAN);
+  await applyStateLabels(ctx.gh, ctx.repo, issue.number, "blocked");
 }
 
 /**
@@ -139,7 +139,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     // The REVIEWER's voice = a separate marked comment on the PR (conclusion + advisory only).
     const prNum = parsePrNumber(url);
     if (prNum !== null) {
-      await ctx.gh.postComment(ctx.repo, prNum, reviewerNote(reviewSummary(r), r.reviewerModel));
+      await ctx.gh.postComment(ctx.repo, prNum, reviewerMsg("note", reviewSummary(r), r.reviewerModel));
     }
     pr.done({ url });
     return { kind: "progressed", note: url };
@@ -160,7 +160,7 @@ const REWORK_BUDGET = 3; // bounded self-revision: after this many rounds on one
  */
 export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
-  const panel = (note: string) => ctx.gh.upsertPanel(ctx.repo, issue.number, patchNote(note));
+  const panel = (note: string, status: StateStatus = "note") => ctx.gh.upsertPanel(ctx.repo, issue.number, patcherMsg(status, note));
 
   // Guard 1: there must be monastery's own OPEN DRAFT PR. merged = terminal; anything else (none/closed) is
   // not reworkable here — a closed PR is the maintainer's call to re-judge (#102), not rework's to force.
@@ -189,7 +189,8 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // Guard 3: bounded attempt budget — count prior rework rounds already posted on the PR thread.
   const priorRounds = (await ctx.gh.listComments(ctx.repo, prNum)).filter((c) => c.body.includes(REWORK_MARKER)).length;
   if (priorRounds >= REWORK_BUDGET) {
-    await panel(`⚠️ rework 已达 ${REWORK_BUDGET} 轮上限——needs a human。`); return { kind: "noop" };
+    await applyStateLabels(ctx.gh, ctx.repo, issue.number, "blocked");
+    await panel(`rework 已达 ${REWORK_BUDGET} 轮上限。`, "blocked"); return { kind: "noop" };
   }
   const round = priorRounds + 1;
   const log = makePhaseLogger(ctx, issue.number);
@@ -280,12 +281,12 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     const error = `patcher made no changes (${fails}/${PATCH_FAIL_THRESHOLD}); workdir kept at ${dir}`;
     if (fails < PATCH_FAIL_THRESHOLD) {
       console.warn(`[monastery] patcher made no changes ${ctx.repo}#${issue.number} (${fails}/${PATCH_FAIL_THRESHOLD})`);
-      await ctx.gh.upsertPanel(ctx.repo, issue.number, patchNote(`⚠️ ${error}`, patcherModel));
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, patcherMsg("note", error, patcherModel));
       return { kind: "failed", error };
     }
     await markNeedsHuman(ctx, issue);
     await ctx.gh.upsertPanel(ctx.repo, issue.number,
-      patchNote(`⚠️ patcher made no changes after ${fails} attempts — needs a human.\n\nworkdir kept at ${dir}`, patcherModel));
+      patcherMsg("blocked", `patcher made no changes after ${fails} attempts.\n\nworkdir kept at ${dir}`, patcherModel));
     return { kind: "failed", error };
   }
 
