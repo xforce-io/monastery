@@ -50,7 +50,7 @@ export function usage(): string {
     "",
     "Common flags:",
     "  --repo <owner>/<repo>   target a single tracked repo (default: all tracked repos)",
-    "  --dry-run               compute actions but write nothing to GitHub (step only)",
+    "  --dry-run               compute actions but write nothing to GitHub; local lock/progress cache may refresh (step only)",
     "  --json                  machine-readable output / NDJSON event stream (step)",
     "  --help, -h              show this help",
     "  --version, -v           print the version",

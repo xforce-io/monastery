@@ -94,7 +94,7 @@ test("stepRepos releases the lock after a repo finishes so it can re-run", async
   rmSync(dir, { recursive: true, force: true });
 });
 
-import { formatBacklog } from "../src/cli/backlog.js";
+import { formatBacklog, formatMissingBacklog, missingBacklog } from "../src/cli/backlog.js";
 import type { BacklogSnapshot } from "../src/types.js";
 
 test("parses `backlog --repo o/r --json`", () => {
@@ -119,6 +119,19 @@ test("formatBacklog renders header + ranked lines with priority, rationale, bloc
   expect(out).toContain("[later] #1 a");
   expect(out).toContain("blocked: o/r#9");
   expect(out).toContain("fails: 2");
+});
+
+test("#139 missing backlog snapshot renders an actionable hint", () => {
+  const missing = missingBacklog("o/r", false);
+  const out = formatMissingBacklog(missing);
+  expect(missing).toEqual({
+    repo: "o/r",
+    error: "missing_backlog_snapshot",
+    tracked: false,
+    hint: "run monastery repos add o/r, then monastery step --repo o/r",
+  });
+  expect(out).toContain("not tracked or has no backlog snapshot");
+  expect(out).toContain("monastery repos add o/r");
 });
 
 test("summarize surfaces awaiting-your-👍 count when a repo has items blocked on the human (#88)", () => {

@@ -1,6 +1,13 @@
 // src/cli/backlog.ts — render a backlog snapshot (issue #82) for humans.
 import type { BacklogSnapshot } from "../types.js";
 
+export interface MissingBacklog {
+  repo: string;
+  error: "missing_backlog_snapshot";
+  tracked: boolean;
+  hint: string;
+}
+
 export function formatBacklog(s: BacklogSnapshot): string {
   const header = `${s.repo} — backlog (ranked ${s.rankedOf.ranked} of ${s.rankedOf.open} open, @ ${s.generatedAt})`;
   const lines = s.entries.map((e) => {
@@ -10,6 +17,18 @@ export function formatBacklog(s: BacklogSnapshot): string {
     return parts.join(" ");
   });
   return [header, ...lines].join("\n");
+}
+
+export function missingBacklog(repo: string, tracked: boolean): MissingBacklog {
+  const hint = tracked
+    ? `run monastery step --repo ${repo} to create the first backlog snapshot`
+    : `run monastery repos add ${repo}, then monastery step --repo ${repo}`;
+  return { repo, error: "missing_backlog_snapshot", tracked, hint };
+}
+
+export function formatMissingBacklog(m: MissingBacklog): string {
+  const why = m.tracked ? "has no backlog snapshot yet" : "is not tracked or has no backlog snapshot";
+  return `${m.repo} — ${why}; ${m.hint}`;
 }
 
 export interface PendingItem { repo: string; number: number; title: string; approvalKind?: string; approvalCommentId: string }

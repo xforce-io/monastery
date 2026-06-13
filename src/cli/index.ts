@@ -16,11 +16,10 @@ import type { Outcome, ReconcileResult } from "../types.js";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
 import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, type StatusEntry } from "./status.js";
-import { formatBacklog, formatPending, type PendingItem } from "./backlog.js";
+import { formatBacklog, formatMissingBacklog, formatPending, missingBacklog, type PendingItem } from "./backlog.js";
 import { wantsHelp, wantsVersion, usage, readPackageVersion } from "./help.js";
 import { preflight, formatPreflightErrors, type Need } from "./preflight.js";
 import { dirname } from "node:path";
-import type { BacklogSnapshot } from "../types.js";
 import { resolveModelLevels, resolveProviderMode } from "../provider/models.js";
 import { makeProviderPool, selectAgentProvider } from "../provider/select.js";
 
@@ -66,6 +65,11 @@ async function main(): Promise<void> {
   }
 
   const store = new Store(join(homedir(), ".monastery"));
+  const legacy = store.cleanupLegacyReposFile();
+  if (legacy) {
+    const migrated = legacy.migratedRepos.length ? `; migrated ${legacy.migratedRepos.join(", ")} into config.json` : "";
+    console.error(`[monastery] archived legacy repos.json at ${legacy.archivePath}${migrated}`);
+  }
 
   if (args.cmd === "repos") {
     if (args.sub === "add" && args.repo) store.addRepo(args.repo, args.model ? { model: args.model } : undefined);
@@ -102,10 +106,16 @@ async function main(): Promise<void> {
 
   if (args.cmd === "backlog") {
     const repos = args.repo ? [args.repo] : store.listRepos();
-    const snaps = repos
-      .map((r) => store.readBacklog(r))
-      .filter((s): s is BacklogSnapshot => s !== null);
-    console.log(args.json ? JSON.stringify(snaps, null, 2) : snaps.map(formatBacklog).join("\n\n"));
+    if (repos.length === 0) {
+      const empty = { error: "no_tracked_repos", hint: "run monastery repos add <owner>/<repo>" };
+      console.log(args.json ? JSON.stringify(empty, null, 2) : `no tracked repos; ${empty.hint}`);
+      return;
+    }
+    const tracked = new Set(store.listRepos());
+    const items = repos.map((r) => store.readBacklog(r) ?? missingBacklog(r, tracked.has(r)));
+    console.log(args.json
+      ? JSON.stringify(items, null, 2)
+      : items.map((i) => "error" in i ? formatMissingBacklog(i) : formatBacklog(i)).join("\n\n"));
     return;
   }
 
@@ -167,11 +177,12 @@ async function main(): Promise<void> {
           // #75: keep stdout a clean NDJSON stream in json mode — dry-run's human lines go to stderr there.
           const emit = (s: string) => (args.json ? console.error(s) : console.log(s));
           if (dry.actions.length === 0) {
-            emit(`[dry-run] ${repo}: no writes would occur`);
+            emit(`[dry-run] ${repo}: no GitHub writes would occur (local lock/progress cache may be refreshed)`);
           } else {
             for (const a of dry.actions) {
               emit(`[dry-run] ${a.op}(${JSON.stringify(a.args)})`);
             }
+            emit(`[dry-run] ${repo}: GitHub writes suppressed; local lock/progress cache may be refreshed`);
           }
         }
       },

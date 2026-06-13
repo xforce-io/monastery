@@ -14,7 +14,10 @@
 ├── config.json                       非易失 —— 用户意图
 └── repos/
     └── <owner>__<repo>/
-        └── cache.json                可丢 —— 从 GitHub 可重建
+        ├── cache.json                可丢 —— 从 GitHub 可重建
+        ├── backlog.json              可丢 —— 上次 step 生成的 backlog 快照
+        ├── step.lock                 临时 —— 运行中的 per-repo 锁
+        └── step.progress             临时 —— 运行中的 phase 进度快照
 ```
 
 `<owner>/<repo>` 映射成目录名时把 `/` 换成 `__`(如 `xforce-io/monastery` → `xforce-io__monastery`)。
@@ -83,4 +86,4 @@ level 分为 `fast` / `standard` / `strong`:健康检测用 fast,maintainer 用 
 
 ## 孵化期
 
-v2 孵化期**不保向后兼容**:旧的扁平 `repos.json` / `cursor.json` / `fails.json` 已弃,不迁移——重新 `repos add` 即可,缓存自然重建。
+v2 孵化期**不保向后兼容**:旧的扁平 `cursor.json` / `fails.json` 已弃,不迁移,缓存自然重建。旧 `repos.json` 若存在,CLI 会把其中缺失的 repo 合并进 `config.json`,再将旧文件归档为 `repos.json.legacy-*`,避免排查时出现两个 repo 清单。
