@@ -1,6 +1,7 @@
 // tests/markers.test.ts — the single source of truth for "machine vs human" comment identity (#97).
 import { expect, test } from "vitest";
 import { isHumanComment, isMonasteryComment } from "../src/shell/markers.js";
+import { approvalKind, approvalSpecVersion, isStateMessage, parseStateMessage, renderStateMessage, stripStateMessage } from "../src/shell/messages.js";
 
 test("isMonasteryComment: true for any monastery-marked comment body", () => {
   expect(isMonasteryComment("<!--monastery-state\nprotocol: note\n-->\nx")).toBe(true);
@@ -16,4 +17,24 @@ test("isMonasteryComment: false for plain human text (no marker)", () => {
 test("isHumanComment: inverse of isMonasteryComment", () => {
   expect(isHumanComment({ body: "hi there" })).toBe(true);
   expect(isHumanComment({ body: "<!--monastery-reply to=5-->" })).toBe(false);
+});
+
+test("#144 state messages render and parse the v1 envelope", () => {
+  const body = renderStateMessage({ kind: "approval", action: "implement", spec: 2, body: "⏳ approve\n\n## Plan" });
+
+  expect(body).toContain("v: 1");
+  expect(body).toContain("kind: approval");
+  expect(body).toContain("protocol: approval"); // v0 readers stay compatible
+  expect(isStateMessage(body, "approval")).toBe(true);
+  expect(parseStateMessage(body)).toMatchObject({ kind: "approval", action: "implement", spec: 2, body: "⏳ approve\n\n## Plan" });
+  expect(approvalKind(body)).toBe("implement");
+  expect(approvalSpecVersion(body)).toBe(2);
+  expect(stripStateMessage(body)).toBe("⏳ approve\n\n## Plan");
+});
+
+test("#144 state parser remains compatible with v0 monastery-state comments", () => {
+  const body = "<!--monastery-state\nprotocol: approval\naction: rework\nspec: 3\n-->\n⏳ old gate";
+
+  expect(parseStateMessage(body)).toMatchObject({ kind: "approval", action: "rework", spec: 3, body: "⏳ old gate" });
+  expect(isStateMessage("<!--monastery-state\nprotocol: note\n-->\nold note", "note")).toBe(true);
 });

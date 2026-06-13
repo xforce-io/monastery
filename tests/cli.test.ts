@@ -151,6 +151,7 @@ test("#125 summarize surfaces failed count", () => {
 test("#125 step exit code is non-zero for batch and single-issue failures", () => {
   expect(stepExitCode(0, [{ repo: "o/r", advanced: 0, failed: 1, idle: true, nextPollMs: 60000, waiting: [] }])).toBe(1);
   expect(stepExitCode(0, [], { kind: "failed", error: "label not found" })).toBe(1);
+  expect(stepExitCode(0, [], { kind: "partial", warning: "relabel: label not found", applied: 1, failed: 1 })).toBe(0);
   expect(stepExitCode(4, [], { kind: "noop" })).toBe(4);
 });
 

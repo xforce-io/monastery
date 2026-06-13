@@ -13,6 +13,7 @@ import type { Spec } from "../shell/consensus.js";
 import { languageDirective, looksOffLanguage } from "../shell/language.js";
 import { makePhaseLogger, type PhaseLogger } from "../phase-logger.js";
 import { LABEL_DEFS, NEEDS_HUMAN } from "../github/labels.js";
+import { renderStateMessage } from "../shell/messages.js";
 
 // Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
@@ -23,7 +24,7 @@ function withLanguage(persona: string, language?: string): string {
   return language ? `${languageDirective(language)}\n\n${persona}` : persona;
 }
 
-const PATCH_NOTE_MARKER = "<!--monastery-state\nprotocol: note\n-->";
+const patchNote = (body: string) => renderStateMessage({ kind: "note", body });
 
 const BRANCH_SLUG_MAX = 50;
 
@@ -52,7 +53,7 @@ function fixContext(issue: Issue, blocking: ReviewFinding[]): string {
 
 function reviewPanel(blocking: ReviewFinding[], iters: number): string {
   const list = blocking.map((b) => `- ${b.title}: ${b.detail}`).join("\n");
-  return `${PATCH_NOTE_MARKER}\n⚠️ 自审在 ${iters} 轮后仍有未解决的 blocking — needs a human：\n${list}`;
+  return patchNote(`⚠️ 自审在 ${iters} 轮后仍有未解决的 blocking — needs a human：\n${list}`);
 }
 
 async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
@@ -127,7 +128,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     // The REVIEWER's voice = a separate marked comment on the PR (conclusion + advisory only).
     const prNum = parsePrNumber(url);
     if (prNum !== null) {
-      await ctx.gh.postComment(ctx.repo, prNum, `${PATCH_NOTE_MARKER}\n${reviewSummary(r)}`);
+      await ctx.gh.postComment(ctx.repo, prNum, patchNote(reviewSummary(r)));
     }
     pr.done({ url });
     return { kind: "progressed", note: url };
@@ -148,7 +149,7 @@ const REWORK_BUDGET = 3; // bounded self-revision: after this many rounds on one
  */
 export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
-  const panel = (note: string) => ctx.gh.upsertPanel(ctx.repo, issue.number, `${PATCH_NOTE_MARKER}\n${note}`);
+  const panel = (note: string) => ctx.gh.upsertPanel(ctx.repo, issue.number, patchNote(note));
 
   // Guard 1: there must be monastery's own OPEN DRAFT PR. merged = terminal; anything else (none/closed) is
   // not reworkable here — a closed PR is the maintainer's call to re-judge (#102), not rework's to force.
@@ -267,12 +268,12 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     const error = `patcher made no changes (${fails}/${PATCH_FAIL_THRESHOLD}); workdir kept at ${dir}`;
     if (fails < PATCH_FAIL_THRESHOLD) {
       console.warn(`[monastery] patcher made no changes ${ctx.repo}#${issue.number} (${fails}/${PATCH_FAIL_THRESHOLD})`);
-      await ctx.gh.upsertPanel(ctx.repo, issue.number, `${PATCH_NOTE_MARKER}\n⚠️ ${error}`);
+      await ctx.gh.upsertPanel(ctx.repo, issue.number, patchNote(`⚠️ ${error}`));
       return { kind: "failed", error };
     }
     await markNeedsHuman(ctx, issue);
     await ctx.gh.upsertPanel(ctx.repo, issue.number,
-      `${PATCH_NOTE_MARKER}\n⚠️ patcher made no changes after ${fails} attempts — needs a human.\n\nworkdir kept at ${dir}`);
+      patchNote(`⚠️ patcher made no changes after ${fails} attempts — needs a human.\n\nworkdir kept at ${dir}`));
     return { kind: "failed", error };
   }
 
