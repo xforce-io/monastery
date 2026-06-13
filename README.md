@@ -75,7 +75,7 @@ Run `monastery --help` or `monastery <command> --help` any time. With no `--repo
 
 | Flag | Applies to | Effect |
 |------|-----------|--------|
-| `--dry-run` | `step` | Compute actions but write nothing to GitHub. |
+| `--dry-run` | `step` | Compute actions but write nothing to GitHub; local lock/progress cache may still refresh. |
 | `--json` | `step`, `status`, `backlog`, `pending` | Machine-readable output; `step` emits an NDJSON event stream on stdout. |
 | `--repo <owner>/<repo>` | most | Target one tracked repo instead of all. |
 | `--issue <N>` | `step` | Reconcile a single issue. |

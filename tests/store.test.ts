@@ -31,6 +31,21 @@ test("repos: persisted to config.json at root, survives a fresh Store", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("#139 legacy repos.json is merged once then archived", () => {
+  const { store, dir } = tmpStore();
+  store.addRepo("owner/current", { model: "opus" });
+  writeFileSync(join(dir, "repos.json"), JSON.stringify({ repos: ["owner/current", "owner/legacy"] }));
+
+  const cleanup = store.cleanupLegacyReposFile(() => new Date("1970-01-01T00:00:00.000Z"));
+
+  expect(cleanup?.migratedRepos).toEqual(["owner/legacy"]);
+  expect(existsSync(join(dir, "repos.json"))).toBe(false);
+  expect(existsSync(join(dir, "repos.json.legacy-1970-01-01T00-00-00-000Z"))).toBe(true);
+  expect(new Store(dir).listRepos()).toEqual(["owner/current", "owner/legacy"]);
+  expect(new Store(dir).repoModel("owner/current")).toBe("opus");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("repoPolicy: returns the full per-repo policy (incl. per-agent overrides), undefined when unset", () => {
   const { store, dir } = tmpStore();
   expect(store.repoPolicy("o/r")).toBeUndefined();

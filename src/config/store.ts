@@ -1,5 +1,5 @@
 // src/config/store.ts
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PolicyOverrides } from "../agents/spec.js";
 import type { BacklogSnapshot } from "../types.js";
@@ -14,6 +14,7 @@ export interface RepoPolicy extends PolicyOverrides { model?: string; language?:
 /** Global defaults applied across repos when a repo doesn't override them. */
 interface ConfigDefaults { language?: string; }
 interface ConfigFile { repos: Record<string, RepoPolicy>; defaults?: ConfigDefaults; }
+interface LegacyReposFile { repos?: unknown }
 
 /** Per-repo disposable cache (rebuildable from GitHub). */
 interface CacheFile { cursor: number; fails: Record<number, number>; }
@@ -29,6 +30,12 @@ export interface FailTracker {
 /** Writes the per-repo backlog snapshot (issue #82). Disposable — rebuilt each step. */
 export interface BacklogWriter {
   writeBacklog(repo: string, snapshot: BacklogSnapshot): void;
+}
+
+export interface LegacyReposCleanup {
+  path: string;
+  archivePath: string;
+  migratedRepos: string[];
 }
 
 /** `<owner>/<repo>` → a filesystem-safe per-repo dir slug. */
@@ -54,8 +61,34 @@ export class Store implements FailTracker, BacklogWriter {
   // --- config.json (non-disposable) ---
 
   private configPath(): string { return join(this.root, "config.json"); }
+  private legacyReposPath(): string { return join(this.root, "repos.json"); }
   private readConfig(): ConfigFile { return this.readJson<ConfigFile>(this.configPath(), { repos: {} }); }
   private writeConfig(c: ConfigFile): void { this.writeJson(this.configPath(), c); }
+
+  /**
+   * One-time bridge for pre-v2 installs: the old flat repos.json is no longer a source of truth.
+   * Merge any missing repo names into config.json, then archive the stale file so future commands
+   * cannot appear to read two different tracking states.
+   */
+  cleanupLegacyReposFile(now: () => Date = () => new Date()): LegacyReposCleanup | null {
+    const path = this.legacyReposPath();
+    if (!existsSync(path)) return null;
+    const legacy = this.readJson<LegacyReposFile>(path, {});
+    const repos = Array.isArray(legacy.repos) ? legacy.repos.filter((r): r is string => typeof r === "string") : [];
+    const c = this.readConfig();
+    const migratedRepos: string[] = [];
+    for (const repo of repos) {
+      if (!(repo in c.repos)) {
+        c.repos[repo] = {};
+        migratedRepos.push(repo);
+      }
+    }
+    if (migratedRepos.length) this.writeConfig(c);
+    const stamp = now().toISOString().replace(/[:.]/g, "-");
+    const archivePath = join(this.root, `repos.json.legacy-${stamp}`);
+    renameSync(path, archivePath);
+    return { path, archivePath, migratedRepos };
+  }
 
   listRepos(): string[] { return Object.keys(this.readConfig().repos); }
 
