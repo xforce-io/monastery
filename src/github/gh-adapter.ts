@@ -2,7 +2,7 @@
 import { execa } from "execa";
 import type { GitHubAdapter } from "./adapter.js";
 import type { Issue } from "../types.js";
-import { STATE_MARKER } from "../shell/messages.js";
+import { isStickyPanel } from "../shell/messages.js";
 
 export type GhRun = (args: string[], input?: string) => Promise<string>;
 
@@ -58,19 +58,24 @@ export class GhAdapter implements GitHubAdapter {
       .then((b64) => Buffer.from(b64.trim(), "base64").toString("utf8"))
       .catch(() => "");
   }
+  // #154: the sticky panel is selected by FIELD (isStickyPanel), not by a bare `startswith(STATE_MARKER)`
+  // [0]. The approval gate shares that prefix; selecting [0] could PATCH over a live gate (dropping the
+  // approval門) when the gate is the first state comment. The field judgment lives in the schema helper, so
+  // we pull the comment bodies and filter in JS rather than encoding `kind`/`status` into jq.
+  private async stickyPanel(repo: string, num: number): Promise<{ id: string; body: string } | undefined> {
+    const out = await this.run([
+      "api", `repos/${repo}/issues/${num}/comments`, "--jq", "[.[] | {id: (.id|tostring), body}]",
+    ]).catch(() => "[]");
+    const all = JSON.parse(out || "[]") as { id: string; body: string }[];
+    return all.find((c) => isStickyPanel(c.body));
+  }
   async readPanel(repo: string, num: number): Promise<string> {
-    return this.run([
-      "api", `repos/${repo}/issues/${num}/comments`,
-      "--jq", `[.[] | select(.body | startswith("${STATE_MARKER}"))][0].body // ""`,
-    ]).catch(() => "");
+    return (await this.stickyPanel(repo, num))?.body ?? "";
   }
   async upsertPanel(repo: string, num: number, body: string): Promise<void> {
-    const id = await this.run([
-      "api", `repos/${repo}/issues/${num}/comments`,
-      "--jq", `[.[] | select(.body | startswith("${STATE_MARKER}"))][0].id // ""`,
-    ]).catch(() => "");
-    if (id.trim()) {
-      await this.run(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id.trim()}`, "-F", "body=@-"], body);
+    const panel = await this.stickyPanel(repo, num);
+    if (panel) {
+      await this.run(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${panel.id}`, "-F", "body=@-"], body);
     } else {
       await this.run(["issue", "comment", String(num), "--repo", repo, "--body-file", "-"], body);
     }

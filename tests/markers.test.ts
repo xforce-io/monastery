@@ -1,7 +1,38 @@
 // tests/markers.test.ts — the single source of truth for "machine vs human" comment identity (#97).
 import { expect, test } from "vitest";
-import { isHumanComment, isMonasteryComment } from "../src/shell/markers.js";
+import { isHumanComment, isMonasteryComment, renderMarker, parseMarkers, hasMarker } from "../src/shell/markers.js";
 import { approvalKind, approvalSpecVersion, isStateMessage, parseStateMessage, renderStateMessage, stripStateMessage } from "../src/shell/messages.js";
+
+test("#154 class-B render→parse round-trips fields", () => {
+  expect(renderMarker("reply", { to: "C_123" })).toBe("<!--monastery-reply to=C_123-->");
+  expect(renderMarker("rework", { round: 2, committed: "true" })).toBe("<!--monastery-rework round=2 committed=true-->");
+  expect(renderMarker("impl-rejected")).toBe("<!--monastery-impl-rejected-->");
+  expect(parseMarkers("ack\n\n<!--monastery-reply to=C_123-->", "reply")).toEqual([{ to: "C_123" }]);
+});
+
+test("#154 class-B hasMarker matches by EXACT field — to=C_123 does not misfire on to=C_1234", () => {
+  const body = "<!--monastery-reply to=C_1234-->";
+  expect(hasMarker(body, "reply", { to: "C_123" })).toBe(false); // the headline substring misfire is gone
+  expect(hasMarker(body, "reply", { to: "C_1234" })).toBe(true);
+  // numeric ids are coerced to their string form for the comparison
+  expect(hasMarker("<!--monastery-impl-rejected pr=12-->", "impl-rejected", { pr: 120 })).toBe(false);
+  expect(hasMarker("<!--monastery-impl-rejected pr=12-->", "impl-rejected", { pr: 12 })).toBe(true);
+});
+
+test("#154 class-B reads `committed` by field, not the `committed=true` substring", () => {
+  const committed = "<!--monastery-rework round=1 committed=true-->\npushed but summary failed";
+  const plain = "<!--monastery-rework round=1-->\n🔁 round 1";
+  expect(parseMarkers(committed, "rework")[0]).toEqual({ round: "1", committed: "true" });
+  expect(parseMarkers(plain, "rework")[0]).toEqual({ round: "1" });
+  expect(parseMarkers(plain, "rework")[0].committed).toBeUndefined(); // no false `committed=true` hit
+});
+
+test("#154 class-B hasMarker without fields just tests presence; counts via parseMarkers", () => {
+  const thread = "<!--monastery-rework round=1-->\n<!--monastery-rework round=2-->";
+  expect(hasMarker(thread, "rework")).toBe(true);
+  expect(hasMarker("no markers here", "rework")).toBe(false);
+  expect(parseMarkers(thread, "rework").length).toBe(2);
+});
 
 test("isMonasteryComment: true for any monastery-marked comment body", () => {
   expect(isMonasteryComment("<!--monastery-state\nprotocol: note\n-->\nx")).toBe(true);
