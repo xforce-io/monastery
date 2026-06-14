@@ -9,6 +9,7 @@ import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep, withReadOnlyCheckout, pendingApprovals, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
 import { branchName } from "../src/engine/patch.js";
 import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
+import { renderMarker, REWORK_GATELINK_MARKER } from "../src/shell/markers.js";
 import { SPEC_MARKER } from "../src/shell/consensus.js";
 import { parseStateMessage } from "../src/shell/messages.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
@@ -76,11 +77,11 @@ test("active issue: a propose(close) action moves the item to awaiting-gate (app
   expect(i.labels).toContain(NEEDS_APPROVAL);
 });
 
-// #149 (documented gap): a rework is triggered by human feedback on the PR, but the shell can only open the
-// approval gate on the current ISSUE — the rework action's `num` is the issue, and actions targeting another
-// object are rejected wholesale ("actions targeting a different issue are rejected"). So the reviewer who left
-// feedback on the PR gets nothing there: no gate, no cross-link. This test PINS that break; flip it on the fix.
-test("#149: a PR-feedback-driven rework opens the gate on the ISSUE and leaves the PR thread with nothing", async () => {
+// #149: a rework is triggered by human feedback on the PR, but the approval gate can only be opened on the
+// current ISSUE (the rework action's `num` is the issue, and actions targeting another object are rejected
+// wholesale). So the gate lives on the issue while the reviewer is on the PR. The shell leaves a pointer on
+// the PR thread back to the issue gate so the reviewer sees the proposal and knows where to 👍.
+test("#149: a PR-feedback-driven rework opens the gate on the ISSUE and cross-links it from the PR thread", async () => {
   const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
   const branch = branchName(issue.number, issue.title);
   const gh = ghWith(issue);
@@ -97,9 +98,28 @@ test("#149: a PR-feedback-driven rework opens the gate on the ISSUE and leaves t
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain(NEEDS_APPROVAL);
 
-  // The PR thread (#5) gets NO monastery message — no gate, no cross-link back to the issue proposal. The
-  // reviewer is on the PR and never sees the ask. This is the #149 break to flip when the fix lands.
-  expect(gh.comments[5]).toBeUndefined();
+  // #149: the PR thread (#5) now carries a pointer back to the issue gate, so the reviewer who left feedback
+  // on the PR sees the proposal and knows where to approve.
+  const prPost = gh.comments[5]?.[0];
+  expect(prPost).toContain("#7");      // cross-links back to the issue gate
+  expect(prPost).toMatch(/rework/i);   // names the proposal
+});
+
+// #149: the pointer is idempotent — once a live pointer sits on the PR for this gate, re-proposing the same
+// rework (e.g. after a 👀 demote) must not spam the PR thread with a second pointer.
+test("#149: the rework PR cross-link is posted once — a re-proposal does not spam the PR thread", async () => {
+  const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
+  const branch = branchName(issue.number, issue.title);
+  const gh = ghWith(issue);
+  gh.prStates[branch] = "open";
+  gh.prDetailsByBranch[branch] = { number: 5, url: "u/5", title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true };
+  gh.prCommentsByPr[5] = [{ id: "pc1", body: "please rename foo to bar", author: "alice" }];
+  gh.comments[5] = [`${renderMarker(REWORK_GATELINK_MARKER)}\n🔁 已在 issue #7 提了 rework,去点赞。`]; // a live pointer already there
+  const provider = new FakeProvider(actionsJson([{ kind: "rework", num: 7, draft: "plan again" }]));
+
+  await issueStep(ctxWith(gh, provider), 7);
+
+  expect(gh.comments[5]).toHaveLength(1); // no second pointer
 });
 
 test("active issue: an empty action list is a no-op (nothing to do)", async () => {
