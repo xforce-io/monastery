@@ -213,20 +213,26 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
  * #149: a rework approval gate is opened on the ISSUE (the rework action targets the issue), but the human
  * feedback that triggered it lives on the PR. Leave a pointer on the PR thread back to the issue gate, so the
  * reviewer who left feedback on the PR sees the proposal and knows where to 👍. Best-effort (the issue gate is
- * the source of truth, so a failed PR write must not fail the proposal) and idempotent (one pointer per gate:
- * a re-proposal after a 👀 demote doesn't spam the PR). The pointer carries its OWN marker — distinct from
- * REWORK_MARKER, which counts toward runRework's per-PR round budget.
+ * the source of truth, so a failed PR write must not fail the proposal).
+ *
+ * The pointer is bound to THIS gate's approval-comment id, not the PR. Idempotency is therefore per-gate, not
+ * per-PR: a later round opens a NEW gate (new id) and rightly re-notifies the reviewer — a per-PR "once
+ * forever" guard would silently drop every round after the first. The marker is DISTINCT from REWORK_MARKER,
+ * which counts toward runRework's per-PR round budget.
  */
 async function crossLinkReworkGate(ctx: StepCtx, issue: Issue): Promise<void> {
   try {
     const details = await ctx.gh.getPrDetails(ctx.repo, branchName(issue.number, issue.title));
     if (!details) return; // no PR to point from (defensive — rework only proposes when one exists)
+    // Identify this gate by its approval-comment id (the same handle reactions/approvalCommentId use).
+    const gate = latestApprovalGate(await ctx.gh.listComments(ctx.repo, issue.number));
+    if (!gate) return; // the gate wasn't opened (defensive)
     // Read what monastery already posted on the PR thread (listComments includes our own comments; a PR is an
-    // issue, so this is the same surface postComment writes to). Skip if a pointer for this gate is already up.
+    // issue, so this is the same surface postComment writes to). Skip only if THIS gate already has a pointer.
     const existing = await ctx.gh.listComments(ctx.repo, details.number);
-    if (existing.some((c) => hasMarker(c.body, REWORK_GATELINK_MARKER))) return;
+    if (existing.some((c) => hasMarker(c.body, REWORK_GATELINK_MARKER, { gate: gate.id }))) return;
     await ctx.gh.postComment(ctx.repo, details.number,
-      `${renderMarker(REWORK_GATELINK_MARKER)}\n🔁 monastery 已根据本 PR 的反馈,在 issue #${issue.number} 提了一条 **rework** 提议,正等待你的 👍 审批。请到 issue #${issue.number} 上为审批评论点赞以执行(在此继续讨论也可以)。`);
+      `${renderMarker(REWORK_GATELINK_MARKER, { gate: gate.id })}\n🔁 monastery 已根据本 PR 的反馈,在 issue #${issue.number} 提了一条 **rework** 提议,正等待你的 👍 审批。请到 issue #${issue.number} 上为审批评论点赞以执行(在此继续讨论也可以)。`);
   } catch (e) {
     console.warn(`[monastery] rework PR cross-link failed ${ctx.repo}#${issue.number}: ${(e as Error).message}`);
   }
