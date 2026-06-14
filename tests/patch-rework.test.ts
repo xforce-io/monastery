@@ -51,6 +51,19 @@ test("happy path: checks out the existing branch, reworks from feedback, updates
   expect(ws.cleaned).toHaveLength(1);
 });
 
+test("#150: the approved plan is injected into the patcher context, ahead of the raw feedback (conflict → plan wins)", async () => {
+  const gh = reworkable();
+  const ws = new FakeWorkspace({ diff: "patch", tests: true });
+  const c = ctx(gh, ws, async () => clean);
+  const plan = "将 engines.node 回退到 >=20.0.0"; // the maintainer's plan the human 👍'd
+  const out = await runRework(c, issue, plan);
+  expect(out.kind).toBe("progressed");
+  const context = (c.provider as FakeProvider).calls[0].context;
+  expect(context).toContain(plan);                                  // the approved plan reaches the patcher
+  // precedence: the plan must be presented before the raw feedback, so a conflict resolves to the plan.
+  expect(context.indexOf(plan)).toBeLessThan(context.indexOf("please rename foo to bar"));
+});
+
 test("regression: rework push succeeds but round comment fails -> next tick does NOT rework again", async () => {
   const gh = reworkable();
   const postComment = gh.postComment.bind(gh);

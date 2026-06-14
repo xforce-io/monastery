@@ -317,9 +317,11 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     // #88/#79: the human endorsed (👍). Run the gated executor.
     // implement: #100 feeds the ENDORSED spec (not the possibly-stale issue body); the #95 stale-gate guard
     //   above already ensured currentSpec.version == the gate's `spec: N`. No spec -> falls back to the body.
-    // rework: runRework checks out the existing branch and updates the SAME PR from the PR's human feedback.
+    // rework: #150 feeds the human-👍'd plan (this gate's prose) as the AUTHORITATIVE task, so the patcher
+    //   executes what was approved rather than re-deriving a fix from the raw PR feedback. `gate` is the same
+    //   comment whose 👍 we acted on above, so the plan and the approval are guaranteed to be the same artifact.
     const out = kind === "rework"
-      ? await runRework(ctx, issue)
+      ? await runRework(ctx, issue, stripMarkers(gate.body))
       : await runImplement(ctx, issue, currentSpec(comments));
     // Consume the gate on success: clear needs-approval + rewrite the panel to a plain note, so the item
     // doesn't re-enter awaitingGate on the stale 👍 every tick (which would re-count as advanced forever).

@@ -243,6 +243,30 @@ test("awaiting-gate + 👎: declined is stamped, needs-approval cleared, no agen
   expect(i.labels).not.toContain(NEEDS_APPROVAL);
 });
 
+test("#150: 👍 on a rework gate feeds the gate's approved plan to the patcher, ahead of the raw feedback", async () => {
+  const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
+  const branch = branchName(7, issue.title);
+  const gh = ghWith(issue);
+  // monastery's own OPEN draft PR carrying human feedback (reworkable). The feedback mixes a conclusion with a
+  // rationale — exactly the #150 ambiguity the authoritative plan is meant to anchor.
+  gh.prStates[branch] = "open";
+  gh.prDetailsByBranch[branch] = { number: 5, url: "u/5", title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true };
+  gh.prCommentsByPr[5] = [{ id: "pc1", body: "22 编译的二进制在 24 上会冲突", author: "alice" }];
+  // The maintainer's plan the human 👍'd, opened as the rework gate on the ISSUE (#149 landing).
+  const plan = "将 engines.node 回退到 >=20.0.0";
+  await proposeGate(gh, "o/r", 7, "rework", plan);
+  gh.commentReactions["0"] = ["+1"]; // human approves THIS gate
+
+  const provider = new FakeProvider({}, "回退完成");
+  const c: StepCtx = { ...ctxWith(gh, provider), ws: new FakeWorkspace({ diff: "patch", tests: true }), review: async () => ({ findings: [] }) };
+  const out = await issueStep(c, 7);
+
+  expect(out.kind).toBe("progressed");
+  const context = provider.calls[0].context;             // the patcher's call (gate path never calls the maintainer)
+  expect(context).toContain(plan);                       // the approved plan reached the patcher end-to-end
+  expect(context.indexOf(plan)).toBeLessThan(context.indexOf("22 编译的二进制")); // plan ahead of the raw feedback
+});
+
 test("awaiting-gate + no reaction yet: waits on the human, no agent call, no close", async () => {
   const gh = await awaitingGate(22, "close", "closing because X");
   const provider = new FakeProvider({});
