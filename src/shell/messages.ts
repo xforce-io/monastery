@@ -47,12 +47,32 @@ export interface StateMessage {
   model?: string;
   /** #152: which provider the emitting role actually ran on (e.g. "claude"/"codex") — pairs with agent/model. */
   provider?: string;
+  /** #153: stable idempotency key derived from the message's logical identity (deriveCorrelationId).
+   * Carried IN the envelope so a re-run can recognize "this logical message was already sent" by scanning
+   * comments — the root mitigation for GitHub having no transactions. */
+  correlationId?: string;
+  /** #153: optional diagnostic dimensions of the run/attempt that emitted this message (not a retry FSM). */
+  run?: number;
+  attempt?: number;
   status?: StateStatus;
+}
+
+/**
+ * #153: derive a STABLE idempotency key from a machine message's logical identity. Same logical message
+ * (same repo/issue/kind/action/spec) → same key across re-runs, so a re-run can recognize it was already
+ * sent. A higher spec version is a *different* logical message (a fresh gate, #95 staleness) → different key.
+ * Human-legible on purpose so the key is auditable straight from a comment's envelope.
+ */
+export function deriveCorrelationId(parts: { repo: string; num: number; kind: string; action?: GatedKind; spec?: number }): string {
+  let key = `${parts.repo}#${parts.num}:${parts.kind}`;
+  if (parts.action) key += `:${parts.action}`;
+  if (parts.spec !== undefined) key += `@spec${parts.spec}`;
+  return key;
 }
 
 const STATE_RE = /<!--monastery-state\s*([\s\S]*?)-->\n?/;
 
-export function renderStateMessage(msg: { status: StateStatus; action?: GatedKind; spec?: number; agent?: string; model?: string; provider?: string; body: string }): string {
+export function renderStateMessage(msg: { status: StateStatus; action?: GatedKind; spec?: number; agent?: string; model?: string; provider?: string; correlationId?: string; run?: number; attempt?: number; body: string }): string {
   const { head, kind } = deriveState(msg.status);
   const lines = ["v: 1", `kind: ${kind}`, `protocol: ${kind}`, `status: ${msg.status}`];
   if (msg.action) lines.push(`action: ${msg.action}`);
@@ -60,6 +80,9 @@ export function renderStateMessage(msg: { status: StateStatus; action?: GatedKin
   if (msg.agent) lines.push(`agent: ${msg.agent}`);
   if (msg.model) lines.push(`model: ${msg.model}`);
   if (msg.provider) lines.push(`provider: ${msg.provider}`);
+  if (msg.correlationId) lines.push(`correlationId: ${msg.correlationId}`);
+  if (msg.run !== undefined) lines.push(`run: ${msg.run}`);
+  if (msg.attempt !== undefined) lines.push(`attempt: ${msg.attempt}`);
   const body = head ? `${head}\n\n${msg.body}` : msg.body;
   return `${STATE_MARKER}\n${lines.join("\n")}\n-->\n${body}`;
 }
@@ -72,6 +95,8 @@ export function parseStateMessage(body: string): StateMessage | null {
   if (kind !== "note" && kind !== "approval") return null;
   const action = parseAction(meta.action);
   const spec = meta.spec && /^\d+$/.test(meta.spec) ? Number(meta.spec) : undefined;
+  const run = meta.run && /^\d+$/.test(meta.run) ? Number(meta.run) : undefined;
+  const attempt = meta.attempt && /^\d+$/.test(meta.attempt) ? Number(meta.attempt) : undefined;
   const status = isStateStatus(meta.status) ? meta.status : undefined;
   return {
     kind,
@@ -81,6 +106,9 @@ export function parseStateMessage(body: string): StateMessage | null {
     ...(meta.agent ? { agent: meta.agent } : {}),
     ...(meta.model ? { model: meta.model } : {}),
     ...(meta.provider ? { provider: meta.provider } : {}),
+    ...(meta.correlationId ? { correlationId: meta.correlationId } : {}),
+    ...(run !== undefined ? { run } : {}),
+    ...(attempt !== undefined ? { attempt } : {}),
     ...(status ? { status } : {}),
   };
 }

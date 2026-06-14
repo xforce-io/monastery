@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
 import { executeSafe, doClose, doMerge, proposeGate, ActionSchema, applyStateLabels } from "../src/shell/actions.js";
-import { parseStateMessage } from "../src/shell/messages.js";
+import { parseStateMessage, renderStateMessage } from "../src/shell/messages.js";
 
 const gh = () => new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
 
@@ -172,4 +172,43 @@ test("#144 applyStateLabels derives the control label from status", async () => 
   expect(i.labels).not.toContain("monastery:needs-approval");
 
   await applyStateLabels(g, "o/r", 1, "note");           // no-op
+});
+
+// --- #153: correlationId idempotency — a re-run recognizes an already-sent LIVE gate (scoped to the live
+// gate, NOT all history: a vacated gate must be re-openable). ---
+
+test("#153 proposeGate is idempotent across re-runs while the gate is still live (no double-post)", async () => {
+  const g = gh();
+  await proposeGate(g, "o/r", 1, "implement", "## Plan");                 // posts gate, sets needs-approval
+  await proposeGate(g, "o/r", 1, "implement", "## Plan (re-run)");        // gate still live + same key -> skip
+  expect(g.comments[1]).toHaveLength(1);   // re-run recognized the still-open gate -> not double-posted
+  const gate = parseStateMessage(g.comments[1][0])!;
+  expect(gate).toMatchObject({ action: "implement", status: "awaiting-approval" });
+  expect(gate.correlationId).toBe("o/r#1:approval:implement@spec0"); // key embedded -> parseable from the comment
+});
+
+test("#153 proposeGate opens a fresh gate when the spec version advances (stale gate, #95)", async () => {
+  const g = gh();
+  await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "v1 design", parties: ["a"] });
+  await proposeGate(g, "o/r", 1, "implement", "## Plan @v1");
+  await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "v2 design", parties: ["a"] });
+  await proposeGate(g, "o/r", 1, "implement", "## Plan @v2");
+  const gates = g.comments[1].filter((b) => parseStateMessage(b)?.status === "awaiting-approval");
+  expect(gates).toHaveLength(2);  // different spec version -> different key -> fresh gate
+});
+
+test("#153 proposeGate re-opens a fresh gate after a 👀 demote at the SAME spec (vacated gate is not 'already sent')", async () => {
+  const g = gh();
+  await proposeGate(g, "o/r", 1, "implement", "## Plan");
+  expect(g.comments[1]).toHaveLength(1);
+  // 👀 demote (issue-step demoteGate): the shell removes needs-approval and returns to active. The old gate
+  // COMMENT stays on the issue (carrying the same correlationId) but is no longer the live ask.
+  await g.removeLabel("o/r", 1, "monastery:needs-approval");
+  // next round: the maintainer re-proposes the SAME action at the SAME spec
+  await proposeGate(g, "o/r", 1, "implement", "## Plan (reconsidered)");
+  // a FRESH approval comment must be posted — NOT suppressed by the vacated same-key gate (which would
+  // resurrect the stale, already-👀'd gate and loop). Idempotency is scoped to the LIVE gate, not history.
+  expect(g.comments[1]).toHaveLength(2);
+  const [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-approval"); // back to awaiting-gate on the fresh gate
 });

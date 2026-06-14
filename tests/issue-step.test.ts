@@ -538,6 +538,37 @@ test("#97: a human comment the agent already replied to does NOT re-invalidate t
   expect(i.labels).toContain(NEEDS_APPROVAL);
 });
 
+// --- #153 regression: the correlationId gate dedup must be LIVENESS-scoped, never history-wide. A 👀 demote
+// vacates a gate; re-proposing the same action at the same spec must post a FRESH gate, or the stale 👀'd
+// gate is resurrected and re-demoted every tick (an awaiting-gate loop). End-to-end through issueStep. ---
+test("#153: a 👀-demoted implement gate re-opens at the same spec as a fresh comment — no demote loop", async () => {
+  const gh = ghWith({ number: 153, title: "x", body: "y", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "implement", num: 153, draft: "## Plan" }]));
+
+  // tick 1: maintainer proposes implement → approval gate (comment "0") + needs-approval
+  await issueStep(ctxWith(gh, provider), 153);
+  expect(gh.comments[153]).toHaveLength(1);
+  let [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+
+  gh.commentReactions["0"] = ["eyes"]; // human 👀: non-terminal "reconsider" on the gate comment
+
+  // tick 2: awaiting-gate sees 👀 → demoteGate clears needs-approval, back to active
+  await issueStep(ctxWith(gh, provider), 153);
+  [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL);
+
+  // tick 3: active again → maintainer re-proposes the SAME implement at the SAME spec
+  await issueStep(ctxWith(gh, provider), 153);
+  expect(gh.comments[153]).toHaveLength(2);          // a FRESH gate, not suppressed by the vacated same-key one
+  [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);        // back to awaiting-gate on the fresh gate
+
+  // tick 4: the latest gate is the fresh comment "1" (no 👀) → we WAIT, we do NOT loop back to demote
+  const out4 = await issueStep(ctxWith(gh, provider), 153);
+  expect(out4.kind).toBe("waiting");
+});
+
 test("#97: a monastery (marked) comment newer than the gate does NOT invalidate it (only human comments count)", async () => {
   const gh = ghWith({ number: 103, title: "x", body: "y", labels: [], state: "open" });
   await proposeGate(gh, "o/r", 103, "implement", "## Plan");
