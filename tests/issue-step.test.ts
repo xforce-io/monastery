@@ -9,6 +9,7 @@ import { FakeWorkspace } from "../src/workspace/fake.js";
 import { issueStep, withReadOnlyCheckout, pendingApprovals, FAIL_THRESHOLD, type StepCtx } from "../src/engine/issue-step.js";
 import { branchName } from "../src/engine/patch.js";
 import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
+import { renderMarker, REWORK_GATELINK_MARKER } from "../src/shell/markers.js";
 import { SPEC_MARKER } from "../src/shell/consensus.js";
 import { parseStateMessage } from "../src/shell/messages.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
@@ -74,6 +75,74 @@ test("active issue: a propose(close) action moves the item to awaiting-gate (app
   expect(gh.comments[6][0]).toContain("out of scope");
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain(NEEDS_APPROVAL);
+});
+
+// #149: a rework is triggered by human feedback on the PR, but the approval gate can only be opened on the
+// current ISSUE (the rework action's `num` is the issue, and actions targeting another object are rejected
+// wholesale). So the gate lives on the issue while the reviewer is on the PR. The shell leaves a pointer on
+// the PR thread back to the issue gate so the reviewer sees the proposal and knows where to 👍.
+test("#149: a PR-feedback-driven rework opens the gate on the ISSUE and cross-links it from the PR thread", async () => {
+  const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
+  const branch = branchName(issue.number, issue.title);
+  const gh = ghWith(issue);
+  gh.prStates[branch] = "open";
+  gh.prDetailsByBranch[branch] = { number: 5, url: "u/5", title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true };
+  gh.prCommentsByPr[5] = [{ id: "pc1", body: "please rename foo to bar", author: "alice" }]; // human feedback lives on the PR
+  const provider = new FakeProvider(actionsJson([{ kind: "rework", num: 7, draft: "plan: rename foo→bar per the PR feedback" }]));
+
+  await issueStep(ctxWith(gh, provider), 7);
+
+  // The gate lands on the ISSUE (#7): approval comment carrying the action + needs-approval label.
+  expect(gh.comments[7]?.[0]).toContain("action: rework");
+  expect(gh.comments[7][0]).toContain("rename foo→bar");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+
+  // #149: the PR thread (#5) now carries a pointer back to the issue gate, so the reviewer who left feedback
+  // on the PR sees the proposal and knows where to approve.
+  const prPost = gh.comments[5]?.[0];
+  expect(prPost).toContain("#7");      // cross-links back to the issue gate
+  expect(prPost).toMatch(/rework/i);   // names the proposal
+});
+
+// #149: the pointer is bound to a SPECIFIC gate (the approval comment id), not the PR. A later rework gate —
+// e.g. the prior one was consumed (rework ran, needs-approval cleared) and a new round of PR feedback led the
+// maintainer to propose a fresh gate — must notify the PR reviewer AGAIN. A per-PR "once forever" guard would
+// suppress that and re-break #149 from round 2 on.
+test("#149: a later rework gate gets its OWN PR pointer — the guard is per-gate, not per-PR", async () => {
+  const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
+  const branch = branchName(issue.number, issue.title);
+  const gh = ghWith(issue);
+  gh.prStates[branch] = "open";
+  gh.prDetailsByBranch[branch] = { number: 5, url: "u/5", title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true };
+  gh.prCommentsByPr[5] = [{ id: "pc1", body: "more changes please", author: "alice" }];
+  // A pointer from an EARLIER, already-resolved rework gate is still in the PR history (bound to that old id).
+  gh.comments[5] = [`${renderMarker(REWORK_GATELINK_MARKER, { gate: "earlier-gate" })}\n🔁 (an earlier round's pointer)`];
+  const provider = new FakeProvider(actionsJson([{ kind: "rework", num: 7, draft: "round 2 plan" }]));
+
+  await issueStep(ctxWith(gh, provider), 7);
+
+  // The new gate has a different approval-comment id, so a fresh pointer is posted for it.
+  expect(gh.comments[5]).toHaveLength(2);
+  expect(gh.comments[5][1]).toContain("#7");
+});
+
+// #149: within ONE gate's life, the pointer is idempotent — if a pointer for THIS gate already sits on the
+// PR (e.g. a #124 partial-write retry), don't post a second one.
+test("#149: the pointer is not duplicated for the same gate", async () => {
+  const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
+  const branch = branchName(issue.number, issue.title);
+  const gh = ghWith(issue);
+  gh.prStates[branch] = "open";
+  gh.prDetailsByBranch[branch] = { number: 5, url: "u/5", title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true };
+  gh.prCommentsByPr[5] = [{ id: "pc1", body: "please rename foo to bar", author: "alice" }];
+  // The gate this tick opens is the issue's first comment → fake id "0"; a pointer for it is already on the PR.
+  gh.comments[5] = [`${renderMarker(REWORK_GATELINK_MARKER, { gate: "0" })}\n🔁 pointer already up for this gate`];
+  const provider = new FakeProvider(actionsJson([{ kind: "rework", num: 7, draft: "plan again" }]));
+
+  await issueStep(ctxWith(gh, provider), 7);
+
+  expect(gh.comments[5]).toHaveLength(1); // no second pointer for the same gate
 });
 
 test("active issue: an empty action list is a no-op (nothing to do)", async () => {

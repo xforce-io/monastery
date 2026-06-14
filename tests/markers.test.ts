@@ -34,6 +34,17 @@ test("#154 class-B hasMarker without fields just tests presence; counts via pars
   expect(parseMarkers(thread, "rework").length).toBe(2);
 });
 
+test("#149 `rework-gatelink` and `rework` never collide (a longer name can't bleed into a shorter one)", () => {
+  // Load-bearing: the PR cross-link pointer (rework-gatelink) must NOT be counted by runRework's per-PR round
+  // budget, which scans hasMarker(body, "rework"). And a real rework round must not look like a gatelink.
+  const gatelink = renderMarker("rework-gatelink");
+  const round = renderMarker("rework", { round: 2 });
+  expect(hasMarker(gatelink, "rework")).toBe(false);
+  expect(hasMarker(gatelink, "rework-gatelink")).toBe(true);
+  expect(hasMarker(round, "rework-gatelink")).toBe(false);
+  expect(hasMarker(round, "rework")).toBe(true);
+});
+
 test("isMonasteryComment: true for any monastery-marked comment body", () => {
   expect(isMonasteryComment("<!--monastery-state\nprotocol: note\n-->\nx")).toBe(true);
   expect(isMonasteryComment("<!--monastery-spec version=1 parties=a-->\nplan")).toBe(true);

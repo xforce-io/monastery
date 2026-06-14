@@ -20,6 +20,10 @@ export type MarkerFields = Record<string, string | number>;
 // The class-B marker names — named here so call sites never pass a bare string literal that could drift.
 export const REPLY_MARKER = "reply";
 export const REWORK_MARKER = "rework";
+// #149: a pointer left on the PR thread back to the rework approval gate (which lives on the issue). A
+// DISTINCT name from REWORK_MARKER on purpose — the `rework` marker counts toward runRework's per-PR round
+// budget, and the attrs group must start with whitespace, so `rework` never matches `rework-gatelink`.
+export const REWORK_GATELINK_MARKER = "rework-gatelink";
 export const IMPL_REJECTED_MARKER = "impl-rejected";
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
