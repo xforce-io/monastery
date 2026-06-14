@@ -19,7 +19,7 @@ const clean: ReviewVerdict = { findings: [] };
 function reworkable(prNum = 5): FakeGitHub {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
   gh.prStates[branch] = "open";
-  gh.prDetailsByBranch[branch] = { number: prNum, url: `u/${prNum}`, title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true };
+  gh.prDetailsByBranch[branch] = { number: prNum, url: `u/${prNum}`, title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true, baseRefName: "main" };
   gh.prCommentsByPr[prNum] = [{ id: "pc1", body: "please rename foo to bar", author: "alice" }];
   return gh;
 }
@@ -160,6 +160,28 @@ test("an open but non-draft PR (human marked ready) is not reworked", async () =
   const out = await runRework(ctx(gh, ws, async () => clean), issue);
   expect(out.kind).toBe("noop");
   expect(ws.checkedOut).toHaveLength(0);
+});
+
+// #163 regression (milkie#157 deadlock): the rework self-review must see the CUMULATIVE PR diff (relative to
+// the PR base's merge-base), not just this round's uncommitted increment. We model a reviewer whose verdict is
+// DERIVED from the diff — it blocks unless the diff carries the already-committed root-cause fix (ROOTFIX), which
+// only appears WITH a base. Without the base, the reviewer is blind to committed work → blocks every round →
+// never converges (the milkie#157 failure). With the base, it sees the root fix → converges in one round.
+test("#163 rework self-review converges only when the reviewer is given the base-relative cumulative diff", async () => {
+  const gh = reworkable();
+  // committed root-cause fix lives in the cumulative (base-relative) diff; the per-round increment lacks it.
+  const ws = new FakeWorkspace({ diff: (base) => (base ? "ROOTFIX + increment" : "increment only"), tests: true });
+  const diffAwareReview: StepCtx["review"] = async (diff) =>
+    diff.includes("ROOTFIX")
+      ? { findings: [] }
+      : { findings: [{ severity: "blocking", title: "no root-cause fix", detail: "the fix is missing from the diff" }] };
+  const c = ctx(gh, ws, diffAwareReview);
+
+  const out = await runRework(c, issue);
+
+  expect(out.kind).toBe("progressed");                 // converges instead of self-review-never-converged
+  expect(ws.diffBases).toContain("origin/main");       // rework fed the reviewer the base-relative diff
+  expect(ws.committed).toHaveLength(1);                 // the rework was pushed
 });
 
 test("#135 patcher made no changes on rework: failed, no commit, keeps checkout for forensics", async () => {

@@ -27,8 +27,8 @@ export interface GitHubAdapter {
   findPrForBranch(repo: string, branch: string): Promise<string | null>;
   /** State of the PR whose head is `branch`: open | merged | closed; null if none. */
   prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null>;
-  /** Full PR metadata for the PR whose head is `branch`: number, url, title, body, isDraft. Null if no PR. */
-  getPrDetails(repo: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean } | null>;
+  /** Full PR metadata for the PR whose head is `branch`: number, url, title, body, isDraft, baseRefName. Null if no PR. */
+  getPrDetails(repo: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean; baseRefName: string } | null>;
   /** Conversation comments on a PR (by PR number), oldest first. Same shape as listComments — author is login. */
   listPrComments(repo: string, prNumber: number): Promise<{ id: string; body: string; author: string }[]>;
   /** Reviews on a PR (by PR number): author, state (APPROVED / REQUEST_CHANGES / COMMENTED), body. */

@@ -8,8 +8,13 @@ export interface Workspace {
   cloneReadOnly(repo: string): Promise<string>;
   /** Run the repo's test suite if detectable (npm). true=pass, false=fail, null=no suite detected. */
   runTests(dir: string): Promise<boolean | null>;
-  /** Stage all changes (git add -A) and return the unified diff; "" if nothing changed. */
-  stagedDiff(dir: string): Promise<string>;
+  /**
+   * Stage all changes (git add -A) and return the unified diff; "" if nothing changed.
+   * #163: with `baseRef` (e.g. "origin/main") the diff is taken against `merge-base(baseRef, HEAD)` — the
+   * cumulative PR diff a human sees on GitHub — instead of vs HEAD. rework passes the PR base; implement omits
+   * it (HEAD = the base, so vs-HEAD is already the full diff). Without `baseRef` the legacy vs-HEAD behavior holds.
+   */
+  stagedDiff(dir: string, baseRef?: string): Promise<string>;
   /** Commit the staged changes and push `branch` to origin. */
   commitPush(dir: string, branch: string, message: string): Promise<void>;
   /** Remove the temp dir. */

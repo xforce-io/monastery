@@ -127,15 +127,15 @@ export class GhAdapter implements GitHubAdapter {
     const s = out.trim().toLowerCase();
     return s === "open" || s === "merged" || s === "closed" ? s : null;
   }
-  async getPrDetails(repo: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean } | null> {
+  async getPrDetails(repo: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean; baseRefName: string } | null> {
     const out = await this.run([
       "pr", "list", "--repo", repo, "--head", branch, "--state", "all",
-      "--json", "number,url,title,body,isDraft", "--jq", ".[0] // empty",
+      "--json", "number,url,title,body,isDraft,baseRefName", "--jq", ".[0] // empty",
     ]).catch((e) => { rethrowIfTransient(e); return ""; });
     if (!out.trim()) return null;
     try {
-      const r = JSON.parse(out) as { number: number; url: string; title: string; body: string; isDraft: boolean };
-      return { number: r.number, url: r.url, title: r.title, body: r.body ?? "", isDraft: r.isDraft ?? false };
+      const r = JSON.parse(out) as { number: number; url: string; title: string; body: string; isDraft: boolean; baseRefName: string };
+      return { number: r.number, url: r.url, title: r.title, body: r.body ?? "", isDraft: r.isDraft ?? false, baseRefName: r.baseRefName ?? "main" };
     } catch {
       return null;
     }

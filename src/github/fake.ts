@@ -33,8 +33,8 @@ export class FakeGitHub implements GitHubAdapter {
   public externalIssues: Record<string, Issue> = {};
   /** Branches whose PR was merged via mergePR. */
   public merged: string[] = [];
-  /** PR details (number, url, title, body, isDraft) by branch name, for tests. */
-  public prDetailsByBranch: Record<string, { number: number; url: string; title: string; body: string; isDraft: boolean }> = {};
+  /** PR details (number, url, title, body, isDraft, baseRefName) by branch name, for tests. */
+  public prDetailsByBranch: Record<string, { number: number; url: string; title: string; body: string; isDraft: boolean; baseRefName?: string }> = {};
   /** PR conversation comments by PR number, for tests. */
   public prCommentsByPr: Record<number, { id: string; body: string; author: string }[]> = {};
   /** PR reviews by PR number, for tests. */
@@ -89,8 +89,9 @@ export class FakeGitHub implements GitHubAdapter {
   async prState(_r: string, branch: string): Promise<"open" | "merged" | "closed" | null> {
     return this.prStates[branch] ?? null;
   }
-  async getPrDetails(_r: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean } | null> {
-    return this.prDetailsByBranch[branch] ?? null;
+  async getPrDetails(_r: string, branch: string): Promise<{ number: number; url: string; title: string; body: string; isDraft: boolean; baseRefName: string } | null> {
+    const d = this.prDetailsByBranch[branch];
+    return d ? { ...d, baseRefName: d.baseRefName ?? "main" } : null;
   }
   async listPrComments(_r: string, prNumber: number): Promise<{ id: string; body: string; author: string }[]> {
     return this.prCommentsByPr[prNumber] ?? [];
