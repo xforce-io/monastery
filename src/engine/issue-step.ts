@@ -18,7 +18,7 @@ import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec, parseSpecs } from "../shell/consensus.js";
 import { isHumanComment, hasMarker, renderMarker, REPLY_MARKER, IMPL_REJECTED_MARKER } from "../shell/markers.js";
-import { approvalKind, approvalSpecVersion, AWAITING_APPROVAL_BANNER, isApprovalGate, isStickyPanel, renderStateMessage, stripStateMessage, type StateStatus } from "../shell/messages.js";
+import { approvalKind, approvalSpecVersion, AWAITING_APPROVAL_BANNER, isApprovalGate, isStickyPanel, renderStateMessage, stripStateMessage, STATUS_GLYPH, type StateStatus } from "../shell/messages.js";
 import { makePhaseLogger } from "../phase-logger.js";
 import type { ModelLevels } from "../provider/models.js";
 import type { ProviderPool } from "../provider/select.js";
@@ -249,7 +249,7 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       kind: "waiting", on: "human",
       entry: {
         number: issue.number, title: issue.title, priority: "now",
-        rationale: `⏳ awaiting your 👍${k ? ` (${k})` : ""}`,
+        rationale: `${STATUS_GLYPH["awaiting-approval"]} awaiting your 👍${k ? ` (${k})` : ""}`,
         awaitingApproval: true, approvalKind: k, approvalCommentId: gate.id,
       },
     };
@@ -275,7 +275,7 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
         kind: "waiting", on: "human", readyImplement: true,
         entry: {
           number: issue.number, title: issue.title, priority: "now",
-          rationale: `✅ approved ${kind} — ready (tick scheduler)`,
+          rationale: `${STATUS_GLYPH.done} approved ${kind} — ready (tick scheduler)`,
           awaitingApproval: true, approvalKind: kind, approvalCommentId: gate.id,
         },
       };
