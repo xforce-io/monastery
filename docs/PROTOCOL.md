@@ -34,6 +34,33 @@
 
 **铁律:monastery 发的每条评论都带 marker。人类评论 = 无 marker。** 外壳/agent 据此排除自己,绝不自问自答。
 
+### 3.1 机器消息信封(class-A v1,字段契约)
+
+class-A 机器消息(`<!--monastery-state ...-->`)的「信封」是一组 `key: value` 行,由 `src/shell/messages.ts` 单一渲染(`renderStateMessage`)/解析(`parseStateMessage`)。这是机器之间的**唯一线格式**,人也可直接从评论读懂。
+
+**v1 字段**
+
+| 字段 | 含义 | 来源 |
+|---|---|---|
+| `v` | 信封 schema 版本(当前 `1`)。 | #144 |
+| `kind` | `note` \| `approval`——消息形态。旧读者用 `protocol` 镜像同值兼容。 | #144 |
+| `status` | 粗状态闭集(见下)。`status` 经 `deriveState` 单源派生出可见 head、`kind`、控制标签;字形(⏳/✅/⚠️)再经 `STATUS_GLYPH` 单源(#155)。 | #144 A3 |
+| `action` | gated 动作闭集(见下),**仅 approval gate** 携带。 | #154 |
+| `spec` | gate 绑定的 spec 版本;更高版本 = 另一个逻辑 gate(#95 防陈旧)。 | #95 |
+| `agent` / `model` / `provider` | provenance:发出该消息的角色、模型、以及实际运行的 provider(如 `claude`/`codex`)。 | #147 / #152 |
+| `correlationId` | 稳定幂等键,由 `deriveCorrelationId`(repo#num:kind[:action][@specN])生成;同一逻辑消息跨重跑同键,扫评论即可识别「已发过」——GitHub 无事务时的根缓解。 | #153 |
+| `run` / `attempt` | 可选诊断维度(非重试状态机)。 | #153 |
+
+**`status` 闭集(`STATE_STATUSES`):** `awaiting-approval` · `blocked` · `done` · `note`。
+**gated 动作闭集(`GATED_KINDS`):** `close` · `merge` · `implement` · `rework`。
+
+**解析契约(`parseStateMessage`,#154):**
+- 用 zod `safeParse` 校验信封;**有但非法**的类型字段(`status`/`action`/`spec`/`run`/`attempt`)→ 整块**拒绝**(返回 `null`),绝不静默降级成半条 note(「非法块被拒,非误判」)。
+- **未知键透传**(前向兼容);**历史 v0 块**(只有 `protocol`/`action`/`spec`,无 `v`/`status`)仍被容忍,因每个类型字段都可选。
+- **gate↔panel 按字段切分:** `isApprovalGate`(`kind: approval`,append-only,`upsertPanel` 绝不改写)vs `isStickyPanel`(可改写的 note/blocked/done 状态面)——靠字段而非位置选面,gate 永不被面板覆盖。
+
+> 与 class-B 标记(`monastery-reply` / `impl-rejected` / `rework` 等子串读)区分:那是另一类 marker,见 #154。
+
 ## 4. 信号(人 → 外壳,放行 gated 动作)
 
 | 信号 | 怎么做 | 外壳 |

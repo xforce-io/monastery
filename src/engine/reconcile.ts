@@ -4,6 +4,7 @@ import type { BacklogEntry, ReconcileResult, WaitReason } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { issueStep, withReadOnlyCheckout, type StepCtx } from "./issue-step.js";
 import { sortEntries } from "./backlog.js";
+import { STATUS_GLYPH } from "../shell/messages.js";
 
 export const MAX_ITEMS_PER_TICK = 20;
 
@@ -59,14 +60,14 @@ export async function reconcile(ctx: StepCtx): Promise<ReconcileResult> {
     const winner = sortEntries(ready.map((r) => r.entry!))[0].number;
     for (const r of ready) {
       if (r.number !== winner) {
-        entries.push({ number: r.number, title: r.title, priority: "now", rationale: "⏳ approved implement → deferred (one per tick; next tick)" });
+        entries.push({ number: r.number, title: r.title, priority: "now", rationale: `${STATUS_GLYPH["awaiting-approval"]} approved implement → deferred (one per tick; next tick)` });
         continue;
       }
       try {
         const out = await issueStep({ ...octx, deferImplement: false }, r.number);
         if (out.kind === "progressed" || out.kind === "done" || (out.kind === "partial" && out.applied > 0)) {
           advanced++;
-          entries.push({ number: r.number, title: r.title, priority: "now", rationale: "✅ approved implement → executed this tick" });
+          entries.push({ number: r.number, title: r.title, priority: "now", rationale: `${STATUS_GLYPH.done} approved implement → executed this tick` });
         } else if (out.kind === "failed") {
           failed++;
           entries.push({ number: r.number, title: r.title, priority: "now", rationale: `approved implement → failed: ${out.error}` });
