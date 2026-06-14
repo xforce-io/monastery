@@ -30,6 +30,18 @@ test("#144 render(status) prepends the head and serializes status", () => {
   expect(parseStateMessage(body)).toMatchObject({ status: "blocked", kind: "note", agent: "patcher", model: "sonnet" });
 });
 
+test("#152 render/parse round-trips the provider provenance alongside agent/model", () => {
+  const body = renderStateMessage({ status: "note", agent: "reviewer", model: "gpt-test", provider: "codex", body: "fyi" });
+  expect(body).toContain("provider: codex");
+  expect(parseStateMessage(body)).toMatchObject({ agent: "reviewer", model: "gpt-test", provider: "codex" });
+});
+
+test("#152 provider is omitted from the envelope when not supplied", () => {
+  const body = renderStateMessage({ status: "note", agent: "maintainer", model: "opus", body: "x" });
+  expect(body).not.toContain("provider:");
+  expect(parseStateMessage(body)).not.toHaveProperty("provider");
+});
+
 test("#144 render(status: note) emits no head prefix", () => {
   const body = renderStateMessage({ status: "note", body: "just fyi" });
   expect(body.split("-->\n")[1]).toBe("just fyi");  // body unchanged, no banner

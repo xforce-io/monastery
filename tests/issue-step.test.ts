@@ -12,6 +12,7 @@ import { executeSafe, proposeGate, type Action } from "../src/shell/actions.js";
 import { SPEC_MARKER } from "../src/shell/consensus.js";
 import { parseStateMessage } from "../src/shell/messages.js";
 import { StructuredAgentError } from "../src/agents/spec.js";
+import { makeProviderPool } from "../src/provider/select.js";
 import type { Issue } from "../src/types.js";
 
 const NEEDS_APPROVAL = "monastery:needs-approval";
@@ -28,6 +29,30 @@ function ctxWith(gh: FakeGitHub, provider: FakeProvider, fails?: Partial<StepCtx
 }
 const ghWith = (issue: Issue) => new FakeGitHub({ thesis: "T", issues: [issue] });
 const actionsJson = (actions: Action[]) => ({ "actions.json": JSON.stringify({ actions }) });
+const poolFor = (name: "claude" | "codex", provider: FakeProvider) =>
+  makeProviderPool({ name, provider, health: { ok: true } });
+
+// --- #152: provider provenance flows into the maintainer's envelope + phase event ---
+
+test("#152 maintainer envelope carries the provider it ran on", async () => {
+  const gh = ghWith({ number: 7, title: "x", body: "y", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "panel", num: 7, body: "status" }]));
+  await issueStep({ ...ctxWith(gh, provider), providerPool: poolFor("claude", provider) }, 7);
+  expect(parseStateMessage(gh.panels[7])).toMatchObject({ agent: "maintainer", provider: "claude" });
+});
+
+test("#152 maintainer:start phase event carries model + provider", async () => {
+  const gh = ghWith({ number: 7, title: "x", body: "y", labels: [], state: "open" });
+  const provider = new FakeProvider(actionsJson([{ kind: "panel", num: 7, body: "status" }]));
+  const out: string[] = [];
+  await issueStep({
+    ...ctxWith(gh, provider), providerPool: poolFor("claude", provider),
+    repoPolicy: { agents: { maintainer: { model: "opus" } } },
+    json: true, logSink: { out: (l) => out.push(l), err: () => {} },
+  }, 7);
+  const start = out.map((l) => JSON.parse(l)).find((e) => e.phase === "maintainer" && e.status === "start");
+  expect(start).toMatchObject({ model: "opus", provider: "claude" });
+});
 
 // --- active: call the maintainer agent, execute its safe actions ---
 

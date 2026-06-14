@@ -52,6 +52,8 @@ export type Action = z.infer<typeof ActionSchema>;
 export interface ActionProvenance {
   agent?: string;
   model?: string;
+  /** #152: the provider the emitting role ran on — threaded into the envelope alongside agent/model. */
+  provider?: string;
 }
 
 /** A batch of proposed actions (the maintainer agent's output shape). */

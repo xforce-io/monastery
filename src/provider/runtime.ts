@@ -8,7 +8,10 @@ import type { AgentProvider } from "./interface.js";
 import { resolveModelLevel, type ModelLevel } from "./models.js";
 import type { ProviderName, ProviderPool } from "./select.js";
 
-export interface RoleRuntime { provider: AgentProvider; model: string }
+// #152: `name` is the provider the role actually runs on (primary, or the cross-provider target after a
+// successful #133 re-route). Undefined only when no pool is wired (older callers/tests) — then there is no
+// provider provenance to carry. Threaded into the envelope + phase events alongside `model`.
+export interface RoleRuntime { provider: AgentProvider; model: string; name?: ProviderName }
 
 const warned = new Set<string>();
 function warnOnce(key: string, msg: string): void {
@@ -31,7 +34,7 @@ export async function resolveRoleRuntime(opts: {
   pool?: ProviderPool;
   env?: Record<string, string | undefined>;
 }): Promise<RoleRuntime> {
-  const primary: RoleRuntime = { provider: opts.provider, model: opts.model };
+  const primary: RoleRuntime = { provider: opts.provider, model: opts.model, name: opts.pool?.primary.name };
   const want = opts.policy.provider;
   if (!want || !opts.pool) return primary;
 
@@ -48,5 +51,5 @@ export async function resolveRoleRuntime(opts: {
     warnOnce(`${opts.agent}:cross-provider-model`,
       `[monastery] ${opts.agent}: model override "${opts.explicitModel}" is provider-specific; ignored because ${opts.agent} runs on ${target} — using its ${opts.level} level model`);
   }
-  return { provider: alt, model: resolveModelLevel(target, opts.level, opts.env) };
+  return { provider: alt, model: resolveModelLevel(target, opts.level, opts.env), name: target };
 }
