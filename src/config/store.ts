@@ -17,7 +17,7 @@ interface ConfigFile { repos: Record<string, RepoPolicy>; defaults?: ConfigDefau
 interface LegacyReposFile { repos?: unknown }
 
 /** Per-repo disposable cache (rebuildable from GitHub). */
-interface CacheFile { cursor: number; fails: Record<number, number>; }
+interface CacheFile { cursor: number; fails: Record<number, number>; labelsEnsured?: string; }
 const EMPTY_CACHE: CacheFile = { cursor: 0, fails: {} };
 
 /** Per-issue consecutive judge-failure counter (operational; disposable — losing it just resets escalation). */
@@ -125,6 +125,16 @@ export class Store implements FailTracker, BacklogWriter {
   getCursor(repo: string): number { return this.readCache(repo).cursor; }
   setCursor(repo: string, value: number): void {
     const c = this.readCache(repo); c.cursor = value; this.writeCache(repo, c);
+  }
+
+  /**
+   * #148: the fingerprint of the label set last fully ensured for this repo, or undefined.
+   * initRepo skips its per-tick ensureLabel calls when this matches the current label set,
+   * keeping a flaky label API off every tick's critical path.
+   */
+  ensuredLabelsFingerprint(repo: string): string | undefined { return this.readCache(repo).labelsEnsured; }
+  setEnsuredLabelsFingerprint(repo: string, fingerprint: string): void {
+    const c = this.readCache(repo); c.labelsEnsured = fingerprint; this.writeCache(repo, c);
   }
 
   recordFail(repo: string, num: number): number {

@@ -11,8 +11,9 @@ import { DryRunAdapter } from "../github/dry-run.js";
 import { reconcile } from "../engine/reconcile.js";
 import { backlogFingerprint, isBacklogFresh, refreshBacklog } from "../engine/backlog.js";
 import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
-import { initRepo } from "../engine/init.js";
+import { initRepo, type LabelEnsureCache } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
+import { TransientGitHubError } from "../github/transient.js";
 import type { BacklogSnapshot, Outcome, ReconcileResult } from "../types.js";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
@@ -82,7 +83,7 @@ async function main(): Promise<void> {
 
   if (args.cmd === "init") {
     if (!args.repo) { console.error("usage: monastery init <owner>/<repo>"); process.exit(2); }
-    const r = await initRepo(new GhAdapter(), args.repo);
+    const r = await initRepo(new GhAdapter(), args.repo, { cache: store, force: true });
     console.log(`init ${args.repo}: ensured ${r.labels} labels; thesis ${r.thesisCreated ? "scaffolded" : "already present"}`);
     return;
   }
@@ -209,7 +210,7 @@ async function main(): Promise<void> {
         // Per-repo policy wins, then env override, then default (memory: default ≥ sonnet).
         const model = store.repoModel(repo) ?? modelLevels.standard;
         const gh = args.dryRun ? new DryRunAdapter(baseGh) : baseGh;
-        await prepareRepoForStep(gh, repo, args.json ? (s) => console.error(s) : undefined);
+        await prepareRepoForStep(gh, repo, { cache: store, dryRun: args.dryRun, log: args.json ? (s) => console.error(s) : undefined });
         // #75: thread the json flag (outlet A machine stream) and the per-repo progress sidecar path
         // (outlet B) so PhaseLogger emits NDJSON to stdout and overwrites the snapshot `status` reads.
         const ctx = { repo, gh, provider, model, modelLevels, providerPool, reviewModel: process.env.MONASTERY_REVIEW_MODEL, repoPolicy: store.repoPolicy(repo), language: store.repoLanguage(repo), dryRun: args.dryRun, artifactRoot: mkdtempSync(join(tmpdir(), "monastery-")), fails: store, backlog: store, ws: new GitWorkspace(), now: () => Date.now(), json: args.json, progressPath: stepLock.progressPath(repo) };
@@ -250,9 +251,21 @@ async function main(): Promise<void> {
   process.exit(2); // usage error
 }
 
-export async function prepareRepoForStep(gh: GitHubAdapter, repo: string, log?: (line: string) => void): Promise<void> {
-  const r = await initRepo(gh, repo);
-  if (r.thesisCreated) log?.(`[monastery] initialized ${repo}: scaffolded .monastery/thesis.md; edit it to define repo scope`);
+export interface PrepareRepoOptions {
+  /** Per-repo label-ensured cache (#148) — skips the ensureLabel pass once labels are in place. */
+  cache?: LabelEnsureCache;
+  /** A dry-run never really creates labels, so it must NOT mark the cache as ensured (#148). */
+  dryRun?: boolean;
+  log?: (line: string) => void;
+}
+
+export async function prepareRepoForStep(gh: GitHubAdapter, repo: string, opts: PrepareRepoOptions = {}): Promise<void> {
+  // #148: pass the per-repo cache so the ensureLabel pass is skipped once labels are in place,
+  // keeping a flaky label API off the per-tick (per cron invocation) critical path. Under dry-run
+  // ensureLabel only records intent (no real label is created), so withhold the cache — otherwise a
+  // single `step --dry-run` would mark the repo "ensured" and make later real steps skip label init.
+  const r = await initRepo(gh, repo, { cache: opts.dryRun ? undefined : opts.cache });
+  if (r.thesisCreated) opts.log?.(`[monastery] initialized ${repo}: scaffolded .monastery/thesis.md; edit it to define repo scope`);
 }
 
 export function stepExitCode(lockExitCode: number, results: ReconcileResult[], singleIssueOutcome?: Outcome): number {
@@ -330,6 +343,12 @@ export function isEntrypoint(metaUrl: string, argv1: string | undefined): boolea
 // Only run when invoked as the binary (not when imported by tests).
 if (isEntrypoint(import.meta.url, process.argv[1])) {
   main().catch((e) => {
+    // #148: a sustained GitHub API blip is a clean, retryable terminal state — print the
+    // one-line guidance, not a raw ExecaError stack dump that reads like a code crash.
+    if (e instanceof TransientGitHubError) {
+      console.error(`[monastery] ${e.message}`);
+      process.exit(1);
+    }
     console.error(e);
     // Exit-code taxonomy: 1 runtime, 2 usage, 3 agent structured-output failure, 4 repo lock.
     process.exit(e instanceof StructuredAgentError ? 3 : 1);
