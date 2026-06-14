@@ -2,6 +2,57 @@
 import { expect, test } from "vitest";
 import { GhAdapter } from "../src/github/gh-adapter.js";
 import { TransientGitHubError } from "../src/github/transient.js";
+import { renderStateMessage } from "../src/shell/messages.js";
+
+const GATE = renderStateMessage({ status: "awaiting-approval", action: "implement", spec: 1, body: "请批准" });
+const PANEL = renderStateMessage({ status: "note", body: "fyi" });
+
+// A fake `gh` that replays a comments list for the issue-comments endpoint and captures every write argv.
+function commentsFake(comments: { id: string; body: string }[]) {
+  const captured: { args: string[]; input?: string }[] = [];
+  const run = async (args: string[], input?: string): Promise<string> => {
+    captured.push({ args, input });
+    const isList = args[0] === "api" && /\/issues\/\d+\/comments$/.test(args[1] ?? "");
+    if (isList) return JSON.stringify(comments);
+    return "";
+  };
+  return { gh: new GhAdapter(run), captured };
+}
+
+test("#154 upsertPanel rewrites the sticky panel, NEVER the approval gate at [0]", async () => {
+  // gate is the FIRST monastery-state comment; the sticky panel is second. The old bare-[0] selection would
+  // PATCH the gate (dropping the approval門). By-field selection must target the panel's id (200).
+  const { gh, captured } = commentsFake([
+    { id: "100", body: GATE },
+    { id: "200", body: PANEL },
+  ]);
+  await gh.upsertPanel("o/r", 7, renderStateMessage({ status: "note", body: "updated" }));
+  const patch = captured.find((c) => c.args.includes("PATCH"));
+  expect(patch).toBeDefined();
+  expect(patch!.args.join(" ")).toContain("repos/o/r/issues/comments/200");
+  expect(patch!.args.join(" ")).not.toContain("/comments/100"); // the gate is untouched
+});
+
+test("#154 upsertPanel posts a NEW panel when only a gate exists (does not patch the gate)", async () => {
+  const { gh, captured } = commentsFake([{ id: "100", body: GATE }]);
+  await gh.upsertPanel("o/r", 7, renderStateMessage({ status: "note", body: "first panel" }));
+  expect(captured.some((c) => c.args.includes("PATCH"))).toBe(false);     // never patches the gate
+  const post = captured.find((c) => c.args[0] === "issue" && c.args[1] === "comment");
+  expect(post).toBeDefined();
+});
+
+test("#154 readPanel returns the sticky panel body, skipping the gate at [0]", async () => {
+  const { gh } = commentsFake([
+    { id: "100", body: GATE },
+    { id: "200", body: PANEL },
+  ]);
+  expect(await gh.readPanel("o/r", 7)).toBe(PANEL);
+});
+
+test("#154 readPanel returns empty string when only a gate exists (no sticky panel)", async () => {
+  const { gh } = commentsFake([{ id: "100", body: GATE }]);
+  expect(await gh.readPanel("o/r", 7)).toBe("");
+});
 
 test("addLabel issues the correct gh argv", async () => {
   const captured: string[][] = [];

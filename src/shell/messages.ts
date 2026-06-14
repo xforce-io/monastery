@@ -1,20 +1,41 @@
-import type { GatedKind } from "./actions.js";
+import { z } from "zod";
 import { NEEDS_APPROVAL, NEEDS_HUMAN } from "../github/labels.js";
 
 export const STATE_MARKER = "<!--monastery-state";
 
 /**
- * #90 approval banner — the `awaiting-approval` visible head, prepended by deriveState (never hand-written
- * at call sites). Exported so the one consumer that strips it back out (issue-step `stripMarkers`) stays in
- * sync with this canonical text instead of re-encoding it.
+ * #154: the closed set of human-gated actions, owned here as the SINGLE source so the class-A envelope
+ * schema and `actions.ts`'s `GatedKindSchema` derive from one list (no drift). `actions.ts` builds its zod
+ * enum FROM this tuple; messages.ts owns it to keep the schema-parse self-contained (no value cycle).
  */
-export const AWAITING_APPROVAL_BANNER =
-  "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
+export const GATED_KINDS = ["close", "merge", "implement", "rework"] as const;
+export type GatedKind = (typeof GATED_KINDS)[number];
 
 export type StateMessageKind = "note" | "approval";
 
 /** The closed set of states a class-A machine message can be in (#144 A3). */
-export type StateStatus = "awaiting-approval" | "blocked" | "done" | "note";
+export const STATE_STATUSES = ["awaiting-approval", "blocked", "done", "note"] as const;
+export type StateStatus = (typeof STATE_STATUSES)[number];
+
+/**
+ * #155: the SINGLE source for the status glyph (⏳/✅/⚠️), keyed by the #144 `StateStatus` closed set. Both
+ * class-A heads (`deriveState`) and the cosmetic backlog/reconcile views consume this — so no surface
+ * hand-writes a glyph literal. `note` carries no glyph (a plain note has no status badge).
+ */
+export const STATUS_GLYPH: Record<StateStatus, string> = {
+  "awaiting-approval": "⏳",
+  blocked: "⚠️",
+  done: "✅",
+  note: "",
+};
+
+/**
+ * #90 approval banner — the `awaiting-approval` visible head, prepended by deriveState (never hand-written
+ * at call sites). Exported so the one consumer that strips it back out (issue-step `stripMarkers`) stays in
+ * sync with this canonical text instead of re-encoding it. The glyph comes from STATUS_GLYPH (#155).
+ */
+export const AWAITING_APPROVAL_BANNER =
+  `${STATUS_GLYPH["awaiting-approval"]} **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision`;
 
 /**
  * #144 A3: the SINGLE source from which a class-A message's visible head, machine-block `kind`, and
@@ -30,9 +51,9 @@ export function deriveState(status: StateStatus): {
     case "awaiting-approval":
       return { head: AWAITING_APPROVAL_BANNER, kind: "approval", labels: { add: NEEDS_APPROVAL } };
     case "blocked":
-      return { head: "⚠️ **需要人工介入 / needs a human**", kind: "note", labels: { add: NEEDS_HUMAN } };
+      return { head: `${STATUS_GLYPH.blocked} **需要人工介入 / needs a human**`, kind: "note", labels: { add: NEEDS_HUMAN } };
     case "done":
-      return { head: "✅ **已完成 / done**", kind: "note", labels: { remove: NEEDS_APPROVAL } };
+      return { head: `${STATUS_GLYPH.done} **已完成 / done**`, kind: "note", labels: { remove: NEEDS_APPROVAL } };
     case "note":
       return { head: "", kind: "note", labels: {} };
   }
@@ -87,35 +108,75 @@ export function renderStateMessage(msg: { status: StateStatus; action?: GatedKin
   return `${STATE_MARKER}\n${lines.join("\n")}\n-->\n${body}`;
 }
 
+const numericField = z.string().regex(/^\d+$/);
+
+/**
+ * #154: the typed class-A envelope schema. `parseMeta` decodes the wire `key: value` lines into a record;
+ * this validates that record. A present-but-invalid typed field (action/status/spec/run/attempt) fails the
+ * parse so a corrupt machine block is REJECTED rather than silently coerced into a half-note ("非法块被拒,
+ * 非误判"). Unknown keys pass through (forward-compat); a legacy v0 block (protocol-only, no v/status) is
+ * tolerated because every typed field is optional.
+ */
+const MetaSchema = z
+  .object({
+    v: z.string().optional(),
+    kind: z.string().optional(),
+    protocol: z.string().optional(),
+    status: z.enum(STATE_STATUSES).optional(),
+    action: z.enum(GATED_KINDS).optional(),
+    spec: numericField.optional(),
+    run: numericField.optional(),
+    attempt: numericField.optional(),
+    agent: z.string().optional(),
+    model: z.string().optional(),
+    provider: z.string().optional(),
+    correlationId: z.string().optional(),
+  })
+  .passthrough();
+
 export function parseStateMessage(body: string): StateMessage | null {
   const m = body.match(STATE_RE);
   if (!m) return null;
-  const meta = parseMeta(m[1]);
-  const kind = meta.kind ?? meta.protocol;
+  const parsed = MetaSchema.safeParse(parseMeta(m[1]));
+  if (!parsed.success) return null; // #154: a corrupt typed block is rejected, never misjudged as a note
+  const meta = parsed.data;
+  const kind = meta.kind ?? meta.protocol; // v1 `kind`, falling back to the v0 `protocol` field
   if (kind !== "note" && kind !== "approval") return null;
-  const action = parseAction(meta.action);
-  const spec = meta.spec && /^\d+$/.test(meta.spec) ? Number(meta.spec) : undefined;
-  const run = meta.run && /^\d+$/.test(meta.run) ? Number(meta.run) : undefined;
-  const attempt = meta.attempt && /^\d+$/.test(meta.attempt) ? Number(meta.attempt) : undefined;
-  const status = isStateStatus(meta.status) ? meta.status : undefined;
   return {
     kind,
     body: body.replace(STATE_RE, "").trim(),
-    ...(action ? { action } : {}),
-    ...(spec !== undefined ? { spec } : {}),
+    ...(meta.action ? { action: meta.action } : {}),
+    ...(meta.spec !== undefined ? { spec: Number(meta.spec) } : {}),
     ...(meta.agent ? { agent: meta.agent } : {}),
     ...(meta.model ? { model: meta.model } : {}),
     ...(meta.provider ? { provider: meta.provider } : {}),
     ...(meta.correlationId ? { correlationId: meta.correlationId } : {}),
-    ...(run !== undefined ? { run } : {}),
-    ...(attempt !== undefined ? { attempt } : {}),
-    ...(status ? { status } : {}),
+    ...(meta.run !== undefined ? { run: Number(meta.run) } : {}),
+    ...(meta.attempt !== undefined ? { attempt: Number(meta.attempt) } : {}),
+    ...(meta.status ? { status: meta.status } : {}),
   };
 }
 
 export function isStateMessage(body: string, kind?: StateMessageKind): boolean {
   const msg = parseStateMessage(body);
   return !!msg && (!kind || msg.kind === kind);
+}
+
+/**
+ * #154: the SINGLE schema helper that splits the two same-prefixed class-A surfaces by FIELD, so no call
+ * site hand-writes a `kind`/`status`/`action` combination.
+ *
+ * `isApprovalGate` — an append-only approval comment (`kind: approval`) carrying a gated action. Only the
+ * gate flow reads/consumes it; `upsertPanel` must NEVER rewrite it (that drops the approval門, #154).
+ * `isStickyPanel` — the rewritable state surface `upsertPanel`/`readPanel` manage (any non-gate state
+ * message: note/blocked/done). Selecting it by field is what keeps a gate at index [0] from being clobbered.
+ */
+export function isApprovalGate(body: string): boolean {
+  return parseStateMessage(body)?.kind === "approval";
+}
+export function isStickyPanel(body: string): boolean {
+  const kind = parseStateMessage(body)?.kind;
+  return kind !== undefined && kind !== "approval";
 }
 
 export function approvalKind(body: string): GatedKind | null {
@@ -137,13 +198,4 @@ function parseMeta(raw: string): Record<string, string> {
     if (m) out[m[1]] = m[2];
   }
   return out;
-}
-
-function parseAction(raw: string | undefined): GatedKind | null {
-  if (raw === "close" || raw === "merge" || raw === "implement" || raw === "rework") return raw;
-  return null;
-}
-
-function isStateStatus(raw: string | undefined): raw is StateStatus {
-  return raw === "awaiting-approval" || raw === "blocked" || raw === "done" || raw === "note";
 }

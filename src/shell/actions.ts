@@ -3,12 +3,14 @@ import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { LABEL_DEFS, NEEDS_APPROVAL } from "../github/labels.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
-import { renderStateMessage, deriveState, parseStateMessage, deriveCorrelationId, type StateStatus } from "./messages.js";
+import { hasMarker, renderMarker, REPLY_MARKER } from "./markers.js";
+import { renderStateMessage, deriveState, parseStateMessage, deriveCorrelationId, GATED_KINDS, type StateStatus } from "./messages.js";
 
 // Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
 // `implement` joins close/merge (issue #88): the agent may PROPOSE a patch, but the patcher
 // (runImplement) only runs after a real human endorses it — the agent can never self-approve.
-export const GatedKindSchema = z.enum(["close", "merge", "implement", "rework"]);
+// #154: the closed set lives in messages.ts (single source for both this schema and the envelope parser).
+export const GatedKindSchema = z.enum(GATED_KINDS);
 export type GatedKind = z.infer<typeof GatedKindSchema>;
 
 /**
@@ -62,15 +64,15 @@ export const ActionsSchema = z.object({ actions: z.array(ActionSchema) });
 // Shell-owned control labels (PROTOCOL §2): the agent may NEVER set/clear these via relabel — they encode
 // approval/terminal state, and faking them would bypass the human gate (issue #92).
 const CONTROL_LABELS: ReadonlySet<string> = new Set([NEEDS_APPROVAL, "monastery:declined"]);
-const replyMarker = (toCommentId: string) => `<!--monastery-reply to=${toCommentId}-->`;
 /** Execute a SAFE action, idempotently (constitution §3, §6). */
 export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, provenance: ActionProvenance = {}): Promise<void> {
   switch (a.kind) {
     case "reply": {
-      const marker = replyMarker(a.toCommentId);
+      // #154: locate "already replied to THIS comment" by the exact `to` field, not a substring — else a
+      // reply to comment 123 would suppress a reply to comment 1234.
       const existing = await gh.listComments(repo, a.num);
-      if (existing.some((c) => c.body.includes(marker))) return; // already replied to this comment
-      await gh.postComment(repo, a.num, `${a.body}\n\n${marker}`);
+      if (existing.some((c) => hasMarker(c.body, REPLY_MARKER, { to: a.toCommentId }))) return;
+      await gh.postComment(repo, a.num, `${a.body}\n\n${renderMarker(REPLY_MARKER, { to: a.toCommentId })}`);
       return;
     }
     case "relabel":

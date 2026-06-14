@@ -1,5 +1,6 @@
 // src/cli/backlog.ts — render a backlog snapshot (issue #82) for humans.
 import type { BacklogSnapshot } from "../types.js";
+import { STATUS_GLYPH } from "../shell/messages.js";
 
 export interface MissingBacklog {
   repo: string;
@@ -49,7 +50,7 @@ export function formatPending(items: PendingItem[]): string {
   if (!items.length) return "nothing awaiting your approval 🎉";
   const lines = items.map((e) => {
     const link = `https://github.com/${e.repo}/issues/${e.number}#issuecomment-${e.approvalCommentId}`;
-    return `  ⏳ #${e.number} ${e.title} [${e.approvalKind ?? "approval"}] (${e.repo})\n     👍 here: ${link}`;
+    return `  ${STATUS_GLYPH["awaiting-approval"]} #${e.number} ${e.title} [${e.approvalKind ?? "approval"}] (${e.repo})\n     👍 here: ${link}`;
   });
   return [`awaiting your 👍 (${items.length}):`, ...lines].join("\n");
 }

@@ -8,7 +8,7 @@ import { reviewer, reviewerSpec, type ReviewFinding, type ReviewFn, type ReviewV
 import { patcherSpec } from "../agents/patcher.js";
 import { effectivePolicy } from "../agents/spec.js";
 import { resolveRoleRuntime } from "../provider/runtime.js";
-import { isHumanComment } from "../shell/markers.js";
+import { isHumanComment, hasMarker, parseMarkers, renderMarker, REWORK_MARKER } from "../shell/markers.js";
 import type { Spec } from "../shell/consensus.js";
 import { languageDirective, looksOffLanguage } from "../shell/language.js";
 import { makePhaseLogger, type PhaseLogger } from "../phase-logger.js";
@@ -150,7 +150,6 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
   }
 }
 
-const REWORK_MARKER = "<!--monastery-rework";
 const REWORK_BUDGET = 3; // bounded self-revision: after this many rounds on one PR, stop and ask a human (#79)
 
 /**
@@ -177,7 +176,8 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // If a prior run pushed the rework but failed while writing the PR-thread round marker, it leaves this
   // issue-side recovery marker. Treat that as converged so the same feedback is not patched/pushed again.
   const issueComments = await ctx.gh.listComments(ctx.repo, issue.number);
-  if (issueComments.some((c) => c.body.includes(REWORK_MARKER) && c.body.includes("committed=true"))) {
+  // #154: read the `committed` flag by FIELD, not the `committed=true` substring.
+  if (issueComments.some((c) => parseMarkers(c.body, REWORK_MARKER).some((f) => f.committed === "true"))) {
     return { kind: "progressed", note: details.url };
   }
 
@@ -189,7 +189,7 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   }
 
   // Guard 3: bounded attempt budget — count prior rework rounds already posted on the PR thread.
-  const priorRounds = (await ctx.gh.listComments(ctx.repo, prNum)).filter((c) => c.body.includes(REWORK_MARKER)).length;
+  const priorRounds = (await ctx.gh.listComments(ctx.repo, prNum)).filter((c) => hasMarker(c.body, REWORK_MARKER)).length;
   if (priorRounds >= REWORK_BUDGET) {
     await markNeedsHuman(ctx, issue); // same blocked-label path as the other escalations (#144)
     await panel(`rework 已达 ${REWORK_BUDGET} 轮上限。`, "blocked"); return { kind: "noop" };
@@ -225,9 +225,9 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     const changes = r.authorSummary ? `\n\n## 本轮改动\n${r.authorSummary}` : "";
     try {
       await ctx.gh.postComment(ctx.repo, prNum,
-        `${REWORK_MARKER} round=${round}-->\n🔁 **rework 第 ${round} 轮**（按人类反馈更新本 PR）${changes}\n\n${reviewSummary(r)}`);
+        `${renderMarker(REWORK_MARKER, { round })}\n🔁 **rework 第 ${round} 轮**（按人类反馈更新本 PR）${changes}\n\n${reviewSummary(r)}`);
     } catch (e) {
-      await panel(`${REWORK_MARKER} round=${round} committed=true-->\n⚠️ rework 第 ${round} 轮已推送，但 PR 线程总结写入失败：${(e as Error).message}`);
+      await panel(`${renderMarker(REWORK_MARKER, { round, committed: "true" })}\n⚠️ rework 第 ${round} 轮已推送，但 PR 线程总结写入失败：${(e as Error).message}`);
       throw e;
     }
     pr.done({ round });
