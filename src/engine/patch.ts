@@ -291,11 +291,15 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   // (that would land in the diff) — we capture resultText and render it into the PR body / round summary.
   let authorSummary = implRes.resultText?.trim() || "";
   warnIfOffLanguage(ctx, issue, authorSummary);
-  // #163: rework passes the PR base ref so the reviewer sees the cumulative PR diff, not just this round's
-  // increment vs the branch tip (HEAD). implement leaves it undefined (HEAD = base → vs-HEAD is the full diff).
-  let diff = await ctx.ws.stagedDiff(dir, reviewBaseRef);
+  // #163: two distinct diffs. The no-change gate (and the upcoming commit) need THIS round's changes vs HEAD
+  // (the branch tip) — did the patcher stage anything new this round? Review + PR body need the cumulative PR
+  // diff vs the PR base, so the reviewer/human sees what GitHub shows. For implement (no baseRef) they coincide
+  // (HEAD = base), so we reuse the single staged diff. Gating on the cumulative diff would let an empty rework
+  // round sail past the gate and then fail at `git commit` (empty index vs HEAD).
+  const roundChanges = await ctx.ws.stagedDiff(dir);                                       // vs HEAD — this round
+  let diff = reviewBaseRef ? await ctx.ws.stagedDiff(dir, reviewBaseRef) : roundChanges;   // cumulative for review
 
-  if (!diff.trim()) {
+  if (!roundChanges.trim()) {
     const fails = ctx.fails.recordFail(ctx.repo, issue.number);
     const error = `patcher made no changes (${fails}/${PATCH_FAIL_THRESHOLD}); workdir kept at ${dir}`;
     if (fails < PATCH_FAIL_THRESHOLD) {

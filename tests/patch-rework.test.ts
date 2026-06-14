@@ -194,3 +194,18 @@ test("#135 patcher made no changes on rework: failed, no commit, keeps checkout 
   expect(ws.cleaned).toHaveLength(0);
   expect(gh.panels[7]).toMatch(/made no changes|workdir/i);
 });
+
+// #163 regression: the no-change gate must measure THIS round's changes (vs HEAD = branch tip), not the
+// cumulative PR diff. If the rework patcher edits nothing but the PR already carries a diff, the cumulative
+// diff is non-empty — yet there is nothing new to commit. Gating on the cumulative diff would sail past the
+// gate and then `git commit` would fail (index empty vs HEAD). So: empty round increment → no-change gate, no commit.
+test("#163 rework patcher makes no NEW changes (PR already has a diff) → no-change gate, never commits", async () => {
+  const gh = reworkable();
+  // vs HEAD (this round) = "" ; cumulative vs base = non-empty (prior committed work on the branch tip)
+  const ws = new FakeWorkspace({ diff: (base) => (base ? "EXISTING CUMULATIVE PR DIFF" : ""), tests: true });
+  const out = await runRework(ctx(gh, ws, async () => clean), issue);
+  expect(out.kind).toBe("failed");
+  if (out.kind === "failed") expect(out.error).toMatch(/no changes/i);
+  expect(ws.committed).toHaveLength(0);   // must NOT commit — git commit would fail on an empty index vs HEAD
+  expect(gh.panels[7]).toMatch(/made no changes|workdir/i);
+});
