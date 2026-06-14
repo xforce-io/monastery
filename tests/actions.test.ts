@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { FakeGitHub } from "../src/github/fake.js";
-import { executeSafe, doClose, doMerge, proposeGate, ActionSchema, applyStateLabels } from "../src/shell/actions.js";
-import { parseStateMessage } from "../src/shell/messages.js";
+import { executeSafe, doClose, doMerge, proposeGate, ActionSchema, applyStateLabels, postStateOnce } from "../src/shell/actions.js";
+import { parseStateMessage, renderStateMessage } from "../src/shell/messages.js";
 
 const gh = () => new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "x", body: "y", labels: [], state: "open" }] });
 
@@ -172,4 +172,45 @@ test("#144 applyStateLabels derives the control label from status", async () => 
   expect(i.labels).not.toContain("monastery:needs-approval");
 
   await applyStateLabels(g, "o/r", 1, "note");           // no-op
+});
+
+// --- #153: correlationId idempotency — a re-run recognizes an already-sent logical message ---
+
+test("#153 postStateOnce posts once; a re-run with the same correlationId is skipped", async () => {
+  const g = gh();
+  const cid = "o/r#1:note:abc";
+  const posted1 = await postStateOnce(g, "o/r", 1, cid, renderStateMessage({ status: "note", correlationId: cid, body: "first" }));
+  expect(posted1).toBe(true);
+  expect(g.comments[1]).toHaveLength(1);
+  // re-run (e.g. reconcile re-enters the step, or a crash-after-post): same logical message
+  const posted2 = await postStateOnce(g, "o/r", 1, cid, renderStateMessage({ status: "note", correlationId: cid, body: "second" }));
+  expect(posted2).toBe(false);            // recognized already-sent
+  expect(g.comments[1]).toHaveLength(1);  // not double-posted
+});
+
+test("#153 postStateOnce posts again when the correlationId differs (a new logical message)", async () => {
+  const g = gh();
+  await postStateOnce(g, "o/r", 1, "o/r#1:note:v1", renderStateMessage({ status: "note", correlationId: "o/r#1:note:v1", body: "a" }));
+  await postStateOnce(g, "o/r", 1, "o/r#1:note:v2", renderStateMessage({ status: "note", correlationId: "o/r#1:note:v2", body: "b" }));
+  expect(g.comments[1]).toHaveLength(2);  // distinct keys -> both posted
+});
+
+test("#153 proposeGate is idempotent across re-runs at the same spec version (no double-post)", async () => {
+  const g = gh();
+  await proposeGate(g, "o/r", 1, "implement", "## Plan");
+  await proposeGate(g, "o/r", 1, "implement", "## Plan (re-run after a crash)");
+  expect(g.comments[1]).toHaveLength(1);   // re-run recognized the already-sent gate -> not double-posted
+  const gate = parseStateMessage(g.comments[1][0])!;
+  expect(gate).toMatchObject({ action: "implement", status: "awaiting-approval" });
+  expect(gate.correlationId).toBe("o/r#1:approval:implement@spec0"); // key embedded -> parseable from the comment
+});
+
+test("#153 proposeGate opens a fresh gate when the spec version advances (stale gate, #95)", async () => {
+  const g = gh();
+  await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "v1 design", parties: ["a"] });
+  await proposeGate(g, "o/r", 1, "implement", "## Plan @v1");
+  await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "v2 design", parties: ["a"] });
+  await proposeGate(g, "o/r", 1, "implement", "## Plan @v2");
+  const gates = g.comments[1].filter((b) => parseStateMessage(b)?.status === "awaiting-approval");
+  expect(gates).toHaveLength(2);  // different spec version -> different key -> fresh gate
 });
