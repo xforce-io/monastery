@@ -117,33 +117,28 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
 }
 
 /**
- * #153: post a machine message AT MOST ONCE per correlationId — the generalization of the `reply` marker's
- * per-comment idempotency to ANY enveloped message. Scans existing comments' envelopes; if one already
- * carries this correlationId the logical message was already sent (a re-run / crash-after-post), so skip.
- * `body` must already embed the key in its envelope (renderStateMessage({ correlationId, ... })) so the next
- * re-run can see it. Returns true if posted, false if recognized as already-sent. The root mitigation for
- * GitHub having no transactions: re-running converges instead of double-posting (PROTOCOL §7).
- */
-export async function postStateOnce(gh: GitHubAdapter, repo: string, num: number, correlationId: string, body: string): Promise<boolean> {
-  const existing = await gh.listComments(repo, num);
-  if (existing.some((c) => parseStateMessage(c.body)?.correlationId === correlationId)) return false;
-  await gh.postComment(repo, num, body);
-  return true;
-}
-
-/**
  * Open the approval gate (PROTOCOL §4): post a fresh approval comment carrying the action marker
  * (so old reactions on a reused sticky panel cannot approve a new gate) + the needs-approval control label
  * (so the item moves to awaiting-gate). Shared by `propose` (close/merge) and `implement` (#88).
  */
 export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string, provenance: ActionProvenance = {}): Promise<void> {
+  const comments = await gh.listComments(repo, num);
   // Stamp the spec version this gate is opened against (#95) — a later, higher-version spec makes it stale.
-  const specVersion = currentSpec(await gh.listComments(repo, num))?.version ?? 0;
-  // #153: the gate's logical identity = (issue, action, spec). A re-run at the same spec derives the same
-  // key and postStateOnce skips it (no double-post); a higher spec → different key → a fresh gate (#95).
+  const specVersion = currentSpec(comments)?.version ?? 0;
+  // #153: the gate's logical identity = (issue, action, spec). Carried in the envelope so a re-run can
+  // recognize "this gate was already opened" by scanning comments — the key is also auditable straight from
+  // the comment. A higher spec → different key → a fresh gate (#95 staleness), naturally.
   const correlationId = deriveCorrelationId({ repo, num, kind: "approval", action: proposal, spec: specVersion });
+  // Idempotency is scoped to the LIVE gate, NOT all history. A re-run while the gate is still open
+  // (needs-approval present) must not double-post. But once a gate is VACATED — a 👀 / new human comment
+  // demotes it back to active and clears needs-approval (issue-step demoteGate) — re-proposing the same
+  // action at the same spec is a NEW ask and MUST post a fresh comment. A history-wide key match would
+  // instead resurrect the stale, already-👀'd gate (its reaction re-demotes every tick → an awaiting-gate
+  // loop). So skip only when a same-key gate exists AND the issue still carries needs-approval.
+  const live = (await gh.getIssue(repo, num))?.labels.includes(NEEDS_APPROVAL) ?? false;
+  if (live && comments.some((c) => parseStateMessage(c.body)?.correlationId === correlationId)) return;
   await applyStateLabels(gh, repo, num, "awaiting-approval");
-  await postStateOnce(gh, repo, num, correlationId,
+  await gh.postComment(repo, num,
     renderStateMessage({ status: "awaiting-approval", action: proposal, spec: specVersion, correlationId, body: draft, ...provenance }));
 }
 
