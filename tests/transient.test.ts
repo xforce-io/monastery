@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { isTransientGhError, TransientGitHubError, withGhRetry } from "../src/github/transient.js";
+import { isTransientGhError, rethrowIfTransient, TransientGitHubError, withGhRetry } from "../src/github/transient.js";
 
 // A minimal ExecaError-shaped object — the classifier only inspects these string/flag fields.
 function ghErr(fields: { stderr?: string; message?: string; shortMessage?: string; timedOut?: boolean; code?: string }): Error {
@@ -36,6 +36,18 @@ describe("isTransientGhError", () => {
     expect(isTransientGhError(null)).toBe(false);
     expect(isTransientGhError(undefined)).toBe(false);
     expect(isTransientGhError("EOF")).toBe(false);
+  });
+});
+
+describe("rethrowIfTransient", () => {
+  it("re-throws a TransientGitHubError so a sustained outage surfaces instead of being swallowed", () => {
+    const e = new TransientGitHubError("down", 4);
+    expect(() => rethrowIfTransient(e)).toThrow(e);
+  });
+  it("does nothing for a non-transient error — the caller degrades to its fallback (404/empty)", () => {
+    expect(() => rethrowIfTransient(new Error("HTTP 404"))).not.toThrow();
+    expect(() => rethrowIfTransient("anything")).not.toThrow();
+    expect(() => rethrowIfTransient(undefined)).not.toThrow();
   });
 });
 

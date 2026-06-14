@@ -1,6 +1,7 @@
 // tests/gh-adapter.test.ts
 import { expect, test } from "vitest";
 import { GhAdapter } from "../src/github/gh-adapter.js";
+import { TransientGitHubError } from "../src/github/transient.js";
 
 test("addLabel issues the correct gh argv", async () => {
   const captured: string[][] = [];
@@ -132,6 +133,33 @@ test("getIssue reads one issue (any repo, open or closed) and maps it to Issue",
 test("getIssue returns null when the issue is missing / inaccessible", async () => {
   const gh = new GhAdapter(async () => { throw new Error("not found"); });
   expect(await gh.getIssue("owner/other", 999)).toBeNull();
+});
+
+// #148: a sustained outage (TransientGitHubError) must NOT be swallowed into a "data absent"
+// fallback — it has to surface so the step fails cleanly and retryably. Only genuine
+// not-found / parse errors degrade to the fallback.
+test("getIssue re-throws a sustained TransientGitHubError instead of masking it as null", async () => {
+  const gh = new GhAdapter(async () => { throw new TransientGitHubError("GitHub API temporarily unavailable", 4); });
+  await expect(gh.getIssue("owner/other", 1)).rejects.toBeInstanceOf(TransientGitHubError);
+});
+
+test("readThesis returns '' on a genuine error but re-throws a sustained TransientGitHubError", async () => {
+  const ok = new GhAdapter(async () => { throw new Error("404 not found"); });
+  expect(await ok.readThesis("o/r")).toBe(""); // genuine absence → empty, as before
+  const down = new GhAdapter(async () => { throw new TransientGitHubError("down", 4); });
+  await expect(down.readThesis("o/r")).rejects.toBeInstanceOf(TransientGitHubError);
+});
+
+test("fileExists returns false on a genuine error but re-throws a sustained TransientGitHubError", async () => {
+  const ok = new GhAdapter(async () => { throw new Error("404"); });
+  expect(await ok.fileExists("o/r", "x")).toBe(false);
+  const down = new GhAdapter(async () => { throw new TransientGitHubError("down", 4); });
+  await expect(down.fileExists("o/r", "x")).rejects.toBeInstanceOf(TransientGitHubError);
+});
+
+test("openDraftPR re-throws a sustained TransientGitHubError on create instead of probing for an existing PR", async () => {
+  const gh = new GhAdapter(async () => { throw new TransientGitHubError("down", 4); });
+  await expect(gh.openDraftPR("o/r", "feat/x", "t", "b")).rejects.toBeInstanceOf(TransientGitHubError);
 });
 
 test("mergePR issues the correct gh argv", async () => {

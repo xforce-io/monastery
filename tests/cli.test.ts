@@ -7,7 +7,9 @@ import { parseArgs, stepRepos, summarize } from "../src/cli/index.js";
 import { prepareRepoForStep, stepExitCode } from "../src/cli/index.js";
 import { StepLock } from "../src/config/step-lock.js";
 import { FakeGitHub } from "../src/github/fake.js";
-import { LABEL_DEFS } from "../src/github/labels.js";
+import { DryRunAdapter } from "../src/github/dry-run.js";
+import { Store } from "../src/config/store.js";
+import { LABEL_DEFS, labelsFingerprint } from "../src/github/labels.js";
 import { THESIS_PATH } from "../src/engine/init.js";
 
 test("parses `step --repo o/r --dry-run --json`", () => {
@@ -158,10 +160,26 @@ test("#125 step exit code is non-zero for batch and single-issue failures", () =
 test("#126 step preflight initializes labels and thesis for a repos-add-only repo", async () => {
   const gh = new FakeGitHub({ thesis: "", issues: [] });
   const logs: string[] = [];
-  await prepareRepoForStep(gh, "o/r", undefined, (line) => logs.push(line));
+  await prepareRepoForStep(gh, "o/r", { log: (line) => logs.push(line) });
   expect(gh.ensuredLabels.map((l) => l.name).sort()).toEqual(LABEL_DEFS.map((l) => l.name).sort());
   expect(gh.files[THESIS_PATH]).toContain("Thesis");
   expect(logs.join("\n")).toContain("initialized o/r");
+});
+
+test("#148 a dry-run step does NOT pollute the labels-ensured cache (dry-run never really creates labels)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "monastery-"));
+  const store = new Store(dir);
+  const inner = new FakeGitHub({ thesis: "T", issues: [], files: { ".monastery/thesis.md": "t" } });
+
+  // dry-run: ensureLabel only records intent, so the cache must stay unmarked
+  await prepareRepoForStep(new DryRunAdapter(inner), "o/r", { cache: store, dryRun: true });
+  expect(store.ensuredLabelsFingerprint("o/r")).toBeUndefined();
+
+  // a real step DOES record it (and a later real step can then skip)
+  await prepareRepoForStep(inner, "o/r", { cache: store, dryRun: false });
+  expect(store.ensuredLabelsFingerprint("o/r")).toBe(labelsFingerprint());
+
+  rmSync(dir, { recursive: true, force: true });
 });
 
 import { formatPending } from "../src/cli/backlog.js";

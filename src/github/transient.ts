@@ -52,6 +52,15 @@ export class TransientGitHubError extends Error {
   }
 }
 
+/**
+ * Re-throw `err` if it is a sustained-outage {@link TransientGitHubError}, otherwise do nothing (#148).
+ * Use inside a gh read path's catch so a genuine 404/empty still degrades to its fallback, but a
+ * sustained API outage surfaces cleanly instead of masquerading as "data absent".
+ */
+export function rethrowIfTransient(err: unknown): void {
+  if (err instanceof TransientGitHubError) throw err;
+}
+
 export interface RetryOptions {
   maxAttempts?: number;
   baseMs?: number;

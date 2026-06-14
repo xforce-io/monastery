@@ -3,7 +3,7 @@ import { execa } from "execa";
 import type { GitHubAdapter } from "./adapter.js";
 import type { Issue } from "../types.js";
 import { STATE_MARKER } from "../shell/messages.js";
-import { withGhRetry } from "./transient.js";
+import { withGhRetry, rethrowIfTransient } from "./transient.js";
 
 export type GhRun = (args: string[], input?: string) => Promise<string>;
 
@@ -42,7 +42,8 @@ export class GhAdapter implements GitHubAdapter {
         labels: i.labels.map((l) => l.name), state: i.state.toLowerCase() as Issue["state"],
         updatedAt: i.updatedAt ? Date.parse(i.updatedAt) || 0 : undefined,
       };
-    } catch {
+    } catch (e) {
+      rethrowIfTransient(e); // a sustained outage must not look like "issue gone" (#148)
       return null;
     }
   }
@@ -61,19 +62,19 @@ export class GhAdapter implements GitHubAdapter {
   async readThesis(repo: string): Promise<string> {
     return this.run(["api", `repos/${repo}/contents/.monastery/thesis.md`, "--jq", ".content"])
       .then((b64) => Buffer.from(b64.trim(), "base64").toString("utf8"))
-      .catch(() => "");
+      .catch((e) => { rethrowIfTransient(e); return ""; });
   }
   async readPanel(repo: string, num: number): Promise<string> {
     return this.run([
       "api", `repos/${repo}/issues/${num}/comments`,
       "--jq", `[.[] | select(.body | startswith("${STATE_MARKER}"))][0].body // ""`,
-    ]).catch(() => "");
+    ]).catch((e) => { rethrowIfTransient(e); return ""; });
   }
   async upsertPanel(repo: string, num: number, body: string): Promise<void> {
     const id = await this.run([
       "api", `repos/${repo}/issues/${num}/comments`,
       "--jq", `[.[] | select(.body | startswith("${STATE_MARKER}"))][0].id // ""`,
-    ]).catch(() => "");
+    ]).catch((e) => { rethrowIfTransient(e); return ""; });
     if (id.trim()) {
       await this.run(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id.trim()}`, "-F", "body=@-"], body);
     } else {
@@ -87,7 +88,8 @@ export class GhAdapter implements GitHubAdapter {
     try {
       const sha = await this.run(["api", `repos/${repo}/contents/${path}`, "--jq", ".sha"]);
       return sha.trim().length > 0;
-    } catch {
+    } catch (e) {
+      rethrowIfTransient(e); // a sustained outage must not look like "file absent" (#148)
       return false;
     }
   }
@@ -101,7 +103,7 @@ export class GhAdapter implements GitHubAdapter {
     const out = await this.run([
       "api", `repos/${repo}/issues/${num}/timeline`, "-f", "per_page=100",
       "--jq", `[.[] | select(.event=="labeled" and .label.name=="${label}") | .created_at] | last // ""`,
-    ]).catch(() => "");
+    ]).catch((e) => { rethrowIfTransient(e); return ""; });
     const s = out.trim();
     if (!s) return null;
     const t = Date.parse(s);
@@ -110,13 +112,13 @@ export class GhAdapter implements GitHubAdapter {
   async findPrForBranch(repo: string, branch: string): Promise<string | null> {
     const out = await this.run(
       ["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url", "--jq", '.[0].url // ""'],
-    ).catch(() => "");
+    ).catch((e) => { rethrowIfTransient(e); return ""; });
     return out.trim() || null;
   }
   async prState(repo: string, branch: string): Promise<"open" | "merged" | "closed" | null> {
     const out = await this.run(
       ["pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--json", "state", "--jq", '.[0].state // ""'],
-    ).catch(() => "");
+    ).catch((e) => { rethrowIfTransient(e); return ""; });
     const s = out.trim().toLowerCase();
     return s === "open" || s === "merged" || s === "closed" ? s : null;
   }
@@ -124,7 +126,7 @@ export class GhAdapter implements GitHubAdapter {
     const out = await this.run([
       "pr", "list", "--repo", repo, "--head", branch, "--state", "all",
       "--json", "number,url,title,body,isDraft", "--jq", ".[0] // empty",
-    ]).catch(() => "");
+    ]).catch((e) => { rethrowIfTransient(e); return ""; });
     if (!out.trim()) return null;
     try {
       const r = JSON.parse(out) as { number: number; url: string; title: string; body: string; isDraft: boolean };
@@ -141,7 +143,7 @@ export class GhAdapter implements GitHubAdapter {
     const out = await this.run([
       "api", `repos/${repo}/pulls/${prNumber}/reviews`,
       "--jq", "[.[] | {author: .user.login, state, body}]",
-    ]).catch(() => "[]");
+    ]).catch((e) => { rethrowIfTransient(e); return "[]"; });
     return JSON.parse(out || "[]") as { author: string; state: string; body: string }[];
   }
   async getPrChecks(repo: string, prNumber: number): Promise<"pass" | "fail" | "pending"> {
@@ -149,26 +151,26 @@ export class GhAdapter implements GitHubAdapter {
     const out = await this.run([
       "pr", "view", String(prNumber), "--repo", repo, "--json", "statusCheckRollup",
       "--jq", '.statusCheckRollup | if . == null or length == 0 then "pending" elif any(.[]; .conclusion == "FAILURE" or .conclusion == "TIMED_OUT") then "fail" elif any(.[]; .status != "COMPLETED") then "pending" else "pass" end',
-    ]).catch(() => "");
+    ]).catch((e) => { rethrowIfTransient(e); return ""; });
     const s = out.trim();
     return s === "pass" || s === "fail" ? s : "pending";
   }
   async listComments(repo: string, num: number): Promise<{ id: string; body: string; author: string; updatedAt: number }[]> {
     const out = await this.run([
       "api", `repos/${repo}/issues/${num}/comments`, "--jq", "[.[] | {id: (.id|tostring), body, author: .user.login, updatedAt: .updated_at}]",
-    ]).catch(() => "[]");
+    ]).catch((e) => { rethrowIfTransient(e); return "[]"; });
     const raw = JSON.parse(out || "[]") as { id: string; body: string; author: string; updatedAt: string }[];
     return raw.map((c) => ({ id: c.id, body: c.body, author: c.author, updatedAt: Date.parse(c.updatedAt) || 0 }));
   }
   private cachedLogin?: string;
   async login(): Promise<string> {
-    if (this.cachedLogin === undefined) this.cachedLogin = (await this.run(["api", "user", "--jq", ".login"]).catch(() => "")).trim();
+    if (this.cachedLogin === undefined) this.cachedLogin = (await this.run(["api", "user", "--jq", ".login"]).catch((e) => { rethrowIfTransient(e); return ""; })).trim();
     return this.cachedLogin;
   }
   async reactions(repo: string, commentId: string): Promise<{ content: string; author: string }[]> {
     const out = await this.run([
       "api", `repos/${repo}/issues/comments/${commentId}/reactions`, "--jq", "[.[] | {content, author: .user.login}]",
-    ]).catch(() => "[]");
+    ]).catch((e) => { rethrowIfTransient(e); return "[]"; });
     return JSON.parse(out || "[]") as { content: string; author: string }[];
   }
   async mergePR(repo: string, branch: string): Promise<void> {
@@ -182,12 +184,13 @@ export class GhAdapter implements GitHubAdapter {
         body,
       );
       return url.trim();
-    } catch {
+    } catch (e) {
+      rethrowIfTransient(e); // a sustained outage must surface, not be read as "PR may already exist" (#148)
       // A PR for this head branch may already exist (a prior run pushed but failed before labeling).
       // Return the existing PR's url so the caller's label swap can converge — never double-create.
       const existing = await this.run(
         ["pr", "view", head, "--repo", repo, "--json", "url", "--jq", ".url"],
-      ).catch(() => "");
+      ).catch((e) => { rethrowIfTransient(e); return ""; });
       if (existing.trim()) return existing.trim();
       throw new Error(`openDraftPR failed for ${repo} head=${head} and no existing PR was found`);
     }
