@@ -87,8 +87,20 @@ export class GitWorkspace implements Workspace {
     return null;
   }
 
-  async stagedDiff(dir: string): Promise<string> {
+  async stagedDiff(dir: string, baseRef?: string): Promise<string> {
     await this.run("git", ["-C", dir, "add", "-A"]);
+    // #163: with a baseRef, diff the index against merge-base(baseRef, HEAD) — the cumulative PR diff a human
+    // sees on GitHub — so the rework reviewer is not blind to work already committed on the branch tip. Without
+    // a baseRef (implement path: HEAD = base), `git diff --cached` (vs HEAD) is already the full diff, unchanged.
+    if (baseRef) {
+      const mb = await this.run("git", ["-C", dir, "merge-base", baseRef, "HEAD"]);
+      const base = mb.stdout.trim();
+      if (base) {
+        const d = await this.run("git", ["-C", dir, "diff", "--cached", base]);
+        return d.stdout;
+      }
+      // merge-base unresolved (e.g. unrelated histories) — fall back to vs HEAD rather than crash the rework.
+    }
     const d = await this.run("git", ["-C", dir, "diff", "--cached"]);
     return d.stdout;
   }

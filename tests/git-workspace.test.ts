@@ -25,6 +25,25 @@ test("stagedDiff stages then returns the cached diff", async () => {
   ]);
 });
 
+// #163: rework review diff must be relative to the PR base's merge-base, not HEAD. With a baseRef,
+// stagedDiff resolves `git merge-base <baseRef> HEAD` and diffs the index against THAT commit — so the
+// reviewer sees the cumulative PR diff (committed work on the branch tip + the round's uncommitted edits),
+// the same view a human has on GitHub. Without a baseRef the legacy vs-HEAD behavior is untouched (above).
+test("#163 stagedDiff(dir, baseRef) diffs the index against merge-base(baseRef, HEAD), not HEAD", async () => {
+  const { run, calls } = recorder({
+    "git -C /d merge-base origin/main HEAD": "MBSHA\n",
+    "git -C /d diff --cached MBSHA": "CUMULATIVE_DIFF",
+  });
+  const ws = new GitWorkspace(run);
+  const diff = await ws.stagedDiff("/d", "origin/main");
+  expect(diff).toBe("CUMULATIVE_DIFF");
+  expect(calls).toEqual([
+    ["git", "-C", "/d", "add", "-A"],
+    ["git", "-C", "/d", "merge-base", "origin/main", "HEAD"], // resolve the divergence point
+    ["git", "-C", "/d", "diff", "--cached", "MBSHA"],          // index vs merge-base = cumulative PR diff
+  ]);
+});
+
 test("commitPush commits then pushes the branch", async () => {
   const { run, calls } = recorder();
   const ws = new GitWorkspace(run);

@@ -223,7 +223,9 @@ export async function runRework(ctx: StepCtx, issue: Issue, plan?: string | null
       planBlock,
       `\nHuman feedback to address — this is WHY you are reworking; resolve every point:\n${feedback}`,
     ].filter(Boolean).join("\n");
-    const attempt = await patchAndReview(ctx, dir, issue, context, log);
+    // #163: self-review must see the cumulative PR diff (vs the PR base's merge-base), not just this round's
+    // increment vs the branch tip — else the reviewer is blind to work already committed and never converges.
+    const attempt = await patchAndReview(ctx, dir, issue, context, log, `origin/${details.baseRefName}`);
     if (attempt.kind === "failed") {
       keepWorkdir = true;
       return { kind: "failed", error: attempt.error };
@@ -268,7 +270,7 @@ type PatchAttempt =
  * a non-empty diff, run tests, then the bounded self-review fix loop. Returns artifacts or an explicit failure;
  * approved heavy work must never collapse into ordinary noop semantics (#135).
  */
-async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskContext: string, log: PhaseLogger): Promise<PatchAttempt> {
+async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskContext: string, log: PhaseLogger, reviewBaseRef?: string): Promise<PatchAttempt> {
   const policy = effectivePolicy(patcherSpec, ctx.repoPolicy);
   const PATCH_FAIL_THRESHOLD = policy.failThreshold ?? 3;
   const REVIEW_MAX_ITERS = policy.maxIters ?? 3;
@@ -289,9 +291,15 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   // (that would land in the diff) — we capture resultText and render it into the PR body / round summary.
   let authorSummary = implRes.resultText?.trim() || "";
   warnIfOffLanguage(ctx, issue, authorSummary);
-  let diff = await ctx.ws.stagedDiff(dir);
+  // #163: two distinct diffs. The no-change gate (and the upcoming commit) need THIS round's changes vs HEAD
+  // (the branch tip) — did the patcher stage anything new this round? Review + PR body need the cumulative PR
+  // diff vs the PR base, so the reviewer/human sees what GitHub shows. For implement (no baseRef) they coincide
+  // (HEAD = base), so we reuse the single staged diff. Gating on the cumulative diff would let an empty rework
+  // round sail past the gate and then fail at `git commit` (empty index vs HEAD).
+  const roundChanges = await ctx.ws.stagedDiff(dir);                                       // vs HEAD — this round
+  let diff = reviewBaseRef ? await ctx.ws.stagedDiff(dir, reviewBaseRef) : roundChanges;   // cumulative for review
 
-  if (!diff.trim()) {
+  if (!roundChanges.trim()) {
     const fails = ctx.fails.recordFail(ctx.repo, issue.number);
     const error = `patcher made no changes (${fails}/${PATCH_FAIL_THRESHOLD}); workdir kept at ${dir}`;
     if (fails < PATCH_FAIL_THRESHOLD) {
@@ -314,7 +322,7 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   };
   let tests = await runTests();
   // re-stage AFTER tests so files the test run regenerates (e.g. package-lock.json from npm install) are committed too
-  diff = await ctx.ws.stagedDiff(dir);
+  diff = await ctx.ws.stagedDiff(dir, reviewBaseRef);
 
   // Self-review gate: review the staged diff; fix BLOCKING findings and re-review (<= REVIEW_MAX_ITERS).
   // Resolve the reviewer (and its model) ONCE up front — accurate provenance/phase logs from iteration 1.
@@ -341,7 +349,7 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     if (fixRes.resultText?.trim()) { authorSummary = fixRes.resultText.trim(); warnIfOffLanguage(ctx, issue, authorSummary); }   // keep the summary current with the final diff
     fixedTitles.push(...blocking.map((b) => b.title));
     tests = await runTests();
-    diff = await ctx.ws.stagedDiff(dir);
+    diff = await ctx.ws.stagedDiff(dir, reviewBaseRef);
   }
 
   return { kind: "ok", result: { diff, tests, authorSummary, reviewerFailed, fixedTitles, lastVerdict, reviewerModel, reviewerProvider } };

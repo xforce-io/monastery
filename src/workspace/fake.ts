@@ -13,7 +13,10 @@ export class FakeWorkspace implements Workspace {
   public committed: { branch: string; message: string }[] = [];
   public cleaned: string[] = [];
   public diffCalls = 0;
-  constructor(private opts: { diff?: string; tests?: boolean | null } = {}) {}
+  /** #163: the base ref handed to each stagedDiff call (undefined = vs HEAD), so tests can assert which base the reviewer saw. */
+  public diffBases: (string | undefined)[] = [];
+  // #163: `diff` may be a function of the base ref, so a test can model "the cumulative diff is only visible WITH a base".
+  constructor(private opts: { diff?: string | ((baseRef?: string) => string); tests?: boolean | null } = {}) {}
   async clone(repo: string, branch: string): Promise<string> {
     const dir = mkdtempSync(join(tmpdir(), "fake-wt-"));
     this.cloned.push({ repo, branch, dir });
@@ -30,7 +33,11 @@ export class FakeWorkspace implements Workspace {
     return dir;
   }
   async runTests(_dir?: string): Promise<boolean | null> { return this.opts.tests ?? null; }
-  async stagedDiff(_dir?: string): Promise<string> { this.diffCalls++; return this.opts.diff ?? ""; }
+  async stagedDiff(_dir: string, baseRef?: string): Promise<string> {
+    this.diffCalls++;
+    this.diffBases.push(baseRef);
+    return typeof this.opts.diff === "function" ? this.opts.diff(baseRef) : this.opts.diff ?? "";
+  }
   async commitPush(_dir: string, branch: string, message: string): Promise<void> {
     this.committed.push({ branch, message });
   }
