@@ -17,8 +17,8 @@ import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
 import { currentSpec, parseSpecs } from "../shell/consensus.js";
-import { isHumanComment } from "../shell/markers.js";
-import { approvalKind, approvalSpecVersion, AWAITING_APPROVAL_BANNER, isStateMessage, renderStateMessage, stripStateMessage, type StateStatus } from "../shell/messages.js";
+import { isHumanComment, hasMarker, renderMarker, REPLY_MARKER, IMPL_REJECTED_MARKER } from "../shell/markers.js";
+import { approvalKind, approvalSpecVersion, AWAITING_APPROVAL_BANNER, isApprovalGate, isStickyPanel, renderStateMessage, stripStateMessage, type StateStatus } from "../shell/messages.js";
 import { makePhaseLogger } from "../phase-logger.js";
 import type { ModelLevels } from "../provider/models.js";
 import type { ProviderPool } from "../provider/select.js";
@@ -105,7 +105,7 @@ export async function issueStep(ctx: StepCtx, num: number): Promise<Outcome> {
   // instead of letting active/maintainer treat it as an ordinary marked comment forever.
   const comments = await ctx.gh.listComments(ctx.repo, issue.number);
   const gate = latestApprovalGate(comments);
-  const latestNoteAt = Math.max(0, ...comments.filter((c) => isStateMessage(c.body, "note")).map((c) => c.updatedAt));
+  const latestNoteAt = Math.max(0, ...comments.filter((c) => isStickyPanel(c.body)).map((c) => c.updatedAt));
   if (gate && gate.updatedAt > latestNoteAt) {
     await ensureControlLabel(ctx.gh, ctx.repo, NEEDS_APPROVAL);
     await ctx.gh.addLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
@@ -335,7 +335,7 @@ async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
 
 function latestApprovalGate<T extends { body: string; updatedAt: number }>(comments: T[]): T | undefined {
   return comments
-    .filter((c) => isStateMessage(c.body, "approval"))
+    .filter((c) => isApprovalGate(c.body))
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 
@@ -362,7 +362,7 @@ function hasNewUnansweredHumanComment(
     (c) =>
       isHumanComment(c) &&
       c.updatedAt > gate.updatedAt &&
-      !comments.some((r) => r.body.includes(`<!--monastery-reply to=${c.id}-->`)),
+      !comments.some((r) => hasMarker(r.body, REPLY_MARKER, { to: c.id })),
   );
 }
 
@@ -391,12 +391,11 @@ async function recoverRejectedImpl(ctx: StepCtx, issue: Issue): Promise<Outcome 
   const pr = await ctx.gh.getPrDetails(ctx.repo, branch);
   if (!pr) return null;
 
-  const marker = `<!--monastery-impl-rejected pr=${pr.number}-->`;
   const comments = await ctx.gh.listComments(ctx.repo, issue.number);
-  if (comments.some((c) => c.body.includes(marker))) return null;
+  if (comments.some((c) => hasMarker(c.body, IMPL_REJECTED_MARKER, { pr: pr.number }))) return null;
 
   const note = `实现被拒：PR #${pr.number} 已关闭且未合并。请在 issue 中说明希望调整的方向，monastery 会重新评估并提出新的实现。`;
-  await ctx.gh.postComment(ctx.repo, issue.number, `${marker}\n${note}`);
+  await ctx.gh.postComment(ctx.repo, issue.number, `${renderMarker(IMPL_REJECTED_MARKER, { pr: pr.number })}\n${note}`);
   await ctx.gh.upsertPanel(ctx.repo, issue.number, stateMessage("note", note));
   return {
     kind: "waiting",

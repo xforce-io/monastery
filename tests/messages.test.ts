@@ -1,6 +1,56 @@
 import { expect, test } from "vitest";
-import { deriveState, STATE_MARKER, renderStateMessage, parseStateMessage, deriveCorrelationId } from "../src/shell/messages.js";
+import { deriveState, STATE_MARKER, renderStateMessage, parseStateMessage, deriveCorrelationId, isApprovalGate, isStickyPanel } from "../src/shell/messages.js";
 import { NEEDS_APPROVAL, NEEDS_HUMAN } from "../src/github/labels.js";
+
+const gateBody = renderStateMessage({ status: "awaiting-approval", action: "implement", spec: 1, body: "请批准" });
+const panelNote = renderStateMessage({ status: "note", body: "fyi" });
+const panelBlocked = renderStateMessage({ status: "blocked", body: "needs a human" });
+
+test("#154 gate↔panel: isApprovalGate is true only for the append-only approval gate", () => {
+  expect(isApprovalGate(gateBody)).toBe(true);
+  expect(isApprovalGate(panelNote)).toBe(false);
+  expect(isApprovalGate(panelBlocked)).toBe(false);
+  expect(isApprovalGate("a plain human comment")).toBe(false);
+});
+
+test("#154 gate↔panel: isStickyPanel is true for any non-gate state surface, never the gate", () => {
+  expect(isStickyPanel(panelNote)).toBe(true);
+  expect(isStickyPanel(panelBlocked)).toBe(true);
+  expect(isStickyPanel(gateBody)).toBe(false);          // the gate is append-only, NEVER the upsert target
+  expect(isStickyPanel("a plain human comment")).toBe(false);
+});
+
+const block = (...lines: string[]) => `${STATE_MARKER}\n${lines.join("\n")}\n-->\nbody text`;
+
+test("#154 schema: a present-but-invalid action rejects the whole block (not a silent drop)", () => {
+  // Old behavior silently dropped the bad action and still returned a note. Schema-parse must reject so a
+  // corrupt machine block is not misjudged as a valid note.
+  expect(parseStateMessage(block("v: 1", "kind: approval", "status: awaiting-approval", "action: bogus"))).toBeNull();
+});
+
+test("#154 schema: a present-but-invalid status rejects the whole block", () => {
+  expect(parseStateMessage(block("v: 1", "kind: note", "status: sideways"))).toBeNull();
+});
+
+test("#154 schema: a present-but-non-numeric spec rejects the whole block", () => {
+  expect(parseStateMessage(block("v: 1", "kind: approval", "status: awaiting-approval", "action: implement", "spec: abc"))).toBeNull();
+});
+
+test("#154 schema: a legacy v0 protocol-only block is still tolerated (kind from protocol)", () => {
+  // No v / kind / status — the pre-#144 wire shape. Must NOT be rejected.
+  expect(parseStateMessage(block("protocol: approval", "action: close"))).toMatchObject({ kind: "approval", action: "close" });
+});
+
+test("#154 schema: a well-formed v1 block still round-trips every typed field", () => {
+  const body = renderStateMessage({
+    status: "awaiting-approval", action: "implement", spec: 3, agent: "maintainer",
+    model: "opus", provider: "claude", correlationId: "o/r#1:approval:implement@spec3", run: 2, attempt: 1, body: "draft",
+  });
+  expect(parseStateMessage(body)).toMatchObject({
+    kind: "approval", status: "awaiting-approval", action: "implement", spec: 3,
+    agent: "maintainer", model: "opus", provider: "claude", correlationId: "o/r#1:approval:implement@spec3", run: 2, attempt: 1,
+  });
+});
 
 test("#144 deriveState is the single source for head/kind/labels", () => {
   expect(deriveState("awaiting-approval")).toMatchObject({
