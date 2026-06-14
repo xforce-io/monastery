@@ -11,9 +11,12 @@ import type { StepCtx } from "../src/engine/issue-step.js";
 import type { ReviewVerdict } from "../src/agents/reviewer.js";
 import type { Spec } from "../src/shell/consensus.js";
 import { parseStateMessage } from "../src/shell/messages.js";
+import { makeProviderPool } from "../src/provider/select.js";
 import type { Issue } from "../src/types.js";
 
 const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
+const poolFor = (name: "claude" | "codex", provider: FakeProvider) =>
+  makeProviderPool({ name, provider, health: { ok: true } });
 
 function ctx(gh: FakeGitHub, ws: FakeWorkspace, review?: StepCtx["review"]): StepCtx {
   return {
@@ -88,6 +91,42 @@ test("reviewer's conclusion + advisory go to a separate marked PR comment, NOT t
   expect(prComments[0]).toMatch(/自审通过/);
   expect(prComments[0]).toMatch(/advisory/);
   expect(prComments[0]).toContain("rename foo");
+});
+
+// --- #152: provider provenance flows into the patcher + reviewer envelopes and phase events ---
+
+test("#152 reviewer PR-comment envelope carries the provider", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const c = ctx(gh, ws, async () => advisory);
+  c.providerPool = poolFor("claude", c.provider as FakeProvider);
+  const out = await runImplement(c, issue);
+  expect(out.kind).toBe("progressed");
+  const prComments = gh.comments[1] ?? [];
+  expect(parseStateMessage(prComments[0])).toMatchObject({ agent: "reviewer", model: "sonnet", provider: "claude" });
+});
+
+test("#152 patcher no-change envelope carries the provider", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "", tests: true });
+  const c = ctx(gh, ws, async () => clean);
+  c.providerPool = poolFor("claude", c.provider as FakeProvider);
+  await runImplement(c, issue);
+  expect(parseStateMessage(gh.panels[7])).toMatchObject({ agent: "patcher", provider: "claude" });
+});
+
+test("#152 patch + review phase events carry the provider", async () => {
+  const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+  const ws = new FakeWorkspace({ diff: "some patch", tests: true });
+  const c = ctx(gh, ws, async () => clean);
+  c.providerPool = poolFor("claude", c.provider as FakeProvider);
+  const out: string[] = [];
+  c.json = true;
+  c.logSink = { out: (l) => out.push(l), err: () => {} };
+  await runImplement(c, issue);
+  const evts = out.map((l) => JSON.parse(l));
+  expect(evts.find((e) => e.phase === "patch" && e.status === "start")).toMatchObject({ provider: "claude" });
+  expect(evts.find((e) => e.phase === "review" && e.status === "start")).toMatchObject({ provider: "claude" });
 });
 
 test("idempotent: an open PR for the branch already exists -> converge, do NOT re-run the patcher", async () => {

@@ -34,6 +34,19 @@ test("panel upserts the single sticky panel, carrying a monastery marker", async
   expect(parseStateMessage(g.panels[1])).toMatchObject({ kind: "note", status: "note", agent: "maintainer", model: "opus" });
 });
 
+test("#152 panel provenance carries the provider alongside agent/model", async () => {
+  const g = gh();
+  await executeSafe(g, "o/r", { kind: "panel", num: 1, body: "status" }, { agent: "maintainer", model: "opus", provider: "claude" });
+  expect(g.panels[1]).toContain("provider: claude");
+  expect(parseStateMessage(g.panels[1])).toMatchObject({ agent: "maintainer", model: "opus", provider: "claude" });
+});
+
+test("#152 proposeGate provenance carries the provider", async () => {
+  const g = gh();
+  await proposeGate(g, "o/r", 1, "close", "close because X", { agent: "maintainer", model: "opus", provider: "codex" });
+  expect(parseStateMessage(g.comments[1][0])).toMatchObject({ action: "close", agent: "maintainer", model: "opus", provider: "codex" });
+});
+
 test("openDraftPR opens once; skips when a PR already exists", async () => {
   const g = gh();
   await executeSafe(g, "o/r", { kind: "openDraftPR", num: 1, branch: "feat/1-x", title: "t", body: "b" });

@@ -45,18 +45,21 @@ export interface StateMessage {
   spec?: number;
   agent?: string;
   model?: string;
+  /** #152: which provider the emitting role actually ran on (e.g. "claude"/"codex") — pairs with agent/model. */
+  provider?: string;
   status?: StateStatus;
 }
 
 const STATE_RE = /<!--monastery-state\s*([\s\S]*?)-->\n?/;
 
-export function renderStateMessage(msg: { status: StateStatus; action?: GatedKind; spec?: number; agent?: string; model?: string; body: string }): string {
+export function renderStateMessage(msg: { status: StateStatus; action?: GatedKind; spec?: number; agent?: string; model?: string; provider?: string; body: string }): string {
   const { head, kind } = deriveState(msg.status);
   const lines = ["v: 1", `kind: ${kind}`, `protocol: ${kind}`, `status: ${msg.status}`];
   if (msg.action) lines.push(`action: ${msg.action}`);
   if (msg.spec !== undefined) lines.push(`spec: ${msg.spec}`);
   if (msg.agent) lines.push(`agent: ${msg.agent}`);
   if (msg.model) lines.push(`model: ${msg.model}`);
+  if (msg.provider) lines.push(`provider: ${msg.provider}`);
   const body = head ? `${head}\n\n${msg.body}` : msg.body;
   return `${STATE_MARKER}\n${lines.join("\n")}\n-->\n${body}`;
 }
@@ -77,6 +80,7 @@ export function parseStateMessage(body: string): StateMessage | null {
     ...(spec !== undefined ? { spec } : {}),
     ...(meta.agent ? { agent: meta.agent } : {}),
     ...(meta.model ? { model: meta.model } : {}),
+    ...(meta.provider ? { provider: meta.provider } : {}),
     ...(status ? { status } : {}),
   };
 }

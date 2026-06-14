@@ -79,6 +79,42 @@ test("no policy.provider -> primary runtime, no probe", async () => {
   expect(probes).toEqual([]);
 });
 
+test("#152 primary runtime exposes the resolved provider name", async () => {
+  const primary = new FakeProvider({});
+  const p = pool("claude", primary, new FakeProvider({}));
+  const rt = await resolveRoleRuntime({ agent: "t-name", policy: {}, level: "strong", ...primaryRt(primary), pool: p, env: {} });
+  expect(rt.name).toBe("claude");
+});
+
+test("#152 cross-provider runtime exposes the alt provider's name", async () => {
+  const primary = new FakeProvider({});
+  const alt = new FakeProvider({});
+  const p = pool("claude", primary, alt);
+  const rt = await resolveRoleRuntime({
+    agent: "t-name-diff", policy: { provider: "different" }, level: "strong",
+    ...primaryRt(primary), pool: p, env: {},
+  });
+  expect(rt.provider).toBe(alt);
+  expect(rt.name).toBe("codex");
+});
+
+test("#152 unhealthy cross-provider target reports the primary's name (fell back)", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const primary = new FakeProvider({});
+  const p = pool("claude", primary, new FakeProvider({}), { altHealth: { ok: false, reason: "down" } });
+  const rt = await resolveRoleRuntime({
+    agent: "t-name-fallback", policy: { provider: "different" }, level: "strong", ...primaryRt(primary), pool: p, env: {},
+  });
+  expect(rt.provider).toBe(primary);
+  expect(rt.name).toBe("claude");
+});
+
+test("#152 no pool -> provider name is undefined (older callers carry no provider provenance)", async () => {
+  const primary = new FakeProvider({});
+  const rt = await resolveRoleRuntime({ agent: "t-name-nopool", policy: {}, level: "strong", ...primaryRt(primary), env: {} });
+  expect(rt.name).toBeUndefined();
+});
+
 test("provider 'different' with global claude -> codex provider, model re-resolved at codex's level", async () => {
   const primary = new FakeProvider({});
   const alt = new FakeProvider({});

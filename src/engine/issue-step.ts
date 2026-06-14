@@ -91,7 +91,7 @@ export async function withReadOnlyCheckout<T>(ctx: StepCtx, fn: (ctx: StepCtx) =
 
 /** After this many consecutive ticks with no valid agent output, escalate to a human-visible panel. */
 export const FAIL_THRESHOLD = maintainerSpec.policy.failThreshold ?? 3;
-const stateMessage = (status: StateStatus, body: string, provenance: { agent?: string; model?: string } = {}) =>
+const stateMessage = (status: StateStatus, body: string, provenance: { agent?: string; model?: string; provider?: string } = {}) =>
   renderStateMessage({ status, body, ...provenance });
 
 /** One step over one item. Routes by the two control labels the shell owns (PROTOCOL §2). */
@@ -135,8 +135,11 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     provider: ctx.provider, model: policy.model ?? ctx.modelLevels?.standard ?? ctx.model,
     explicitModel: policy.model, pool: ctx.providerPool,
   });
+  // #152: provenance the maintainer's outputs (envelope + phase events) carry — the model AND the provider
+  // it actually ran on (#133 may route it cross-provider). `rt.name` is undefined only without a wired pool.
+  const prov = { agent: "maintainer", ...(rt.model ? { model: rt.model } : {}), ...(rt.name ? { provider: rt.name } : {}) };
   const log = makePhaseLogger(ctx, issue.number);
-  const mt = log.phase("maintainer", { model: rt.model });
+  const mt = log.phase("maintainer", { model: rt.model, ...(rt.name ? { provider: rt.name } : {}) });
   const actions = await maintainer(rt.provider, rt.model, input, dir);
   if (actions === null) mt.fail("no-output"); else mt.done({ actions: actions.length });
 
@@ -148,7 +151,7 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     if (fails >= failThreshold) {
       await applyStateLabels(ctx.gh, ctx.repo, issue.number, "blocked");
       await ctx.gh.upsertPanel(ctx.repo, issue.number,
-        stateMessage("blocked", `the maintainer agent has produced no valid actions for ${fails} consecutive ticks.`, { agent: "maintainer", model: rt.model }));
+        stateMessage("blocked", `the maintainer agent has produced no valid actions for ${fails} consecutive ticks.`, prov));
     } else {
       console.warn(`[monastery] maintainer skip ${ctx.repo}#${issue.number} (${fails}/${failThreshold})`);
     }
@@ -179,8 +182,8 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
         const verb = a.kind === "rework" ? "rework the open draft PR" : "implement";
         const draft = a.draft ?? `Proposed ${verb} for #${issue.number}. 👍 this approval comment to proceed.`;
         if (ctx.dryRun) console.warn(`[dry-run] would propose ${a.kind} ${ctx.repo}#${issue.number} (awaiting human 👍)`);
-        else await proposeGate(ctx.gh, ctx.repo, issue.number, a.kind, draft, { agent: "maintainer", model: rt.model });
-      } else await executeSafe(ctx.gh, ctx.repo, a, { agent: "maintainer", model: rt.model });
+        else await proposeGate(ctx.gh, ctx.repo, issue.number, a.kind, draft, prov);
+      } else await executeSafe(ctx.gh, ctx.repo, a, prov);
       applied++;
     } catch (e) {
       const msg = (e as Error).message;
