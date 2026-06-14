@@ -84,7 +84,7 @@ test("reviewer's conclusion + advisory go to a separate marked PR comment, NOT t
   const prComments = gh.comments[1] ?? [];
   expect(prComments).toHaveLength(1);
   expect(prComments[0]).toContain("<!--monastery-state");
-  expect(parseStateMessage(prComments[0])).toMatchObject({ kind: "note", agent: "reviewer", model: "sonnet" });
+  expect(parseStateMessage(prComments[0])).toMatchObject({ kind: "note", status: "note", agent: "reviewer", model: "sonnet" });
   expect(prComments[0]).toMatch(/自审通过/);
   expect(prComments[0]).toMatch(/advisory/);
   expect(prComments[0]).toContain("rename foo");
@@ -110,7 +110,10 @@ test("#135 the patcher made no changes: failed, no PR, keeps workdir for forensi
   expect(ws.committed).toHaveLength(0);
   expect(ws.cleaned).toHaveLength(0);
   expect(gh.panels[7]).toMatch(/made no changes|workdir/i);
-  expect(parseStateMessage(gh.panels[7])).toMatchObject({ kind: "note", agent: "patcher", model: "sonnet" });
+  expect(parseStateMessage(gh.panels[7])).toMatchObject({ kind: "note", status: "note", agent: "patcher", model: "sonnet" });
+  // transient (sub-threshold): needs-human label must NOT be added
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).not.toContain("monastery:needs-human");
 });
 
 test("#135 repeated empty diff escalates to needs-human after ensuring the label", async () => {
@@ -123,7 +126,8 @@ test("#135 repeated empty diff escalates to needs-human after ensuring the label
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(gh.ensuredLabels.map((l) => l.name)).toContain("monastery:needs-human");
   expect(i.labels).toContain("monastery:needs-human");
-  expect(gh.panels[7]).toMatch(/needs a human|workdir/i);
+  expect(parseStateMessage(gh.panels[7])).toMatchObject({ kind: "note", status: "blocked", agent: "patcher" });
+  expect(gh.panels[7]).toMatch(/workdir/i);
 });
 
 test("self-review keeps finding blocking issues -> gives up with a panel, opens NO PR", async () => {
@@ -134,6 +138,8 @@ test("self-review keeps finding blocking issues -> gives up with a panel, opens 
   if (out.kind === "failed") expect(out.error).toMatch(/self-review/i);
   expect(gh.prs).toHaveLength(0);                    // unreviewable -> no PR shipped
   expect(gh.panels[7]).toMatch(/human/i);            // escalated to a human-visible panel
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-human"); // #144: blocked escalation also sets the label
   expect(ws.cleaned).toHaveLength(0);                // keep the sandbox for inspection
 });
 

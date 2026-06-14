@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { LABEL_DEFS, NEEDS_APPROVAL } from "../github/labels.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
-import { renderStateMessage } from "./messages.js";
+import { renderStateMessage, deriveState, type StateStatus } from "./messages.js";
 
 // Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
 // `implement` joins close/merge (issue #88): the agent may PROPOSE a patch, but the patcher
@@ -79,7 +79,7 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
     case "panel":
       // Carry the panel marker so upsertPanel finds its single sticky comment AND it's never mistaken
       // for a human comment (constitution §6, §7). The agent supplies content; the shell stamps the marker.
-      await gh.upsertPanel(repo, a.num, renderStateMessage({ kind: "note", body: a.body, ...provenance }));
+      await gh.upsertPanel(repo, a.num, renderStateMessage({ status: "note", body: a.body, ...provenance }));
       return;
     case "openDraftPR":
       if (await gh.findPrForBranch(repo, a.branch)) return; // already open
@@ -122,18 +122,22 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
 export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, proposal: GatedKind, draft: string, provenance: ActionProvenance = {}): Promise<void> {
   // Stamp the spec version this gate is opened against (#95) — a later, higher-version spec makes it stale.
   const specVersion = currentSpec(await gh.listComments(repo, num))?.version ?? 0;
-  // Visible banner (issue #90): the approval marker is an HTML comment a human can't see, so without this
-  // they can't tell which comment to 👍. This line is plain text — it shows up on the issue page.
-  const banner = "⏳ **NEEDS YOUR APPROVAL** — 👍 this comment to approve · 👎 to decline · 👀 to send back for revision";
-  await ensureControlLabel(gh, repo, NEEDS_APPROVAL);
-  await gh.addLabel(repo, num, NEEDS_APPROVAL);
-  await gh.postComment(repo, num, renderStateMessage({ kind: "approval", action: proposal, spec: specVersion, body: `${banner}\n\n${draft}`, ...provenance }));
+  await applyStateLabels(gh, repo, num, "awaiting-approval");
+  await gh.postComment(repo, num, renderStateMessage({ status: "awaiting-approval", action: proposal, spec: specVersion, body: draft, ...provenance }));
 }
 
 export async function ensureControlLabel(gh: GitHubAdapter, repo: string, name: string): Promise<void> {
   const def = LABEL_DEFS.find((l) => l.name === name);
   if (!def) throw new Error(`unknown control label: ${name}`);
   await gh.ensureLabel(repo, def.name, def.color, def.description);
+}
+
+/** #144 A3: apply the control-label op implied by a state — the label NAME comes from deriveState,
+ * never hand-picked, so head/label/block can't drift. Idempotent. */
+export async function applyStateLabels(gh: GitHubAdapter, repo: string, num: number, status: StateStatus): Promise<void> {
+  const { labels } = deriveState(status);
+  if (labels.add) { await ensureControlLabel(gh, repo, labels.add); await gh.addLabel(repo, num, labels.add); }
+  if (labels.remove) await gh.removeLabel(repo, num, labels.remove);
 }
 
 /**

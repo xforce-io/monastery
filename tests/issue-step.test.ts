@@ -62,7 +62,25 @@ test("#144 active maintainer safe writes carry agent/model provenance", async ()
   const provider = new FakeProvider(actionsJson([{ kind: "panel", num: 7, body: "status" }]));
   const out = await issueStep({ ...ctxWith(gh, provider), repoPolicy: { agents: { maintainer: { model: "opus" } } } }, 7);
   expect(out.kind).toBe("progressed");
-  expect(parseStateMessage(gh.panels[7])).toMatchObject({ kind: "note", agent: "maintainer", model: "opus" });
+  expect(parseStateMessage(gh.panels[7])).toMatchObject({ kind: "note", status: "note", agent: "maintainer", model: "opus" });
+});
+
+test("#144 fail-threshold escalation adds the needs-human label (was a drift)", async () => {
+  const gh = ghWith({ number: 9, title: "x", body: "y", labels: [], state: "open" });
+  // actions targeting a different issue number triggers the "no valid output" branch
+  const provider = new FakeProvider(actionsJson([{ kind: "relabel", num: 999, add: ["type:bug"], remove: [] }]));
+  let fails = 0;
+  const failTracker: StepCtx["fails"] = {
+    recordFail: () => ++fails,
+    failCount: () => fails,
+    clearFail: () => {},
+  };
+  for (let i = 0; i < FAIL_THRESHOLD; i++) {
+    await issueStep({ ...ctxWith(gh, provider, failTracker) }, 9);
+  }
+  const [issue] = await gh.listOpenIssues("o/r", 0);
+  expect(issue.labels).toContain(NEEDS_HUMAN);
+  expect(parseStateMessage(gh.panels[9])).toMatchObject({ status: "blocked" });
 });
 
 test("active issue: actions targeting a different issue are rejected wholesale (shell constrains the agent)", async () => {

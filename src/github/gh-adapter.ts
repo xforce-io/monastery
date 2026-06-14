@@ -2,6 +2,7 @@
 import { execa } from "execa";
 import type { GitHubAdapter } from "./adapter.js";
 import type { Issue } from "../types.js";
+import { STATE_MARKER } from "../shell/messages.js";
 
 export type GhRun = (args: string[], input?: string) => Promise<string>;
 
@@ -9,8 +10,6 @@ const defaultRun: GhRun = async (args, input) => {
   const { stdout } = await execa("gh", args, input !== undefined ? { input } : undefined);
   return stdout;
 };
-
-const PANEL_MARKER = "<!--monastery-state";
 
 export class GhAdapter implements GitHubAdapter {
   constructor(private run: GhRun = defaultRun) {}
@@ -62,13 +61,13 @@ export class GhAdapter implements GitHubAdapter {
   async readPanel(repo: string, num: number): Promise<string> {
     return this.run([
       "api", `repos/${repo}/issues/${num}/comments`,
-      "--jq", `[.[] | select(.body | startswith("${PANEL_MARKER}"))][0].body // ""`,
+      "--jq", `[.[] | select(.body | startswith("${STATE_MARKER}"))][0].body // ""`,
     ]).catch(() => "");
   }
   async upsertPanel(repo: string, num: number, body: string): Promise<void> {
     const id = await this.run([
       "api", `repos/${repo}/issues/${num}/comments`,
-      "--jq", `[.[] | select(.body | startswith("${PANEL_MARKER}"))][0].id // ""`,
+      "--jq", `[.[] | select(.body | startswith("${STATE_MARKER}"))][0].id // ""`,
     ]).catch(() => "");
     if (id.trim()) {
       await this.run(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id.trim()}`, "-F", "body=@-"], body);
