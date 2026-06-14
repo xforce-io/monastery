@@ -158,7 +158,7 @@ test("#125 step exit code is non-zero for batch and single-issue failures", () =
 test("#126 step preflight initializes labels and thesis for a repos-add-only repo", async () => {
   const gh = new FakeGitHub({ thesis: "", issues: [] });
   const logs: string[] = [];
-  await prepareRepoForStep(gh, "o/r", (line) => logs.push(line));
+  await prepareRepoForStep(gh, "o/r", undefined, (line) => logs.push(line));
   expect(gh.ensuredLabels.map((l) => l.name).sort()).toEqual(LABEL_DEFS.map((l) => l.name).sort());
   expect(gh.files[THESIS_PATH]).toContain("Thesis");
   expect(logs.join("\n")).toContain("initialized o/r");

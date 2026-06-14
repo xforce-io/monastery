@@ -3,13 +3,18 @@ import { execa } from "execa";
 import type { GitHubAdapter } from "./adapter.js";
 import type { Issue } from "../types.js";
 import { STATE_MARKER } from "../shell/messages.js";
+import { withGhRetry } from "./transient.js";
 
 export type GhRun = (args: string[], input?: string) => Promise<string>;
 
-const defaultRun: GhRun = async (args, input) => {
+const rawRun: GhRun = async (args, input) => {
   const { stdout } = await execa("gh", args, input !== undefined ? { input } : undefined);
   return stdout;
 };
+
+// #148: every production gh call goes through bounded retry + backoff so a single
+// transient GitHub blip is absorbed and a sustained outage surfaces cleanly.
+const defaultRun: GhRun = withGhRetry(rawRun);
 
 export class GhAdapter implements GitHubAdapter {
   constructor(private run: GhRun = defaultRun) {}

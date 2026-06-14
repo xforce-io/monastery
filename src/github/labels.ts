@@ -26,3 +26,15 @@ export const LABEL_DEFS: LabelDef[] = [
   { name: DECLINED, color: "B60205", description: "human declined the proposal" },
   { name: NEEDS_HUMAN, color: "B60205", description: "monastery is blocked and needs a human to inspect" },
 ];
+
+/**
+ * A stable fingerprint of a label set (#148). initRepo records this once the labels are ensured;
+ * a later tick skips the ensureLabel calls while the fingerprint matches, and re-ensures only when
+ * the set changes (e.g. a new release adds a label). Order-independent and content-sensitive.
+ */
+export function labelsFingerprint(defs: LabelDef[] = LABEL_DEFS): string {
+  return defs
+    .map((l) => `${l.name}|${l.color}|${l.description}`)
+    .sort()
+    .join("\n");
+}

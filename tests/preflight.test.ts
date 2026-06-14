@@ -3,13 +3,12 @@ import { expect, test } from "vitest";
 import { checkPreflight, formatPreflightErrors, type Probe } from "../src/cli/preflight.js";
 
 // A fake probe: maps a command's first token (+ subcommand) to ok/not-ok, so tests never spawn.
-function fakeProbe(present: Record<string, boolean>): Probe {
+// `transientKeys` marks failures that look like a transient GitHub/network blip (#148).
+function fakeProbe(present: Record<string, boolean>, transientKeys: string[] = []): Probe {
   return async (cmd, args) => {
     const key = [cmd, ...args].join(" ");
-    // exact-key match first, then bare-command match
-    if (key in present) return present[key];
-    if (cmd in present) return present[cmd];
-    return false;
+    const ok = key in present ? present[key] : cmd in present ? present[cmd] : false;
+    return { ok, transient: !ok && transientKeys.includes(key) };
   };
 }
 
@@ -33,6 +32,18 @@ test("gh present but not authed → distinct login hint", async () => {
   const r = await checkPreflight(probe, { gh: true, agent: true });
   expect(r.ok).toBe(false);
   expect(r.errors.join("\n")).toMatch(/gh auth login/);
+});
+
+test("transient API blip on auth probe → 'temporarily unavailable', NOT a misleading 'not authenticated' (#148)", async () => {
+  const probe = fakeProbe(
+    { "gh --version": true, "gh auth status": false, "claude --version": true },
+    ["gh auth status"], // the auth probe failed because the GitHub API EOF'd, not because login is missing
+  );
+  const r = await checkPreflight(probe, { gh: true, agent: true });
+  expect(r.ok).toBe(false);
+  const msg = r.errors.join("\n");
+  expect(msg).toMatch(/temporarily unavailable|retry/i);
+  expect(msg).not.toMatch(/gh auth login/); // must not send the user to fix auth that is fine
 });
 
 test("agent provider passes when claude is missing but codex is present", async () => {

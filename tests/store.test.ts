@@ -115,6 +115,18 @@ test("cache is disposable: deleting a repo's cache dir resets it but keeps confi
   rmSync(dir, { recursive: true, force: true });
 });
 
+// --- labels-ensured fingerprint (#148): keep initRepo's ensureLabel calls off the per-tick critical path ---
+
+test("ensuredLabelsFingerprint: missing returns undefined; set then read round-trips; persists per-repo", () => {
+  const { store, dir } = tmpStore();
+  expect(store.ensuredLabelsFingerprint("o/r")).toBeUndefined();
+  store.setEnsuredLabelsFingerprint("o/r", "fp-v1");
+  expect(store.ensuredLabelsFingerprint("o/r")).toBe("fp-v1");
+  expect(new Store(dir).ensuredLabelsFingerprint("o/r")).toBe("fp-v1"); // persisted across a fresh Store
+  expect(store.ensuredLabelsFingerprint("other/repo")).toBeUndefined(); // isolated per repo
+  rmSync(dir, { recursive: true, force: true });
+});
+
 import type { BacklogSnapshot } from "../src/types.js";
 
 const snap = (repo: string): BacklogSnapshot => ({
