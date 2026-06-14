@@ -158,8 +158,13 @@ const REWORK_BUDGET = 3; // bounded self-revision: after this many rounds on one
  * the same self-review, and pushes to the SAME branch — never opening a second PR. Safety floors (spec v1):
  * only an open draft PR is reworkable (merged = terminal; closed → maintainer re-judges, #102); there must be
  * real human feedback; and a bounded attempt budget stops a runaway self-revision loop.
+ *
+ * #150: `plan` is the maintainer's proposal the human 👍'd on the approval gate (extracted from the gate body
+ * at the call site). It is the AUTHORITATIVE task — the patcher executes it, with the raw PR feedback as
+ * supporting context only (conflict → plan wins). This mirrors runImplement's #100 endorsed-spec binding and
+ * closes the hole where the patcher re-derived a fix from prose feedback, diverging from what was approved.
  */
-export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
+export async function runRework(ctx: StepCtx, issue: Issue, plan?: string | null): Promise<Outcome> {
   const branch = branchName(issue.number, issue.title);
   const panel = (note: string, status: StateStatus = "note") => ctx.gh.upsertPanel(ctx.repo, issue.number, patcherMsg(status, note));
 
@@ -206,12 +211,18 @@ export async function runRework(ctx: StepCtx, issue: Issue): Promise<Outcome> {
       ...humanComments.map((c) => `<feedback author="${c.author}">\n${c.body}\n</feedback>`),
       ...humanReviews.map((rv) => `<review author="${rv.author}" state="${rv.state}">\n${rv.body}\n</review>`),
     ].join("\n");
+    // #150: the human-approved plan is AUTHORITATIVE — execute it; the raw feedback below is supporting
+    // context only, and a conflict resolves to the plan. Placed before the feedback so the precedence is plain.
+    const planBlock = plan?.trim()
+      ? `\nApproved plan to execute (AUTHORITATIVE — the human 👍'd this; the feedback below is supporting context only, and if it conflicts with this plan, follow the plan):\n${plan.trim()}`
+      : "";
     const context = [
       `Rework the OPEN draft PR for issue #${issue.number}: ${issue.title}`,
       `\nissue:\n${issue.body}`,
       `\ncurrent PR body:\n${details.body}`,
+      planBlock,
       `\nHuman feedback to address — this is WHY you are reworking; resolve every point:\n${feedback}`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
     const attempt = await patchAndReview(ctx, dir, issue, context, log);
     if (attempt.kind === "failed") {
       keepWorkdir = true;
