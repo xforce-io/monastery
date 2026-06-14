@@ -76,6 +76,32 @@ test("active issue: a propose(close) action moves the item to awaiting-gate (app
   expect(i.labels).toContain(NEEDS_APPROVAL);
 });
 
+// #149 (documented gap): a rework is triggered by human feedback on the PR, but the shell can only open the
+// approval gate on the current ISSUE — the rework action's `num` is the issue, and actions targeting another
+// object are rejected wholesale ("actions targeting a different issue are rejected"). So the reviewer who left
+// feedback on the PR gets nothing there: no gate, no cross-link. This test PINS that break; flip it on the fix.
+test("#149: a PR-feedback-driven rework opens the gate on the ISSUE and leaves the PR thread with nothing", async () => {
+  const issue: Issue = { number: 7, title: "fix the bug", body: "it crashes", labels: [], state: "open" };
+  const branch = branchName(issue.number, issue.title);
+  const gh = ghWith(issue);
+  gh.prStates[branch] = "open";
+  gh.prDetailsByBranch[branch] = { number: 5, url: "u/5", title: "monastery: fix #7", body: "PR body\nCloses #7", isDraft: true };
+  gh.prCommentsByPr[5] = [{ id: "pc1", body: "please rename foo to bar", author: "alice" }]; // human feedback lives on the PR
+  const provider = new FakeProvider(actionsJson([{ kind: "rework", num: 7, draft: "plan: rename foo→bar per the PR feedback" }]));
+
+  await issueStep(ctxWith(gh, provider), 7);
+
+  // The gate lands on the ISSUE (#7): approval comment carrying the action + needs-approval label.
+  expect(gh.comments[7]?.[0]).toContain("action: rework");
+  expect(gh.comments[7][0]).toContain("rename foo→bar");
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(NEEDS_APPROVAL);
+
+  // The PR thread (#5) gets NO monastery message — no gate, no cross-link back to the issue proposal. The
+  // reviewer is on the PR and never sees the ask. This is the #149 break to flip when the fix lands.
+  expect(gh.comments[5]).toBeUndefined();
+});
+
 test("active issue: an empty action list is a no-op (nothing to do)", async () => {
   const gh = ghWith({ number: 7, title: "x", body: "y", labels: [], state: "open" });
   const out = await issueStep(ctxWith(gh, new FakeProvider(actionsJson([]))), 7);
