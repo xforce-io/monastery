@@ -6,8 +6,13 @@ export interface Workspace {
   checkout(repo: string, branch: string): Promise<string>;
   /** Shallow read-only checkout of `repo` (no branch). For code-reading agents that never write/commit. Returns the dir. */
   cloneReadOnly(repo: string): Promise<string>;
-  /** Run the repo's test suite if detectable (npm). true=pass, false=fail, null=no suite detected. */
-  runTests(dir: string): Promise<boolean | null>;
+  /**
+   * Run the repo's test suite if detectable. true=pass, false=fail, null=no suite detected.
+   * #167: if `patchDiff` is provided (unified diff of the patch), any test files added/modified by
+   * the patch that fall outside the repo's default test command are explicitly re-run so the gate
+   * cannot give a false green when `npm test` covers only a narrow subset of the repo.
+   */
+  runTests(dir: string, patchDiff?: string): Promise<boolean | null>;
   /**
    * Stage all changes (git add -A) and return the unified diff; "" if nothing changed.
    * #163: with `baseRef` (e.g. "origin/main") the diff is taken against `merge-base(baseRef, HEAD)` — the
