@@ -14,6 +14,7 @@ import { languageDirective, looksOffLanguage } from "../shell/language.js";
 import { makePhaseLogger, type PhaseLogger } from "../phase-logger.js";
 import { renderStateMessage, type StateStatus } from "../shell/messages.js";
 import { applyStateLabels } from "../shell/actions.js";
+import { NEEDS_APPROVAL } from "../github/labels.js";
 
 // Persona comes from the patcher's spec; operational knobs are resolved per-repo at run time (effectivePolicy).
 const PERSONA = patcherSpec.persona;
@@ -62,6 +63,25 @@ function reviewPanel(blocking: ReviewFinding[], iters: number, model?: string, p
 
 async function markNeedsHuman(ctx: StepCtx, issue: Issue): Promise<void> {
   await applyStateLabels(ctx.gh, ctx.repo, issue.number, "blocked");
+}
+
+/**
+ * #165: surface a self-review-never-converged failure WHERE THE HUMAN IS LOOKING. rework is PR-feedback-driven,
+ * so its failure (with the unresolved blocking findings, verbatim) belongs on the PR thread; implement has no PR
+ * yet, so it falls back to the issue. Posted as a DURABLE comment (not the sticky panel a later tick overwrites).
+ * It also marks needs-human AND vacates the stale approval gate (removeLabel) so the same 👍 can't re-run the
+ * failing executor every tick. Empty-diff failures (no `blocking`) are skipped: patchAndReview already surfaced
+ * their own panel and made the needs-human / keep-the-gate-for-retry call there (#135).
+ */
+async function surfaceReviewFailure(ctx: StepCtx, issue: Issue, prNum: number | null, attempt: PatchAttempt & { kind: "failed" }): Promise<void> {
+  if (!attempt.blocking) return;
+  await markNeedsHuman(ctx, issue);
+  // #165: a non-convergent review is DETERMINISTIC — re-running the same 👍 just re-fails. Vacate the approval
+  // gate so the item leaves awaitingGate instead of re-running every tick. (Distinct from #135 empty-diff, which
+  // may be transient and deliberately KEEPS its gate for auto-retry — hence this is scoped here, not in deriveState.)
+  await ctx.gh.removeLabel(ctx.repo, issue.number, NEEDS_APPROVAL);
+  const body = `${reviewPanel(attempt.blocking, attempt.iters ?? 0, attempt.reviewerModel, attempt.reviewerProvider)}\n\n${attempt.error}`;
+  await ctx.gh.postComment(ctx.repo, prNum ?? issue.number, body);
 }
 
 /**
@@ -130,6 +150,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     const attempt = await patchAndReview(ctx, dir, issue, context, log);
     if (attempt.kind === "failed") {
       keepWorkdir = true;
+      await surfaceReviewFailure(ctx, issue, null, attempt); // no PR yet -> surface on the issue (#165)
       return { kind: "failed", error: attempt.error };
     }
     const r = attempt.result;
@@ -228,6 +249,7 @@ export async function runRework(ctx: StepCtx, issue: Issue, plan?: string | null
     const attempt = await patchAndReview(ctx, dir, issue, context, log, `origin/${details.baseRefName}`);
     if (attempt.kind === "failed") {
       keepWorkdir = true;
+      await surfaceReviewFailure(ctx, issue, prNum, attempt); // rework is PR-driven -> surface on the PR thread (#165)
       return { kind: "failed", error: attempt.error };
     }
     const r = attempt.result;
@@ -263,7 +285,10 @@ interface PatchResult {
 
 type PatchAttempt =
   | { kind: "ok"; result: PatchResult }
-  | { kind: "failed"; error: string };
+  // #165: a self-review-never-converged failure carries the unresolved blocking findings so the CALLER can
+  // surface them where the human is looking (PR for rework, issue for implement). An empty-diff failure has no
+  // `blocking` — it already surfaced its own panel + needs-human decision inside patchAndReview (#135).
+  | { kind: "failed"; error: string; blocking?: ReviewFinding[]; iters?: number; reviewerModel?: string; reviewerProvider?: string };
 
 /**
  * Shared patch core (runImplement #88 + runRework #79): run the patcher in `dir` against `taskContext`, gate on
@@ -338,10 +363,15 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
     const blocking = lastVerdict.findings.filter((f) => f.severity === "blocking");
     if (blocking.length === 0) { rev.done({ blocking: 0 }); break; }      // clean -> ship
     rev.done({ blocking: blocking.length });
-    if (iter === REVIEW_MAX_ITERS) {                                     // give up -> needs a human, no PR
-      await markNeedsHuman(ctx, issue);
-      await ctx.gh.upsertPanel(ctx.repo, issue.number, reviewPanel(blocking, REVIEW_MAX_ITERS, reviewerModel, reviewerProvider));
-      return { kind: "failed", error: `self-review never converged after ${REVIEW_MAX_ITERS} iterations; workdir kept at ${dir}` };
+    if (iter === REVIEW_MAX_ITERS) {                                     // give up -> the CALLER surfaces it (#165)
+      // #165: don't post here. Hand the unresolved blocking back so runRework/runImplement can put the failure
+      // WHERE THE HUMAN IS LOOKING (PR thread for rework, issue for implement) as a durable comment, instead of a
+      // sticky issue panel the next tick overwrites. needs-human + gate-vacate also moves to the caller.
+      return {
+        kind: "failed",
+        error: `self-review never converged after ${REVIEW_MAX_ITERS} iterations; workdir kept at ${dir}`,
+        blocking, iters: REVIEW_MAX_ITERS, reviewerModel, reviewerProvider,
+      };
     }
     const fix = log.phase("patch:fix", { attempt, model: patcherModel, ...(patcherProvider ? { provider: patcherProvider } : {}) });
     const fixRes = await rt.provider.run({ persona: withLanguage(FIX_PERSONA, ctx.language), context: fixContext(issue, blocking), artifactDir: dir, model: patcherModel, timeoutMs: policy.timeoutMs });
