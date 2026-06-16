@@ -176,7 +176,9 @@ test("self-review keeps finding blocking issues -> gives up with a panel, opens 
   expect(out.kind).toBe("failed");
   if (out.kind === "failed") expect(out.error).toMatch(/self-review/i);
   expect(gh.prs).toHaveLength(0);                    // unreviewable -> no PR shipped
-  expect(gh.panels[7]).toMatch(/human/i);            // escalated to a human-visible panel
+  // #165: the failure is a DURABLE comment carrying the unresolved blocking (no PR yet -> on the issue), not the
+  // sticky panel a later maintainer reply would overwrite. The blocking findings reach the human verbatim.
+  expect((gh.comments[7] ?? []).some((b) => /needs a human|需要人工介入/i.test(b))).toBe(true);
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain("monastery:needs-human"); // #144: blocked escalation also sets the label
   expect(ws.cleaned).toHaveLength(0);                // keep the sandbox for inspection

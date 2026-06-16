@@ -7,6 +7,7 @@ import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import { runRework, branchName } from "../src/engine/patch.js";
+import { NEEDS_APPROVAL, NEEDS_HUMAN } from "../src/github/labels.js";
 import type { StepCtx } from "../src/engine/issue-step.js";
 import type { ReviewVerdict } from "../src/agents/reviewer.js";
 import type { Issue } from "../src/types.js";
@@ -182,6 +183,32 @@ test("#163 rework self-review converges only when the reviewer is given the base
   expect(out.kind).toBe("progressed");                 // converges instead of self-review-never-converged
   expect(ws.diffBases).toContain("origin/main");       // rework fed the reviewer the base-relative diff
   expect(ws.committed).toHaveLength(1);                 // the rework was pushed
+});
+
+// #165: when rework self-review never converges, the failure must surface WHERE THE HUMAN IS LOOKING — on the
+// PR thread (rework is PR-feedback-driven), carrying the unresolved blocking findings verbatim, not buried in a
+// sticky issue panel that the next tick overwrites. It must also vacate the approval gate (needs-approval →
+// needs-human) so the same 👍 doesn't re-run the failing rework every tick, and keep the workdir for forensics.
+test("#165 rework self-review never converges: failure surfaces on the PR with blocking verbatim + vacates the gate", async () => {
+  const gh = reworkable();
+  await gh.addLabel("o/r", issue.number, NEEDS_APPROVAL); // the live approval gate the 👍 opened
+  const ws = new FakeWorkspace({ diff: "patch", tests: true });
+  const stuck: StepCtx["review"] = async () => ({
+    findings: [{ severity: "blocking", title: "空值未处理", detail: "foo 可能为 null" }],
+  });
+
+  const out = await runRework(ctx(gh, ws, stuck), issue);
+
+  expect(out.kind).toBe("failed");
+  if (out.kind === "failed") expect(out.error).toMatch(/never converged/i);
+  // the blocking findings land on the PR thread (#5), verbatim — not only in the issue panel
+  const prThread = gh.comments[5] ?? [];
+  expect(prThread.some((b) => b.includes("空值未处理") && b.includes("foo 可能为 null"))).toBe(true);
+  // gate vacated: enters needs-human, drops needs-approval so the 👍 can't re-trigger the failing rework
+  const after = await gh.getIssue("o/r", issue.number);
+  expect(after?.labels).toContain(NEEDS_HUMAN);
+  expect(after?.labels).not.toContain(NEEDS_APPROVAL);
+  expect(ws.cleaned).toHaveLength(0); // workdir kept for forensics
 });
 
 test("#135 patcher made no changes on rework: failed, no commit, keeps checkout for forensics", async () => {
