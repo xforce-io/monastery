@@ -52,6 +52,14 @@ function cjkCount(s: string): number {
 function latinCount(s: string): number {
   return (s.match(/[A-Za-z]/g) ?? []).length;
 }
+/**
+ * Count letters from any non-Latin script that signals a non-English block: CJK Han (㐀-鿿), Korean Hangul
+ * syllables (가-힣), and Japanese kana (぀-ヿ). #169: the old en-US guard counted ONLY Han, so a Korean or
+ * Japanese summary (whose script is neither Han nor Latin) slipped through with cjk=0 and never flagged.
+ */
+function nonLatinCount(s: string): number {
+  return (s.match(/[぀-ヿ㐀-鿿가-힣]/g) ?? []).length;
+}
 
 /**
  * Conservative, NON-blocking drift detector. Returns true only when a SUBSTANTIAL block of prose is almost
@@ -64,7 +72,8 @@ export function looksOffLanguage(text: string, lang: string): boolean {
   const body = prose(text);
   const cjk = cjkCount(body);
   const latin = latinCount(body);
-  const letters = cjk + latin;
+  const nonLatin = nonLatinCount(body);  // CJK Han + Hangul + kana (superset of cjk)
+  const letters = latin + nonLatin;
   if (letters < 60) return false; // too little prose to judge confidently
 
   if (lang === "zh-CN" || lang === "zh-TW") {
@@ -72,8 +81,9 @@ export function looksOffLanguage(text: string, lang: string): boolean {
     return cjk / letters < 0.1;
   }
   if (lang === "en-US" || lang === "en-GB") {
-    // Substantial prose dominated by Han characters → a CJK block slipped into English output.
-    return cjk / letters > 0.5;
+    // Substantial prose dominated by a non-Latin script (CJK/Hangul/kana) → a foreign block slipped into
+    // English output. #169: counting all non-Latin scripts (not just Han) catches Korean/Japanese drift too.
+    return nonLatin / letters > 0.5;
   }
   return false;
 }

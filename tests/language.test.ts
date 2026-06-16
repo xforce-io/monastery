@@ -58,3 +58,21 @@ test("en-US target: English prose is fine; a long CJK block is flagged", () => {
     "并加入一个非阻塞的轻量门控，在出现明显语言漂移时给出告警提示供人审。";
   expect(looksOffLanguage(chinese, "en-US")).toBe(true);
 });
+
+// #169: the en-US guard only counted Han vs Latin, so a Korean/Japanese block (whose script is neither)
+// slipped through undetected — the exact monastery#168 incident. Non-Latin scripts must flag for en-US.
+test("en-US target: a long Korean (Hangul) block is flagged as off-language (#169)", () => {
+  const korean =
+    "이 변경은 품질 게이트의 사각지대를 수정합니다. 좁은 테스트 하위 집합에서 패처가 새로 작성한 " +
+    "테스트가 실행되지 않아 게이트가 거짓 통과를 반환하는 문제를 해결합니다. 이제 패치에 포함된 " +
+    "테스트 파일은 감지된 러너로 명시적으로 다시 실행되므로 거짓 통과가 사라집니다.";
+  expect(looksOffLanguage(korean, "en-US")).toBe(true);
+});
+
+test("en-US target: a long Japanese (kana) block is flagged as off-language (#169)", () => {
+  const japanese =
+    "この変更は品質ゲートの盲点を修正します。狭いテストサブセットではパッチャが新しく書いた" +
+    "テストが実行されず、ゲートが誤った緑を返していました。これからはパッチに含まれるテスト" +
+    "ファイルが検出されたランナーで明示的に再実行されるため、誤った緑がなくなります。";
+  expect(looksOffLanguage(japanese, "en-US")).toBe(true);
+});

@@ -11,6 +11,7 @@ import { resolveRoleRuntime } from "../provider/runtime.js";
 import { isHumanComment, hasMarker, parseMarkers, renderMarker, REWORK_MARKER } from "../shell/markers.js";
 import type { Spec } from "../shell/consensus.js";
 import { languageDirective, looksOffLanguage } from "../shell/language.js";
+import { summarizeDiff } from "../workspace/git-workspace.js";
 import { makePhaseLogger, type PhaseLogger } from "../phase-logger.js";
 import { renderStateMessage, type StateStatus } from "../shell/messages.js";
 import { applyStateLabels } from "../shell/actions.js";
@@ -158,7 +159,7 @@ export async function runImplement(ctx: StepCtx, issue: Issue, spec?: Spec | nul
     const pr = log.phase("pr");
     await ctx.ws.commitPush(dir, branch, `fix: address #${issue.number}`);
 
-    const url = await ctx.gh.openDraftPR(ctx.repo, branch, `monastery: fix #${issue.number}`, prBody(issue, r));
+    const url = await ctx.gh.openDraftPR(ctx.repo, branch, `monastery: fix #${issue.number}`, prBody(issue, r, ctx.language));
     // The REVIEWER's voice = a separate marked comment on the PR (conclusion + advisory only).
     const prNum = parsePrNumber(url);
     if (prNum !== null) {
@@ -386,27 +387,51 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
 }
 
 /**
- * #76 enforcement (NON-blocking safety net): the patcher's author summary becomes the PR body, so if it
- * drifts off the repo's outward-text language, leave a warn trail for the human. We do NOT hard-block or
- * rewrite — the draft PR is itself the human review gate, and the issue's non-goal is "prevent obvious
- * drift", not "detect every mixing boundary" (over-eager rewrites risk false positives that lose work).
+ * #76/#169 (NON-blocking observability): leave a warn trail when the patcher's author summary drifts off the
+ * repo's outward-text language. #169 changed the consequence — prBody now OMITS an off-language summary from
+ * the PR body (the deterministic Changes section carries the facts), so this is the operator-visible signal
+ * that an omission happened. We still don't hard-block or rewrite the run.
  */
 function warnIfOffLanguage(ctx: StepCtx, issue: Issue, summary: string): void {
   if (ctx.language && looksOffLanguage(summary, ctx.language)) {
-    console.warn(`[monastery] off-language patcher summary ${ctx.repo}#${issue.number}: expected ${ctx.language} — opening the draft PR anyway (human review is the gate).`);
+    console.warn(`[monastery] off-language patcher summary ${ctx.repo}#${issue.number}: expected ${ctx.language} — omitting it from the PR body (the deterministic Changes section carries the facts).`);
   }
 }
 
-/** The PR body = the AUTHOR's voice only: 本次改动 + 测试状态 + Closes + diff (the reviewer's voice is a separate comment). */
-function prBody(issue: Issue, r: PatchResult): string {
+/**
+ * #169: the deterministic "Changes" section — a fact derived from the real diff (which files, their status,
+ * line counts, which are tests), so the PR body's first signal can never drift off-language or contradict the
+ * diff. Empty diff → empty string (no heading). This REPLACES the prose author summary as the body's anchor.
+ */
+function renderChanges(diff: string): string {
+  const s = summarizeDiff(diff);
+  if (s.filesChanged === 0) return "";
+  const testsPart = s.testFiles > 0 ? ` · tests: ${s.testFiles} file${s.testFiles === 1 ? "" : "s"}` : "";
+  const header = `files: ${s.filesChanged} changed · +${s.added} −${s.deleted}${testsPart}`;
+  const rows = s.files.map((f) => {
+    const counts = f.deleted ? `(+${f.added} −${f.deleted})` : `(+${f.added})`;
+    return `- ${f.status}  ${f.path}  ${counts}${f.isTest ? "  [test]" : ""}`;
+  });
+  return `## Changes\n\n${header}\n${rows.join("\n")}\n\n`;
+}
+
+/**
+ * The PR body = AUTHOR's voice. #169: the deterministic Changes section is the anchor; the patcher's prose
+ * author summary is DEMOTED to a supplementary note and OMITTED when off the repo's outward-text language
+ * (shipping an unreadable off-language block helped nobody — the Changes section already carries the facts).
+ * The reviewer's voice is a separate comment.
+ */
+export function prBody(issue: Issue, r: PatchResult, language?: string): string {
   const MAX_DIFF = 60000;
   const shownDiff = r.diff.length > MAX_DIFF ? r.diff.slice(0, MAX_DIFF) + "\n… [diff truncated; see the PR Files tab]" : r.diff;
   const testLine = r.tests === null ? "no test suite detected" : r.tests ? "tests passing" : "⚠️ tests FAILING";
-  const changesBlock = r.authorSummary ? `## 本次改动\n\n${r.authorSummary}\n\n` : "";
+  const changesSection = renderChanges(r.diff);
+  const offLang = !!language && looksOffLanguage(r.authorSummary, language);
+  const noteSection = r.authorSummary && !offLang ? `## 作者说明\n\n${r.authorSummary}\n\n` : "";
   return [
     `Proposed fix for #${issue.number} (${testLine}).`,
     ``,
-    `${changesBlock}Closes #${issue.number}`,
+    `${changesSection}${noteSection}Closes #${issue.number}`,
     ``,
     `<details><summary>diff</summary>`,
     ``,
