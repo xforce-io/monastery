@@ -32,7 +32,7 @@ export class FakeWorkspace implements Workspace {
     this.clonedReadOnly.push({ repo, dir });
     return dir;
   }
-  async runTests(_dir?: string): Promise<boolean | null> { return this.opts.tests ?? null; }
+  async runTests(_dir?: string, _patchDiff?: string): Promise<boolean | null> { return this.opts.tests ?? null; }
   async stagedDiff(_dir: string, baseRef?: string): Promise<string> {
     this.diffCalls++;
     this.diffBases.push(baseRef);

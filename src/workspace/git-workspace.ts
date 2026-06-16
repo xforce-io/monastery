@@ -16,6 +16,28 @@ const defaultRun: Runner = async (file, args, opts) => {
 /** Provider scratch files written into the cwd; never commit these. */
 const SCRATCH = ["_prompt.md", "_claude_stdout.json", "_codex_stdout.jsonl", "_codex_last_message.txt"];
 
+// #167: extract test file paths from a unified diff ("+++ b/<file>" lines whose basename matches test patterns).
+function extractPatchTestFiles(diff: string): string[] {
+  const files: string[] = [];
+  for (const line of diff.split("\n")) {
+    const m = line.match(/^\+\+\+ b\/(.+)$/);
+    if (m && (/\.(test|spec)\.[^/]+$/.test(m[1]) || /\/__tests__\//.test(m[1]))) {
+      files.push(m[1]);
+    }
+  }
+  return files;
+}
+
+// #167: detect vitest or jest from package.json content; null if undetectable (skip explicit re-run).
+function detectJsTestRunner(packageJson: string): "vitest" | "jest" | null {
+  let pkg: Record<string, unknown>;
+  try { pkg = JSON.parse(packageJson); } catch { return null; }
+  const deps = { ...(pkg.dependencies as Record<string, unknown> ?? {}), ...(pkg.devDependencies as Record<string, unknown> ?? {}) };
+  if ("vitest" in deps) return "vitest";
+  if ("jest" in deps) return "jest";
+  return null;
+}
+
 export class GitWorkspace implements Workspace {
   constructor(private run: Runner = defaultRun) {}
 
@@ -53,12 +75,28 @@ export class GitWorkspace implements Workspace {
     return dir;
   }
 
-  async runTests(dir: string): Promise<boolean | null> {
+  async runTests(dir: string, patchDiff?: string): Promise<boolean | null> {
     if (existsSync(join(dir, "package.json"))) {
       const ci = await this.run("npm", ["ci"], { cwd: dir });
       if (ci.exitCode !== 0) await this.run("npm", ["install"], { cwd: dir }); // no lockfile / out of sync
       const t = await this.run("npm", ["test"], { cwd: dir });
-      return t.exitCode === 0;
+      if (t.exitCode !== 0) return false;
+      // #167: explicitly re-run patch test files that may not be covered by the repo's narrow npm test subset.
+      // This prevents the gate from giving a false green when the patcher writes tests outside the default suite.
+      if (patchDiff) {
+        const patchTestFiles = extractPatchTestFiles(patchDiff);
+        if (patchTestFiles.length > 0) {
+          const runner = detectJsTestRunner(readFileSync(join(dir, "package.json"), "utf8"));
+          if (runner === "vitest") {
+            const r = await this.run("npx", ["vitest", "run", ...patchTestFiles], { cwd: dir });
+            if (r.exitCode !== 0) return false;
+          } else if (runner === "jest") {
+            const r = await this.run("npx", ["jest", ...patchTestFiles], { cwd: dir });
+            if (r.exitCode !== 0) return false;
+          }
+        }
+      }
+      return true;
     }
     if (existsSync(join(dir, "pyproject.toml")) || existsSync(join(dir, "setup.py"))) {
       const r = await this.run("python", ["-m", "pytest"], { cwd: dir });

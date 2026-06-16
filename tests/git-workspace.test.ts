@@ -201,6 +201,123 @@ test("#129 runTests returns null when no ecosystem marker found", async () => {
   }
 });
 
+// #167: patcher test files outside npm test's coverage must be explicitly re-run to close the "false green" loop.
+// Sample unified diff containing a new vitest test file.
+const VITEST_PKG = JSON.stringify({ devDependencies: { vitest: "^1.0.0" } });
+const JEST_PKG = JSON.stringify({ devDependencies: { jest: "^29.0.0" } });
+const UNKNOWN_RUNNER_PKG = JSON.stringify({ scripts: { test: "custom-runner" } });
+
+function patchDiffWith(file: string): string {
+  return [
+    `diff --git a/${file} b/${file}`,
+    "new file mode 100644",
+    "--- /dev/null",
+    `+++ b/${file}`,
+    "@@ -0,0 +1 @@",
+    "+// test",
+  ].join("\n");
+}
+
+test("#167 runTests re-runs patch vitest file not covered by npm test; returns false if it fails", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "package.json"), VITEST_PKG);
+  const diff = patchDiffWith("examples/foo.test.ts");
+  try {
+    const calls: string[][] = [];
+    const run: Runner = async (file, args) => {
+      calls.push([file, ...args]);
+      // npm test passes; explicit vitest re-run of the patch file fails
+      if (file === "npx" && args[0] === "vitest") return { stdout: "", exitCode: 1 };
+      return { stdout: "", exitCode: 0 };
+    };
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir, diff)).toBe(false);
+    expect(calls).toContainEqual(["npx", "vitest", "run", "examples/foo.test.ts"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#167 runTests returns true when both npm test and patch vitest file pass", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "package.json"), VITEST_PKG);
+  const diff = patchDiffWith("src/bar.test.ts");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir, diff)).toBe(true);
+    expect(calls).toContainEqual(["npx", "vitest", "run", "src/bar.test.ts"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#167 runTests with no test files in diff does not add an extra runner call", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "package.json"), VITEST_PKG);
+  const diff = "+++ b/src/foo.ts\n+// plain source file";
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir, diff)).toBe(true);
+    expect(calls.some((c) => c[0] === "npx")).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#167 runTests re-runs patch jest file; returns false if it fails", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "package.json"), JEST_PKG);
+  const diff = patchDiffWith("src/bar.spec.ts");
+  try {
+    const calls: string[][] = [];
+    const run: Runner = async (file, args) => {
+      calls.push([file, ...args]);
+      if (file === "npx" && args[0] === "jest") return { stdout: "", exitCode: 1 };
+      return { stdout: "", exitCode: 0 };
+    };
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir, diff)).toBe(false);
+    expect(calls).toContainEqual(["npx", "jest", "src/bar.spec.ts"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#167 runTests skips extra run when test runner is undetectable", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "package.json"), UNKNOWN_RUNNER_PKG);
+  const diff = patchDiffWith("src/foo.test.ts");
+  try {
+    const { run, calls } = recorder();
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir, diff)).toBe(true);
+    expect(calls.some((c) => c[0] === "npx")).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#167 runTests with __tests__ file is also detected", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ws-test-"));
+  writeFileSync(join(dir, "package.json"), VITEST_PKG);
+  const diff = patchDiffWith("src/__tests__/bar.ts");
+  try {
+    const calls: string[][] = [];
+    const run: Runner = async (file, args) => {
+      calls.push([file, ...args]);
+      if (file === "npx" && args[0] === "vitest") return { stdout: "", exitCode: 1 };
+      return { stdout: "", exitCode: 0 };
+    };
+    const ws = new GitWorkspace(run);
+    expect(await ws.runTests(dir, diff)).toBe(false);
+    expect(calls).toContainEqual(["npx", "vitest", "run", "src/__tests__/bar.ts"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // #87 sandbox isolation: the clone() sandbox must live under os.tmpdir(), never the
 // main working tree (process.cwd()). Guards the "约束而非信任" filesystem invariant —
 // a regression here is how a patcher run could pollute the repo it runs from.

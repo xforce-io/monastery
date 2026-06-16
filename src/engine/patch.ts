@@ -341,7 +341,7 @@ async function patchAndReview(ctx: StepCtx, dir: string, issue: Issue, taskConte
   ctx.fails.clearFail(ctx.repo, issue.number);
   const runTests = async (): Promise<boolean | null> => {
     const t = log.phase("tests");
-    const r = await ctx.ws.runTests(dir);
+    const r = await ctx.ws.runTests(dir, diff);   // #167: pass current diff so patch test files are explicitly re-run
     t.done({ result: r === null ? "none" : String(r) });
     return r;
   };
