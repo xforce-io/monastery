@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
-import { GitWorkspace, type Runner } from "../src/workspace/git-workspace.js";
+import { GitWorkspace, summarizeDiff, type Runner } from "../src/workspace/git-workspace.js";
 
 function recorder(stdouts: Record<string, string> = {}): { run: Runner; calls: string[][] } {
   const calls: string[][] = [];
@@ -375,4 +375,77 @@ test("#79 checkout() throws when the branch checkout fails (branch gone)", async
   const run: Runner = async (file, args) => ({ stdout: "error: pathspec", exitCode: file === "git" && args.includes("checkout") ? 1 : 0 });
   const ws = new GitWorkspace(run);
   await expect(ws.checkout("o/r", "feat/7-fix")).rejects.toThrow(/checkout.*failed/i);
+});
+
+// #169: summarizeDiff renders the deterministic, language-agnostic "Changes" section of the PR body straight
+// from the real diff — so the body's first signal (which files, how many lines, did tests change) can never
+// contradict the diff or drift off-language the way the patcher's prose author summary did (monastery#168).
+test("summarizeDiff parses a modified source file and a newly added test file", () => {
+  const diff = [
+    "diff --git a/src/engine/patch.ts b/src/engine/patch.ts",
+    "index aaa..bbb 100644",
+    "--- a/src/engine/patch.ts",
+    "+++ b/src/engine/patch.ts",
+    "@@ -1,3 +1,3 @@",
+    " context",
+    "-old line",
+    "+new line",
+    "diff --git a/tests/git-workspace.test.ts b/tests/git-workspace.test.ts",
+    "new file mode 100644",
+    "index 000..ccc",
+    "--- /dev/null",
+    "+++ b/tests/git-workspace.test.ts",
+    "@@ -0,0 +1,2 @@",
+    "+test line 1",
+    "+test line 2",
+    "",
+  ].join("\n");
+  const s = summarizeDiff(diff);
+  expect(s.files).toEqual([
+    { path: "src/engine/patch.ts", status: "M", added: 1, deleted: 1, isTest: false },
+    { path: "tests/git-workspace.test.ts", status: "A", added: 2, deleted: 0, isTest: true },
+  ]);
+  expect(s.filesChanged).toBe(2);
+  expect(s.added).toBe(3);
+  expect(s.deleted).toBe(1);
+  expect(s.testFiles).toBe(1);
+});
+
+test("summarizeDiff recognizes deleted and renamed files and __tests__ paths", () => {
+  const diff = [
+    "diff --git a/old.ts b/old.ts",
+    "deleted file mode 100644",
+    "--- a/old.ts",
+    "+++ /dev/null",
+    "@@ -1,2 +0,0 @@",
+    "-gone 1",
+    "-gone 2",
+    "diff --git a/a.ts b/b.ts",
+    "similarity index 90%",
+    "rename from a.ts",
+    "rename to b.ts",
+    "diff --git a/src/__tests__/util.ts b/src/__tests__/util.ts",
+    "--- a/src/__tests__/util.ts",
+    "+++ b/src/__tests__/util.ts",
+    "@@ -1 +1,2 @@",
+    " keep",
+    "+added",
+    "",
+  ].join("\n");
+  const s = summarizeDiff(diff);
+  expect(s.files).toEqual([
+    { path: "old.ts", status: "D", added: 0, deleted: 2, isTest: false },
+    { path: "b.ts", status: "R", added: 0, deleted: 0, isTest: false },
+    { path: "src/__tests__/util.ts", status: "M", added: 1, deleted: 0, isTest: true },
+  ]);
+  expect(s.testFiles).toBe(1);
+});
+
+test("summarizeDiff returns an empty summary for an empty diff", () => {
+  const s = summarizeDiff("");
+  expect(s.files).toEqual([]);
+  expect(s.filesChanged).toBe(0);
+  expect(s.added).toBe(0);
+  expect(s.deleted).toBe(0);
+  expect(s.testFiles).toBe(0);
 });

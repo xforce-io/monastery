@@ -62,7 +62,9 @@ test("#87 the patcher agent runs in the tmp sandbox clone, never process.cwd()",
   }
 });
 
-test("PR body carries the patcher's author summary in a 本次改动 section", async () => {
+// #169: the patcher's prose is now a supplementary "作者说明" note (the deterministic Changes section is the
+// anchor). On-language prose is still carried; off-language prose is omitted (covered in patch-prbody.test.ts).
+test("PR body carries the patcher's author summary in a 作者说明 section", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
   const ws = new FakeWorkspace({ diff: "some patch", tests: true });
   const summary = "- 改了 foo.ts：修复了空指针\n- 为什么:之前没校验入参";
@@ -70,7 +72,7 @@ test("PR body carries the patcher's author summary in a 本次改动 section", a
   c.provider = new FakeProvider({}, summary);
   const out = await runImplement(c, issue);
   expect(out.kind).toBe("progressed");
-  expect(gh.prs[0].body).toContain("## 本次改动");
+  expect(gh.prs[0].body).toContain("## 作者说明");
   expect(gh.prs[0].body).toContain(summary);
 });
 

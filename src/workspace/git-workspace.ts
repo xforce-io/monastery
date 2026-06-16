@@ -16,16 +16,52 @@ const defaultRun: Runner = async (file, args, opts) => {
 /** Provider scratch files written into the cwd; never commit these. */
 const SCRATCH = ["_prompt.md", "_claude_stdout.json", "_codex_stdout.jsonl", "_codex_last_message.txt"];
 
+// #169: a test file is identified by a *.test.* / *.spec.* basename or a /__tests__/ path segment.
+function isTestPath(path: string): boolean {
+  return /\.(test|spec)\.[^/]+$/.test(path) || /\/__tests__\//.test(path);
+}
+
 // #167: extract test file paths from a unified diff ("+++ b/<file>" lines whose basename matches test patterns).
 function extractPatchTestFiles(diff: string): string[] {
   const files: string[] = [];
   for (const line of diff.split("\n")) {
     const m = line.match(/^\+\+\+ b\/(.+)$/);
-    if (m && (/\.(test|spec)\.[^/]+$/.test(m[1]) || /\/__tests__\//.test(m[1]))) {
-      files.push(m[1]);
-    }
+    if (m && isTestPath(m[1])) files.push(m[1]);
   }
   return files;
+}
+
+// #169: a deterministic, language-agnostic summary of a unified diff. The patcher's prose author summary could
+// be off-language or contradict the diff (monastery#168); rendering the PR body's "Changes" section from THIS
+// instead makes the body's first signal a fact derived from the diff, not the agent's self-report.
+export interface DiffFileSummary { path: string; status: "A" | "M" | "D" | "R"; added: number; deleted: number; isTest: boolean }
+export interface DiffSummary { files: DiffFileSummary[]; filesChanged: number; added: number; deleted: number; testFiles: number }
+
+export function summarizeDiff(diff: string): DiffSummary {
+  const files: DiffFileSummary[] = [];
+  let cur: DiffFileSummary | null = null;
+  for (const line of diff.split("\n")) {
+    const head = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    if (head) {                                              // new file block; the b/ path is the post-change name
+      cur = { path: head[2], status: "M", added: 0, deleted: 0, isTest: isTestPath(head[2]) };
+      files.push(cur);
+      continue;
+    }
+    if (!cur) continue;
+    if (line.startsWith("new file mode")) cur.status = "A";
+    else if (line.startsWith("deleted file mode")) cur.status = "D";
+    else if (line.startsWith("rename to ")) cur.status = "R";
+    else if (line.startsWith("+++ ") || line.startsWith("--- ")) continue; // ---/+++ file headers, not content
+    else if (line.startsWith("+")) cur.added++;
+    else if (line.startsWith("-")) cur.deleted++;
+  }
+  return {
+    files,
+    filesChanged: files.length,
+    added: files.reduce((n, f) => n + f.added, 0),
+    deleted: files.reduce((n, f) => n + f.deleted, 0),
+    testFiles: files.filter((f) => f.isTest).length,
+  };
 }
 
 // #167: detect vitest or jest from package.json content; null if undetectable (skip explicit re-run).
