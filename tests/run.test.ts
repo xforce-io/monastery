@@ -7,7 +7,7 @@ import { entryStatus, groupByStatus, run } from "../src/engine/run.js";
 import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
-import { executeSafe } from "../src/shell/actions.js";
+import { executeSafe, proposeGate } from "../src/shell/actions.js";
 import type { AgentProvider } from "../src/provider/interface.js";
 import type { BacklogEntry, Issue } from "../src/types.js";
 
@@ -84,6 +84,29 @@ describe("run — #176: executes only human-approved gated items, never assesses
     expect(r.advanced).toBe(1);
     expect(gh.closed).toContain(20);
     expect((provider as FakeProvider).calls.length).toBe(0);
+    rmSync(c.artifactRoot, { recursive: true, force: true });
+  });
+
+  test("two approved (👍) implements in one run → exactly ONE PR opens, the other defers (one heavy slot)", async () => {
+    const gh = new FakeGitHub({ thesis: "T", issues: [
+      { number: 1, title: "fix a", body: "broken a", labels: [], state: "open" },
+      { number: 2, title: "fix b", body: "broken b", labels: [], state: "open" },
+    ]});
+    await proposeGate(gh, "o/r", 1, "implement", "## Plan A");
+    await proposeGate(gh, "o/r", 2, "implement", "## Plan B");
+    gh.commentReactions["0"] = ["+1"];
+    gh.commentReactions["1"] = ["+1"];
+    const c = {
+      ...baseCtx(gh, new FakeProvider({ "actions.json": JSON.stringify({ actions: [] }) })),
+      ws: new FakeWorkspace({ diff: "patch", tests: true }),
+      review: async () => ({ findings: [] }),
+    };
+    const r = await run(c);
+    expect(gh.prs).toHaveLength(1);                                 // exactly one heavy runImplement
+    expect(r.advanced).toBe(1);
+    const [i1, i2] = await gh.listOpenIssues("o/r", 0);
+    expect(i1.labels).not.toContain("monastery:needs-approval");   // winner's gate consumed
+    expect(i2.labels).toContain("monastery:needs-approval");       // deferred candidate untouched
     rmSync(c.artifactRoot, { recursive: true, force: true });
   });
 });

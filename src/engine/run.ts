@@ -2,6 +2,7 @@
 import type { BacklogEntry, ReconcileResult } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { issueStep, type StepCtx } from "./issue-step.js";
+import { sortEntries } from "./backlog.js";
 
 /**
  * #176: where a backlog entry sits in the assess→run flow. `terminal` (declined/done) never appears
@@ -54,20 +55,36 @@ export async function run(ctx: StepCtx): Promise<ReconcileResult> {
 
   let advanced = 0;
   let failed = 0;
-  const entries: BacklogEntry[] = [];
+  const ready: { number: number; title: string; entry?: BacklogEntry }[] = [];
 
-  // Each gated item routes (by the needs-approval label) to the gate executor `awaitingGate`: read the
-  // 👍/👎 and run the approved action. `deferImplement` keeps heavy approved work (implement/rework) to
-  // the one-per-tick slot (added in the next slice). Per-item fault isolation (constitution §10).
+  // Pass 1: each gated item routes (by the needs-approval label) to the gate executor `awaitingGate`:
+  // read the 👍/👎 and run the approved action. `deferImplement` keeps heavy approved work (implement/
+  // rework) from running here — it's only REPORTED (readyImplement) for the one-slot schedule below.
+  // Per-item fault isolation (constitution §10).
   for (const i of gated) {
     try {
       const out = await issueStep({ ...octx, deferImplement: true }, i.number);
-      if (out.entry) entries.push(out.entry);
+      if (out.readyImplement) { ready.push({ number: i.number, title: i.title, entry: out.entry }); continue; }
       if (out.kind === "progressed" || out.kind === "done" || (out.kind === "partial" && out.applied > 0)) advanced++;
       else if (out.kind === "failed") failed++;
     } catch (e) {
       failed++;
       console.warn(`[monastery] run ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
+    }
+  }
+
+  // Pass 2: one heavy slot per run. Pick the backlog-top approved candidate and run only it (re-step with
+  // deferImplement off → runImplement/runRework + gate consumed). The rest keep their 👍'd gate intact and
+  // re-enter next run — deferring is safe, nothing is lost. (#86: implement & rework share the one slot.)
+  if (ready.length > 0) {
+    const winner = sortEntries(ready.map((r) => r.entry!))[0].number;
+    try {
+      const out = await issueStep({ ...octx, deferImplement: false }, winner);
+      if (out.kind === "progressed" || out.kind === "done" || (out.kind === "partial" && out.applied > 0)) advanced++;
+      else if (out.kind === "failed") failed++;
+    } catch (e) {
+      failed++;
+      console.warn(`[monastery] run implement ${ctx.repo}#${winner} failed (skipped): ${(e as Error).message}`);
     }
   }
 
