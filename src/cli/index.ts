@@ -32,7 +32,6 @@ const NEEDS: Record<string, Need> = {
   init: { gh: true, agent: false },
   status: { gh: true, agent: false },
   pending: { gh: true, agent: false },
-  step: { gh: true, agent: true },
   assess: { gh: true, agent: true },
   run: { gh: true, agent: true },
 };
@@ -133,10 +132,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (args.cmd === "step" || args.cmd === "assess" || args.cmd === "run") {
+  if (args.cmd === "assess" || args.cmd === "run") {
     // #176: assess (think half) and run (do half) reuse the same tick machinery (lock, provider, ctx);
-    // they differ only in which engine pass executes. `step`/cron stays the composed tick (reconcile).
-    const engineFn = args.cmd === "run" ? run : args.cmd === "assess" ? assess : reconcile;
+    // they differ only in which engine pass executes. The old combined `step` is gone — a tick is now
+    // `assess` then `run` (cron runs both); the composed reconcile() stays internal for callers that want it.
+    const engineFn = args.cmd === "run" ? run : assess;
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
     let selection;

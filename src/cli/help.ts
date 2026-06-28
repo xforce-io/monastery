@@ -14,7 +14,6 @@ export const COMMANDS: ReadonlyArray<{ usage: string; desc: string }> = [
   { usage: "pending [--repo o/r] [--json]", desc: "list items awaiting your 👍 approval" },
   { usage: "assess [--repo o/r] [--issue N] [--dry-run] [--json]", desc: "assess active issues — judge/propose + refresh the backlog (the think half)" },
   { usage: "run [--repo o/r] [--dry-run] [--json]", desc: "execute the human-approved gated items, one heavy slot per run (the do half)" },
-  { usage: "step [--repo o/r] [--issue N] [--dry-run] [--json]", desc: "[deprecated] one reconcile tick = assess + run; cron should call assess then run" },
 ];
 
 const HELP_TOKENS = new Set(["--help", "-h", "help"]);
@@ -51,8 +50,8 @@ export function usage(): string {
     "",
     "Common flags:",
     "  --repo <owner>/<repo>   target a single tracked repo (default: all tracked repos)",
-    "  --dry-run               compute actions but write nothing to GitHub; local lock/progress cache may refresh (step only)",
-    "  --json                  machine-readable output / NDJSON event stream (step)",
+    "  --dry-run               compute actions but write nothing to GitHub; local lock/progress cache may refresh (assess/run)",
+    "  --json                  machine-readable output / NDJSON event stream (assess/run)",
     "  --help, -h              show this help",
     "  --version, -v           print the version",
     "",

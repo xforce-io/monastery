@@ -12,11 +12,6 @@ import { Store } from "../src/config/store.js";
 import { LABEL_DEFS, labelsFingerprint } from "../src/github/labels.js";
 import { THESIS_PATH } from "../src/engine/init.js";
 
-test("parses `step --repo o/r --dry-run --json`", () => {
-  expect(parseArgs(["step", "--repo", "o/r", "--dry-run", "--json"]))
-    .toEqual({ cmd: "step", repo: "o/r", dryRun: true, json: true, forceStaleLock: false });
-});
-
 test("parses `assess --repo o/r --dry-run --json` (#176 think half)", () => {
   expect(parseArgs(["assess", "--repo", "o/r", "--dry-run", "--json"]))
     .toEqual({ cmd: "assess", repo: "o/r", dryRun: true, json: true, forceStaleLock: false });
@@ -36,13 +31,13 @@ test("parses `repos add o/r opus` (optional per-repo model)", () => {
     .toEqual({ cmd: "repos", sub: "add", repo: "o/r", model: "opus" });
 });
 
-test("parses bare `step`", () => {
-  expect(parseArgs(["step"])).toEqual({ cmd: "step", dryRun: false, json: false, forceStaleLock: false });
+test("parses bare `assess`", () => {
+  expect(parseArgs(["assess"])).toEqual({ cmd: "assess", dryRun: false, json: false, forceStaleLock: false });
 });
 
-test("parses `step --repo o/r --issue 5` (single-issue target)", () => {
-  expect(parseArgs(["step", "--repo", "o/r", "--issue", "5"]))
-    .toEqual({ cmd: "step", repo: "o/r", issue: "5", dryRun: false, json: false, forceStaleLock: false });
+test("parses `assess --repo o/r --issue 5` (single-issue target)", () => {
+  expect(parseArgs(["assess", "--repo", "o/r", "--issue", "5"]))
+    .toEqual({ cmd: "assess", repo: "o/r", issue: "5", dryRun: false, json: false, forceStaleLock: false });
 });
 
 test("parses `init o/r`", () => {
@@ -57,9 +52,9 @@ test("parses `status --repo o/r --json`", () => {
   expect(parseArgs(["status", "--repo", "o/r", "--json"])).toEqual({ cmd: "status", repo: "o/r", json: true });
 });
 
-test("parses `step --repo o/r --force-stale-lock`", () => {
-  expect(parseArgs(["step", "--repo", "o/r", "--force-stale-lock"]))
-    .toEqual({ cmd: "step", repo: "o/r", dryRun: false, json: false, forceStaleLock: true });
+test("parses `run --repo o/r --force-stale-lock`", () => {
+  expect(parseArgs(["run", "--repo", "o/r", "--force-stale-lock"]))
+    .toEqual({ cmd: "run", repo: "o/r", dryRun: false, json: false, forceStaleLock: true });
 });
 
 test("stepRepos skips a locked repo, runs the rest, and reports exit code 4 (lock conflict)", async () => {
