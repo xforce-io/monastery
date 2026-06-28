@@ -7,8 +7,9 @@ import { entryStatus, groupByStatus, run } from "../src/engine/run.js";
 import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
+import { executeSafe } from "../src/shell/actions.js";
 import type { AgentProvider } from "../src/provider/interface.js";
-import type { BacklogEntry } from "../src/types.js";
+import type { BacklogEntry, Issue } from "../src/types.js";
 
 function entry(over: Partial<BacklogEntry> = {}): BacklogEntry {
   return { number: 1, title: "t", priority: "now", rationale: "r", ...over };
@@ -68,6 +69,20 @@ describe("run — #176: executes only human-approved gated items, never assesses
     const r = await run(c);
     expect(r.advanced).toBe(0);
     expect(r.idle).toBe(true);
+    expect((provider as FakeProvider).calls.length).toBe(0);
+    rmSync(c.artifactRoot, { recursive: true, force: true });
+  });
+
+  test("executes an approved (👍) close gate — advances, closes, never calls the assessor", async () => {
+    const issue: Issue = { number: 20, title: "x", body: "y", labels: [], state: "open" };
+    const gh = new FakeGitHub({ thesis: "T", issues: [issue] });
+    await executeSafe(gh, "o/r", { kind: "propose", num: 20, proposal: "close", draft: "closing because X" });
+    gh.commentReactions["0"] = ["+1"]; // human approves the gate
+    const provider = new FakeProvider({});
+    const c = baseCtx(gh, provider);
+    const r = await run(c);
+    expect(r.advanced).toBe(1);
+    expect(gh.closed).toContain(20);
     expect((provider as FakeProvider).calls.length).toBe(0);
     rmSync(c.artifactRoot, { recursive: true, force: true });
   });

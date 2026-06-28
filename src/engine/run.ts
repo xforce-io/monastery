@@ -1,7 +1,7 @@
 // src/engine/run.ts
 import type { BacklogEntry, ReconcileResult } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
-import type { StepCtx } from "./issue-step.js";
+import { issueStep, type StepCtx } from "./issue-step.js";
 
 /**
  * #176: where a backlog entry sits in the assess→run flow. `terminal` (declined/done) never appears
@@ -49,13 +49,34 @@ export function groupByStatus(entries: BacklogEntry[]): StatusGroups {
  */
 export async function run(ctx: StepCtx): Promise<ReconcileResult> {
   const open = ctx.openIssues ?? await ctx.gh.listOpenIssues(ctx.repo, 0);
+  const octx: StepCtx = { ...ctx, openIssues: open };
   const gated = open.filter((i) => i.labels.includes(NEEDS_APPROVAL) && !i.labels.includes(DECLINED));
+
+  let advanced = 0;
+  let failed = 0;
+  const entries: BacklogEntry[] = [];
+
+  // Each gated item routes (by the needs-approval label) to the gate executor `awaitingGate`: read the
+  // 👍/👎 and run the approved action. `deferImplement` keeps heavy approved work (implement/rework) to
+  // the one-per-tick slot (added in the next slice). Per-item fault isolation (constitution §10).
+  for (const i of gated) {
+    try {
+      const out = await issueStep({ ...octx, deferImplement: true }, i.number);
+      if (out.entry) entries.push(out.entry);
+      if (out.kind === "progressed" || out.kind === "done" || (out.kind === "partial" && out.applied > 0)) advanced++;
+      else if (out.kind === "failed") failed++;
+    } catch (e) {
+      failed++;
+      console.warn(`[monastery] run ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
+    }
+  }
+
   return {
     repo: ctx.repo,
-    advanced: 0,
-    failed: 0,
+    advanced,
+    failed,
     waiting: gated.length ? [{ on: "human", count: gated.length }] : [],
-    idle: true,
+    idle: advanced === 0,
     nextPollMs: 0,
   };
 }
