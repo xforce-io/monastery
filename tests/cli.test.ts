@@ -17,6 +17,16 @@ test("parses `step --repo o/r --dry-run --json`", () => {
     .toEqual({ cmd: "step", repo: "o/r", dryRun: true, json: true, forceStaleLock: false });
 });
 
+test("parses `assess --repo o/r --dry-run --json` (#176 think half)", () => {
+  expect(parseArgs(["assess", "--repo", "o/r", "--dry-run", "--json"]))
+    .toEqual({ cmd: "assess", repo: "o/r", dryRun: true, json: true, forceStaleLock: false });
+});
+
+test("parses `run --repo o/r` (#176 do half)", () => {
+  expect(parseArgs(["run", "--repo", "o/r"]))
+    .toEqual({ cmd: "run", repo: "o/r", dryRun: false, json: false, forceStaleLock: false });
+});
+
 test("parses `repos add o/r`", () => {
   expect(parseArgs(["repos", "add", "o/r"])).toEqual({ cmd: "repos", sub: "add", repo: "o/r" });
 });

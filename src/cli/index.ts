@@ -9,6 +9,8 @@ import { StepLock, RepoLockError, isAlive } from "../config/step-lock.js";
 import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { reconcile } from "../engine/reconcile.js";
+import { assess } from "../engine/assess.js";
+import { run } from "../engine/run.js";
 import { backlogFingerprint, isBacklogFresh, refreshBacklog } from "../engine/backlog.js";
 import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
 import { initRepo, type LabelEnsureCache } from "../engine/init.js";
@@ -33,6 +35,8 @@ const NEEDS: Record<string, Need> = {
   backlog: { gh: true, agent: false },
   pending: { gh: true, agent: false },
   step: { gh: true, agent: true },
+  assess: { gh: true, agent: true },
+  run: { gh: true, agent: true },
 };
 
 export interface ParsedArgs {
@@ -183,7 +187,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (args.cmd === "step") {
+  if (args.cmd === "step" || args.cmd === "assess" || args.cmd === "run") {
+    // #176: assess (think half) and run (do half) reuse the same tick machinery (lock, provider, ctx);
+    // they differ only in which engine pass executes. `step`/cron stays the composed tick (reconcile).
+    const engineFn = args.cmd === "run" ? run : args.cmd === "assess" ? assess : reconcile;
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
     let selection;
@@ -223,7 +230,7 @@ async function main(): Promise<void> {
           const line = `${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`;
           if (args.json) console.error(line); else console.log(line);
         } else {
-          results.push(await reconcile(ctx));
+          results.push(await engineFn(ctx));
         }
         if (args.dryRun) {
           const dry = gh as DryRunAdapter;
