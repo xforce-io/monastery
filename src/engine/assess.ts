@@ -2,7 +2,7 @@
 // assess runs the maintainer over the ACTIVE (non-gated) issues — it judges, proposes, and maintains
 // display labels. It never executes approved heavy work; that is `run` (the gate executor). The two
 // halves are kept apart so the data flow is one-directional: assess → 〔human gate〕 → run.
-import type { ReconcileResult } from "../types.js";
+import type { ReconcileResult, WaitReason } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { issueStep, withReadOnlyCheckout, type StepCtx } from "./issue-step.js";
 
@@ -14,6 +14,7 @@ export async function assess(ctx: StepCtx): Promise<ReconcileResult> {
 
   let advanced = 0;
   let failed = 0;
+  const waiting: Record<WaitReason, number> = { human: 0, peer: 0, ci: 0 };
 
   // #108: the maintainer verifies root cause against real code, so the whole active batch runs under ONE
   // shared read-only checkout. Per-item fault isolation: one item blowing up never aborts the rest (§10).
@@ -23,6 +24,7 @@ export async function assess(ctx: StepCtx): Promise<ReconcileResult> {
         const out = await issueStep(sctx, i.number);
         if (out.kind === "progressed" || out.kind === "done" || (out.kind === "partial" && out.applied > 0)) advanced++;
         else if (out.kind === "failed") failed++;
+        else if (out.kind === "waiting" && out.on !== "human") waiting[out.on]++;
       } catch (e) {
         failed++;
         console.warn(`[monastery] assess ${ctx.repo}#${i.number} failed (skipped): ${(e as Error).message}`);
@@ -35,7 +37,7 @@ export async function assess(ctx: StepCtx): Promise<ReconcileResult> {
     repo: ctx.repo,
     advanced,
     failed,
-    waiting: [],
+    waiting: (Object.entries(waiting) as [WaitReason, number][]).filter(([, n]) => n > 0).map(([on, count]) => ({ on, count })),
     idle: advanced === 0,
     nextPollMs: 0,
   };
