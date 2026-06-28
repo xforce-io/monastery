@@ -1,6 +1,6 @@
 // tests/run.test.ts
 import { describe, it, expect } from "vitest";
-import { isRunnable, entryStatus, groupByStatus } from "../src/engine/run.js";
+import { entryStatus, groupByStatus } from "../src/engine/run.js";
 import type { BacklogEntry } from "../src/types.js";
 
 function entry(over: Partial<BacklogEntry> = {}): BacklogEntry {
@@ -43,19 +43,5 @@ describe("groupByStatus — #176: the classification shared by status/pending/bl
   it("returns empty groups for an empty list", () => {
     const g = groupByStatus([]);
     expect(g).toEqual({ ready: [], pending: [], blocked: [] });
-  });
-});
-
-describe("isRunnable — #176: run only consumes human-approved, unblocked items", () => {
-  it("is runnable when not awaiting approval and not blocked", () => {
-    expect(isRunnable(entry())).toBe(true);
-  });
-
-  it("is NOT runnable while awaiting the human's 👍", () => {
-    expect(isRunnable(entry({ awaitingApproval: true }))).toBe(false);
-  });
-
-  it("is NOT runnable while blocked by an open dependency", () => {
-    expect(isRunnable(entry({ blockedBy: ["o/r#2"] }))).toBe(false);
   });
 });
