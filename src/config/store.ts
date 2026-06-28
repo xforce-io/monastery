@@ -27,9 +27,11 @@ export interface FailTracker {
   clearFail(repo: string, num: number): void;
 }
 
-/** Writes the per-repo backlog snapshot (issue #82/#140). Disposable — rebuilt by `monastery backlog`. */
+/** Reads/writes the per-repo backlog snapshot (#82/#140). Disposable — #176: refreshed by `assess`,
+ *  read by `assess` (freshness skip) and the read-only views. */
 export interface BacklogWriter {
   writeBacklog(repo: string, snapshot: BacklogSnapshot): void;
+  readBacklog(repo: string): BacklogSnapshot | null;
 }
 
 export interface LegacyReposCleanup {

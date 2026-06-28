@@ -8,6 +8,7 @@ import { FakeGitHub } from "../src/github/fake.js";
 import { FakeProvider } from "../src/provider/fake.js";
 import { FakeWorkspace } from "../src/workspace/fake.js";
 import type { AgentProvider } from "../src/provider/interface.js";
+import type { BacklogSnapshot } from "../src/types.js";
 
 const NEEDS_APPROVAL = "monastery:needs-approval";
 
@@ -32,6 +33,23 @@ describe("assess — #176: assesses active issues, never touches gated ones", ()
     const r = await assess(c);
     expect((provider as FakeProvider).calls.length).toBe(1); // only the active issue is assessed
     expect(r.advanced).toBe(1);
+    rmSync(c.artifactRoot, { recursive: true, force: true });
+  });
+
+  test("refreshes the backlog snapshot after assessing — writes backlog.json via the store (#12)", async () => {
+    const gh = new FakeGitHub({ thesis: "T", issues: [
+      { number: 1, title: "active", body: "b", labels: [], state: "open", updatedAt: 1 },
+    ]});
+    const provider = new FakeProvider({
+      "actions.json": JSON.stringify({ actions: [{ kind: "relabel", num: 1, add: ["type:bug"], remove: [] }] }),
+      "backlog.json": JSON.stringify({ entries: [{ number: 1, priority: "now", rationale: "high impact" }] }),
+    });
+    const writes: BacklogSnapshot[] = [];
+    const backlog = { readBacklog: () => null, writeBacklog: (_repo: string, snap: BacklogSnapshot) => { writes.push(snap); } };
+    const c = { ...baseCtx(gh, provider), backlog };
+    await assess(c);
+    expect(writes).toHaveLength(1);                       // assess produced the snapshot
+    expect(writes[0].entries.map((e) => e.number)).toEqual([1]);
     rmSync(c.artifactRoot, { recursive: true, force: true });
   });
 });

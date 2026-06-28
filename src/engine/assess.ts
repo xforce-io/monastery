@@ -2,9 +2,13 @@
 // assess runs the maintainer over the ACTIVE (non-gated) issues — it judges, proposes, and maintains
 // display labels. It never executes approved heavy work; that is `run` (the gate executor). The two
 // halves are kept apart so the data flow is one-directional: assess → 〔human gate〕 → run.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ReconcileResult, WaitReason } from "../types.js";
 import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
 import { issueStep, withReadOnlyCheckout, type StepCtx } from "./issue-step.js";
+import { refreshBacklog, backlogFingerprint, isBacklogFresh } from "./backlog.js";
 
 export async function assess(ctx: StepCtx): Promise<ReconcileResult> {
   const open = ctx.openIssues ?? await ctx.gh.listOpenIssues(ctx.repo, 0);
@@ -32,6 +36,23 @@ export async function assess(ctx: StepCtx): Promise<ReconcileResult> {
     }
   };
   if (active.length) await withReadOnlyCheckout(octx, stepBatch);
+
+  // #176 (#12): assess owns the backlog snapshot. Refresh it (fingerprint-cached) over the POST-assess
+  // state so the read-only views (status/pending) always have a fresh ranked list with ZERO LLM at view
+  // time. The ranking is read-only triage from issue facts (#140) — never reverse-derived from the actions
+  // above. Skipped when no backlog sink is wired (e.g. the reconcile tick's #121 single-list test path).
+  if (ctx.backlog && !ctx.dryRun) {
+    const post = await ctx.gh.listOpenIssues(ctx.repo, 0);
+    const fingerprint = backlogFingerprint(post);
+    if (!isBacklogFresh(ctx.backlog.readBacklog(ctx.repo), fingerprint)) {
+      const snapshot = await refreshBacklog({
+        repo: ctx.repo, gh: ctx.gh, provider: ctx.provider, model: ctx.model,
+        artifactDir: mkdtempSync(join(tmpdir(), "monastery-assess-backlog-")),
+        now: ctx.now, language: ctx.language,
+      }, post);
+      ctx.backlog.writeBacklog(ctx.repo, snapshot);
+    }
+  }
 
   return {
     repo: ctx.repo,
