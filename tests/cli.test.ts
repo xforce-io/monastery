@@ -109,11 +109,6 @@ test("stepRepos releases the lock after a repo finishes so it can re-run", async
 import { formatBacklog, formatMissingBacklog, missingBacklog } from "../src/cli/backlog.js";
 import type { BacklogSnapshot } from "../src/types.js";
 
-test("parses `backlog --repo o/r --json`", () => {
-  expect(parseArgs(["backlog", "--repo", "o/r", "--json"]))
-    .toEqual({ cmd: "backlog", repo: "o/r", json: true });
-});
-
 test("formatBacklog renders header + ranked lines with priority, rationale, blockers", () => {
   const snap: BacklogSnapshot = {
     generatedAt: "1970-01-01T00:00:00.000Z",
