@@ -1,5 +1,7 @@
 // src/engine/run.ts
-import type { BacklogEntry } from "../types.js";
+import type { BacklogEntry, ReconcileResult } from "../types.js";
+import { DECLINED, NEEDS_APPROVAL } from "../github/labels.js";
+import type { StepCtx } from "./issue-step.js";
 
 /**
  * #176: where a backlog entry sits in the assess→run flow. `terminal` (declined/done) never appears
@@ -34,4 +36,26 @@ export function groupByStatus(entries: BacklogEntry[]): StatusGroups {
   const groups: StatusGroups = { ready: [], pending: [], blocked: [] };
   for (const e of entries) groups[entryStatus(e)].push(e);
   return groups;
+}
+
+/**
+ * #176: `run` executes only the human-approved half of the loop — the gated (needs-approval) issues,
+ * read their 👍/👎 and run the approved action. It never assesses (that is `assess`). GitHub is the
+ * source of truth for what is gated (constitution: the shell stores no rich state), so it routes off
+ * the needs-approval control label, not off the disposable backlog snapshot.
+ *
+ * Skeleton: list the gated issues; with none gated it is a no-op. (Next: iterate the gate executor
+ * `awaitingGate` and apply the one-heavy-slot-per-tick schedule.)
+ */
+export async function run(ctx: StepCtx): Promise<ReconcileResult> {
+  const open = ctx.openIssues ?? await ctx.gh.listOpenIssues(ctx.repo, 0);
+  const gated = open.filter((i) => i.labels.includes(NEEDS_APPROVAL) && !i.labels.includes(DECLINED));
+  return {
+    repo: ctx.repo,
+    advanced: 0,
+    failed: 0,
+    waiting: gated.length ? [{ on: "human", count: gated.length }] : [],
+    idle: true,
+    nextPollMs: 0,
+  };
 }

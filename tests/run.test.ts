@@ -1,11 +1,25 @@
 // tests/run.test.ts
-import { describe, it, expect } from "vitest";
-import { entryStatus, groupByStatus } from "../src/engine/run.js";
+import { describe, it, test, expect } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { entryStatus, groupByStatus, run } from "../src/engine/run.js";
+import { FakeGitHub } from "../src/github/fake.js";
+import { FakeProvider } from "../src/provider/fake.js";
+import { FakeWorkspace } from "../src/workspace/fake.js";
+import type { AgentProvider } from "../src/provider/interface.js";
 import type { BacklogEntry } from "../src/types.js";
 
 function entry(over: Partial<BacklogEntry> = {}): BacklogEntry {
   return { number: 1, title: "t", priority: "now", rationale: "r", ...over };
 }
+
+const baseCtx = (gh: FakeGitHub, provider: AgentProvider) => ({
+  repo: "o/r", gh, provider, model: "sonnet", artifactRoot: mkdtempSync(join(tmpdir(), "monastery-run-")),
+  fails: { recordFail: () => 1, failCount: () => 0, clearFail: () => {} },
+  ws: new FakeWorkspace(),
+  now: () => 0,
+});
 
 describe("entryStatus — #176: the status-bearing list classifies each entry", () => {
   it("is 'ready' when not awaiting approval and not blocked", () => {
@@ -43,5 +57,18 @@ describe("groupByStatus — #176: the classification shared by status/pending/bl
   it("returns empty groups for an empty list", () => {
     const g = groupByStatus([]);
     expect(g).toEqual({ ready: [], pending: [], blocked: [] });
+  });
+});
+
+describe("run — #176: executes only human-approved gated items, never assesses", () => {
+  test("no-op when nothing is awaiting approval (run never invokes the assessor)", async () => {
+    const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "a", body: "b", labels: [], state: "open" }] });
+    const provider = new FakeProvider({ "actions.json": JSON.stringify({ actions: [] }) });
+    const c = baseCtx(gh, provider);
+    const r = await run(c);
+    expect(r.advanced).toBe(0);
+    expect(r.idle).toBe(true);
+    expect((provider as FakeProvider).calls.length).toBe(0);
+    rmSync(c.artifactRoot, { recursive: true, force: true });
   });
 });
