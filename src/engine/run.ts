@@ -27,3 +27,21 @@ export function entryStatus(entry: BacklogEntry): EntryStatus {
 export function isRunnable(entry: BacklogEntry): boolean {
   return entryStatus(entry) === "ready";
 }
+
+/** #176: entries partitioned by status. The single classification the status/pending/blocked views share. */
+export interface StatusGroups {
+  ready: BacklogEntry[];
+  pending: BacklogEntry[];
+  blocked: BacklogEntry[];
+}
+
+/**
+ * #176: partition a (sorted) backlog list by status, preserving input order within each group. The
+ * status view reads all groups; `pending`/`blocked` are just lenses onto one group each. Pure read —
+ * no LLM, the basis for the zero-cost views.
+ */
+export function groupByStatus(entries: BacklogEntry[]): StatusGroups {
+  const groups: StatusGroups = { ready: [], pending: [], blocked: [] };
+  for (const e of entries) groups[entryStatus(e)].push(e);
+  return groups;
+}
