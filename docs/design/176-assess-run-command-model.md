@@ -1,6 +1,6 @@
 # 176 · 评估/执行两动词命令模型
 
-> 状态:设计评审中
+> 状态:决议已定,待写实现计划
 > 关联:epic #34(薄治理外壳 + 一个 agent)、#140(解耦 backlog triage 与 step 决策)、#82(backlog snapshot)
 > 分支:`feat/176-assess-run-command-model`
 
@@ -108,13 +108,13 @@ CLI 动作面从 `{status, backlog, pending, step}` 收敛为 `{status, assess, 
 - `.claude/skills/monastery/SKILL.md` —— 命令映射表更新(默认入口 status,assess/run 显式,放行去 GitHub)。
 - 可能 `docs/{CONSTITUTION,PROTOCOL,ARCHITECTURE}.md` —— 命令模型与职责分层措辞。
 
-## 9. 待评审的开放点
+## 9. 已定决议
 
-1. **命令命名**:`assess`/`run` vs `evaluate`/`execute` vs 保留 `step` 作串联封装。
-2. **只读别名**:保留 `backlog`/`pending` 作只读别名,还是全部并进 `status` 过滤。
-3. **评估是否读代码**:决定 `assess` 成本与缓存粒度(读代码更准但更重)。
-4. **agent 收敛方式**:`maintainer` 与 `backlog` 两个 agent 合并为单评估器,还是拆成"评估器 + 执行器"。
-5. **迁移 UX 糖**:是否提供 `step` 兼容封装(assess → 停在人闸 → run)。
+1. **命令命名**:采用 `assess`(评估)/ `run`(执行)。`step` 名移除,不保留。
+2. **只读命令面**:移除 `backlog` 命令(降为名词 `backlog.json` + 只读视图);保留 `pending` 作 `status` 的过滤别名(= `status --filter pending`),因"等我放行"是高频心智、保留成本低。
+3. **评估读代码**:`assess` 读代码(继承 maintainer 的 VERIFY BEFORE IMPLEMENT 职责),由指纹缓存(`backlogFingerprint`)只在 issue 变化时重算来控成本。
+4. **agent 收敛**:单一 assessor agent 取代现在的 `backlog` triage + `maintainer` 评估两处职责;`run` 复用现有 `src/shell/actions.ts` 做薄执行器(尽量无 LLM)。
+5. **编排**:不提供独立 `step` 兼容封装;由 `reconcile`/tick 编排 `assess →〔人闸〕→ run`(tick 内部分两段、跨越人闸),自治循环天然跨人闸。手动路径为 `assess` 后 `run`。
 
 ## 10. 验收标准
 
