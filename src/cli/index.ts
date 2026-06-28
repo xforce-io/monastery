@@ -93,21 +93,33 @@ async function main(): Promise<void> {
   }
 
   if (args.cmd === "status") {
+    // #176: status is the default read-only view of the backlog snapshot (assess owns it). Zero LLM: it
+    // reads the local backlog.json. With no snapshot yet it falls back to a live issue list + a hint to
+    // run `assess` (never auto-assesses — viewing stays cheap).
     const repos = args.repo ? [args.repo] : store.listRepos();
     const gh = new GhAdapter();
     const lock = new StepLock(join(homedir(), ".monastery"));
     const now = Date.now();
-    const allEntries: StatusEntry[] = [];
+    const jsonOut: unknown[] = [];
+    const blocks: string[] = [];
     for (const repo of repos) {
-      // #75: overlay the per-repo phase-progress snapshot onto the issue being stepped right now.
+      const snapshot = store.readBacklog(repo);
+      if (snapshot) {
+        jsonOut.push(snapshot);
+        blocks.push(formatBacklog(snapshot));
+        continue;
+      }
+      // No snapshot yet — fall back to the live issue view + progress overlay, and nudge toward assess.
       const snap = readProgress(lock.progressPath(repo));
       const issues = await gh.listOpenIssues(repo, 0);
-      for (const i of issues) {
+      const entries: StatusEntry[] = issues.map((i) => {
         const entry = toStatusEntry(repo, i);
-        allEntries.push(snap ? enrichWithProgress(entry, snap, { now, alive: isAlive(snap.pid) }) : entry);
-      }
+        return snap ? enrichWithProgress(entry, snap, { now, alive: isAlive(snap.pid) }) : entry;
+      });
+      jsonOut.push({ repo, error: "missing_backlog_snapshot", entries });
+      blocks.push(`${formatStatus(entries)}\n(no backlog snapshot yet — run \`monastery assess --repo ${repo}\` to rank)`);
     }
-    console.log(args.json ? JSON.stringify(allEntries, null, 2) : formatStatus(allEntries));
+    console.log(args.json ? JSON.stringify(jsonOut, null, 2) : blocks.join("\n\n"));
     return;
   }
 
