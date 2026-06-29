@@ -16,15 +16,37 @@ export interface BacklogRepoError {
   message: string;
 }
 
-export function formatBacklog(s: BacklogSnapshot): string {
+export function formatBacklog(
+  s: BacklogSnapshot,
+  opts?: { progress?: { issue: number; view: ProgressView }; failThreshold?: number },
+): string {
   const header = `${s.repo} — backlog (ranked ${s.rankedOf.ranked} of ${s.rankedOf.open} open, @ ${s.generatedAt})`;
   const lines = s.entries.map((e) => {
     const parts = [`  [${e.priority}]`, `#${e.number}`, e.title, `— ${e.rationale}`];
     if (e.blockedBy?.length) parts.push(`(blocked: ${e.blockedBy.join(", ")})`);
     if (e.fails) parts.push(`(fails: ${e.fails})`);
+    const view = opts?.progress?.issue === e.number ? opts.progress.view : undefined;
+    const hint = rowHint(s.repo, e, { progress: view, failThreshold: opts?.failThreshold });
+    if (hint) parts.push(`→ ${hint.text}${hint.url ? ` ${hint.url}` : ""}`);
     return parts.join(" ");
   });
   return [header, ...lines].join("\n");
+}
+
+export interface BacklogJsonEntry extends BacklogEntry { nextHint?: string; nextHintUrl?: string }
+
+/** #175: the snapshot decorated with per-row next-step hints for `--json` consumers. */
+export function backlogJsonView(
+  s: BacklogSnapshot,
+  opts?: { progress?: { issue: number; view: ProgressView }; failThreshold?: number },
+): BacklogSnapshot & { entries: BacklogJsonEntry[] } {
+  const entries = s.entries.map((e): BacklogJsonEntry => {
+    const view = opts?.progress?.issue === e.number ? opts.progress.view : undefined;
+    const hint = rowHint(s.repo, e, { progress: view, failThreshold: opts?.failThreshold });
+    if (!hint) return e;
+    return { ...e, nextHint: hint.text, ...(hint.url ? { nextHintUrl: hint.url } : {}) };
+  });
+  return { ...s, entries };
 }
 
 export function missingBacklog(repo: string, tracked: boolean): MissingBacklog {
