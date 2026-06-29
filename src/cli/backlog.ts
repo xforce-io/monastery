@@ -1,6 +1,7 @@
 // src/cli/backlog.ts — render a backlog snapshot (issue #82) for humans.
-import type { BacklogSnapshot } from "../types.js";
+import type { BacklogSnapshot, BacklogEntry } from "../types.js";
 import { STATUS_GLYPH } from "../shell/messages.js";
+import { humanizeElapsed, type ProgressView } from "./status.js";
 
 export interface MissingBacklog {
   repo: string;
@@ -40,6 +41,38 @@ export function formatMissingBacklog(m: MissingBacklog): string {
 
 export function formatBacklogRepoError(e: BacklogRepoError): string {
   return `${e.repo} — backlog refresh failed: ${e.message}`;
+}
+
+export interface RowHint { text: string; url?: string }
+
+const DEFAULT_FAIL_THRESHOLD = 3;
+
+/** #175: the one terminal "next step" for a backlog row, by priority stale > gate > blocked > fails.
+ *  Deterministic, zero-LLM, derived only from fields already on the entry (+ optional live progress for
+ *  THIS entry, matched by the caller). null when the row needs nothing from the human right now. */
+export function rowHint(
+  repo: string,
+  e: BacklogEntry,
+  opts?: { progress?: ProgressView; failThreshold?: number },
+): RowHint | null {
+  const progress = opts?.progress;
+  const failThreshold = opts?.failThreshold ?? DEFAULT_FAIL_THRESHOLD;
+  if (progress?.stale) {
+    return { text: `进度陈旧 ${humanizeElapsed(progress.elapsedMs)},先 ps ${progress.pid}` };
+  }
+  if (e.approvalCommentId) {
+    return {
+      text: `等你 👍(${e.approvalKind ?? "approval"})`,
+      url: `https://github.com/${repo}/issues/${e.number}#issuecomment-${e.approvalCommentId}`,
+    };
+  }
+  if (e.blockedBy?.length) {
+    return { text: `等 ${e.blockedBy.join(", ")}` };
+  }
+  if (e.fails && e.fails >= failThreshold) {
+    return { text: `连败 ${e.fails} 次,可能要你看看` };
+  }
+  return null;
 }
 
 export interface PendingItem { repo: string; number: number; title: string; approvalKind?: string; approvalCommentId: string }
