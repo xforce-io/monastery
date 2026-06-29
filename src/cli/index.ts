@@ -11,15 +11,15 @@ import { DryRunAdapter } from "../github/dry-run.js";
 import { reconcile } from "../engine/reconcile.js";
 import { assess } from "../engine/assess.js";
 import { run } from "../engine/run.js";
-import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
+import { issueStep, withReadOnlyCheckout, pendingApprovals, FAIL_THRESHOLD } from "../engine/issue-step.js";
 import { initRepo, type LabelEnsureCache } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
 import { TransientGitHubError } from "../github/transient.js";
 import type { Outcome, ReconcileResult } from "../types.js";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
-import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, type StatusEntry } from "./status.js";
-import { formatBacklog, formatPending, type PendingItem } from "./backlog.js";
+import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, toProgressView, type StatusEntry } from "./status.js";
+import { formatBacklog, backlogJsonView, formatPending, type PendingItem } from "./backlog.js";
 import { wantsHelp, wantsVersion, usage, readPackageVersion } from "./help.js";
 import { preflight, formatPreflightErrors, type Need } from "./preflight.js";
 import { dirname } from "node:path";
@@ -102,8 +102,13 @@ async function main(): Promise<void> {
     for (const repo of repos) {
       const snapshot = store.readBacklog(repo);
       if (snapshot) {
-        jsonOut.push(snapshot);
-        blocks.push(formatBacklog(snapshot));
+        // #175: overlay the local progress sidecar (zero network) so stale locks are visible in the
+        // snapshot path too, and decorate each row with its next-step hint.
+        const snap = readProgress(lock.progressPath(repo));
+        const view = snap ? toProgressView(snap, { now, alive: isAlive(snap.pid) }) : undefined;
+        const progress = view ? { issue: snap!.issue, view } : undefined;
+        jsonOut.push(backlogJsonView(snapshot, { progress, failThreshold: FAIL_THRESHOLD }));
+        blocks.push(formatBacklog(snapshot, { progress, failThreshold: FAIL_THRESHOLD }));
         continue;
       }
       // No snapshot yet — fall back to the live issue view + progress overlay, and nudge toward assess.
