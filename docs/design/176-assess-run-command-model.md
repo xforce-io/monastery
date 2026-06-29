@@ -105,7 +105,7 @@ CLI 动作面从 `{status, backlog, pending, step}` 收敛为 `{status, assess, 
 - `src/engine/reconcile.ts`、`src/engine/issue-step.ts` —— 拆"评估"与"执行";去掉执行段排序。
 - `src/engine/backlog.ts` —— `refreshBacklog` 升级为评估产物的生成;`deriveEntry`/`sanitizeRationale` 清理。
 - `src/agents/maintainer.ts`、`src/agents/backlog.ts` —— 评估器收敛为单源(见开放点 4)。
-- `.claude/skills/monastery/SKILL.md` —— 命令映射表更新(默认入口 status,assess/run 显式,放行去 GitHub)。
+- `.claude/skills/monastery/SKILL.md` —— 命令映射表更新(默认入口 status,assess/run 显式,放行去 GitHub)。⚠️ **发版收尾**:此为仓库内版本受控副本;`/monastery` 实际加载的是全局 `~/.claude/skills/monastery/SKILL.md`,两者无自动同步。本次发版、重装新二进制后须手动把新版 skill 刷进全局,否则全局副本仍指向已删除的 `backlog`/`step` 命令。
 - 可能 `docs/{CONSTITUTION,PROTOCOL,ARCHITECTURE}.md` —— 命令模型与职责分层措辞。
 
 ## 9. 已定决议
