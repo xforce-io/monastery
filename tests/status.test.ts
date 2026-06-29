@@ -1,6 +1,6 @@
 // tests/status.test.ts
 import { expect, test } from "vitest";
-import { formatStatus, toStatusEntry, protocolState, explainOutcome } from "../src/cli/status.js";
+import { formatStatus, toStatusEntry, protocolState, explainOutcome, humanizeElapsed } from "../src/cli/status.js";
 import type { Issue } from "../src/types.js";
 
 const issues: Issue[] = [
@@ -114,4 +114,11 @@ test("a finished run's leftover (done + dead pid) is not shown as in-progress", 
 test("a crash mid-phase (start + dead pid) is shown stale", () => {
   const snap: ProgressSnapshot = { issue: 73, phase: "patch", status: "start", since: 0, pid: 999 };
   expect(enrichWithProgress(baseEntry, snap, { now: 5000, alive: false }).progress).toMatchObject({ phase: "patch", stale: true });
+});
+
+test("#175 humanizeElapsed renders hours for long durations", () => {
+  expect(humanizeElapsed(5_000)).toBe("5s");          // unchanged: sub-minute
+  expect(humanizeElapsed(252_000)).toBe("4m12s");     // unchanged: sub-hour
+  expect(humanizeElapsed(169_106_485)).toBe("46h58m"); // 46h58m26s -> h+m
+  expect(humanizeElapsed(3_600_000)).toBe("1h0m");
 });

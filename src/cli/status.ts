@@ -51,11 +51,12 @@ export interface StatusEntry {
   progress?: ProgressView;
 }
 
-/** Humanize a duration: under a minute -> "Ns", otherwise "Mm Ss" (no zero-pad, e.g. 4m12s). */
+/** Humanize a duration: <1m -> "Ns"; <1h -> "Mm Ss"; otherwise "Hh Mm" (no zero-pad). */
 export function humanizeElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${s % 60}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
 }
 
 /**
