@@ -16,6 +16,7 @@ import type { Workspace } from "../workspace/workspace.js";
 import type { ReviewFn } from "../agents/reviewer.js";
 import { runImplement, runRework, branchName } from "./patch.js";
 import { gatherMaintainerContext } from "./context.js";
+import { maintainerInputFingerprint } from "./maintainer-fingerprint.js";
 import { currentSpec, parseSpecs } from "../shell/consensus.js";
 import { isHumanComment, hasMarker, renderMarker, REPLY_MARKER, IMPL_REJECTED_MARKER, REWORK_GATELINK_MARKER } from "../shell/markers.js";
 import { approvalKind, approvalSpecVersion, AWAITING_APPROVAL_BANNER, isApprovalGate, isStickyPanel, renderStateMessage, stripStateMessage, STATUS_GLYPH, type StateStatus } from "../shell/messages.js";
@@ -67,6 +68,10 @@ export interface StepCtx {
   logSink?: { err?: (line: string) => void; out?: (line: string) => void };
   /** #121: the tick's already-listed open set, threaded down so per-item steps don't each re-list. */
   openIssues?: Issue[];
+  /** #192: issue number → the maintainer-input fingerprint as of its last assessment (from the backlog
+   *  snapshot). When this tick's freshly-computed fingerprint matches, the maintainer LLM pass is skipped.
+   *  PURE cost cache: an empty/stale map only costs a full re-assess, never changes behavior. */
+  lastFingerprints?: Map<number, string>;
 }
 
 /**
@@ -124,6 +129,15 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   // #76: thread the repo's outward-text language so the maintainer writes reply/panel/spec in it.
   const input = await gatherMaintainerContext(ctx.gh, ctx.repo, issue, ctx.language, ctx.openIssues);
   const blockedBy = (input.deps ?? []).filter((d) => d.state === "open").map((d) => d.ref);
+  // #192: skip the ~2-min maintainer LLM pass when NOTHING the agent would see has changed since the last
+  // assessment. The fingerprint is over the exact gathered input (minus self-authored noise + the sibling
+  // backlog), so a match means the agent would re-propose the same idempotent writes — a net no-op. This is
+  // placed AFTER recoverRejectedImpl (deterministic recovery still runs) and is a PURE cost cut: a cold/stale
+  // `lastFingerprints` only forces a full re-assess, it can never skip work that real input changes demand.
+  const fingerprint = maintainerInputFingerprint(input);
+  if (ctx.lastFingerprints?.get(issue.number) === fingerprint) {
+    return { kind: "noop", fingerprint, entry: deriveEntry(issue, [], blockedBy, ctx.fails.failCount(ctx.repo, issue.number)) };
+  }
   // #108: run the maintainer in the tick's read-only repo checkout (so it can verify root cause from code)
   // when available; otherwise a scratch artifact dir (text-only, the pre-#108 behavior).
   const dir = ctx.repoDir ?? join(ctx.artifactRoot, `${issue.number}`);
@@ -204,9 +218,11 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   if (actionErrors.length) sa.fail("action-failed", { failures: actionErrors.length });
   else sa.done(actionWarnings.length ? { applied, warnings: actionWarnings.length } : undefined);
   const entry = deriveEntry(issue, actions, blockedBy, ctx.fails.failCount(ctx.repo, issue.number));
+  // #192: only a CLEAN evaluation caches its fingerprint. A failed/partial step omits it, so the next pass
+  // re-assesses (no caching of imperfect outcomes) — the cache is an optimization, never a way to bury a miss.
   if (actionErrors.length) return { kind: "failed", error: actionErrors.join("; "), entry };
   if (actionWarnings.length) return { kind: "partial", warning: actionWarnings.join("; "), applied, failed: actionWarnings.length, entry };
-  return actions.length ? { kind: "progressed", entry } : { kind: "noop", entry };
+  return actions.length ? { kind: "progressed", entry, fingerprint } : { kind: "noop", entry, fingerprint };
 }
 
 /**

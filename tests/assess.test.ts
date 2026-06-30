@@ -36,6 +36,49 @@ describe("assess — #176: assesses active issues, never touches gated ones", ()
     rmSync(c.artifactRoot, { recursive: true, force: true });
   });
 
+  // #192: the maintainer pass is the expensive (~2-min LLM) part. When nothing the agent would see has
+  // changed since the last assess, skip it. Persistence rides on the backlog snapshot (entry.inputFingerprint).
+  const maintainerCalls = (p: FakeProvider) => p.calls.filter((c) => c.artifact === "actions.json").length;
+
+  test("#192: an UNCHANGED issue is not re-assessed by the maintainer on the next pass", async () => {
+    const gh = new FakeGitHub({ thesis: "T", issues: [
+      { number: 1, title: "dormant", body: "b", labels: [], state: "open", updatedAt: 1 },
+    ]});
+    const provider = new FakeProvider({
+      "actions.json": JSON.stringify({ actions: [] }),            // no mutation -> input stays identical
+      "backlog.json": JSON.stringify({ entries: [{ number: 1, priority: "now", rationale: "x" }] }),
+    });
+    let snap: BacklogSnapshot | null = null;
+    const backlog = { readBacklog: () => snap, writeBacklog: (_r: string, s: BacklogSnapshot) => { snap = s; } };
+    const c = { ...baseCtx(gh, provider), backlog };
+
+    await assess(c);
+    expect(maintainerCalls(provider)).toBe(1);                   // first pass: evaluated
+    await assess(c);
+    expect(maintainerCalls(provider)).toBe(1);                   // second pass: skipped (fingerprint unchanged)
+    rmSync(c.artifactRoot, { recursive: true, force: true });
+  });
+
+  test("#192: a CHANGED issue (new human comment) IS re-assessed on the next pass", async () => {
+    const gh = new FakeGitHub({ thesis: "T", issues: [
+      { number: 1, title: "live", body: "b", labels: [], state: "open", updatedAt: 1 },
+    ]});
+    const provider = new FakeProvider({
+      "actions.json": JSON.stringify({ actions: [] }),
+      "backlog.json": JSON.stringify({ entries: [{ number: 1, priority: "now", rationale: "x" }] }),
+    });
+    let snap: BacklogSnapshot | null = null;
+    const backlog = { readBacklog: () => snap, writeBacklog: (_r: string, s: BacklogSnapshot) => { snap = s; } };
+    const c = { ...baseCtx(gh, provider), backlog };
+
+    await assess(c);
+    expect(maintainerCalls(provider)).toBe(1);
+    gh.authoredComments[1] = [{ body: "a human asks for a change", author: "alice" }]; // input changed
+    await assess(c);
+    expect(maintainerCalls(provider)).toBe(2);                   // must re-evaluate
+    rmSync(c.artifactRoot, { recursive: true, force: true });
+  });
+
   test("refreshes the backlog snapshot after assessing — writes backlog.json via the store (#12)", async () => {
     const gh = new FakeGitHub({ thesis: "T", issues: [
       { number: 1, title: "active", body: "b", labels: [], state: "open", updatedAt: 1 },
