@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { LABEL_DEFS, NEEDS_APPROVAL } from "../github/labels.js";
 import { currentSpec, parseEndorsements, SPEC_MARKER, ENDORSE_MARKER } from "./consensus.js";
-import { hasMarker, renderMarker, REPLY_MARKER } from "./markers.js";
+import { hasMarker, renderMarker, neutralizeMarkers, REPLY_MARKER } from "./markers.js";
 import { renderStateMessage, deriveState, parseStateMessage, deriveCorrelationId, GATED_KINDS, type StateStatus } from "./messages.js";
 
 // Human-gated actions, reachable only via an approval comment + a human 👍 (PROTOCOL §4).
@@ -72,7 +72,7 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
       // reply to comment 123 would suppress a reply to comment 1234.
       const existing = await gh.listComments(repo, a.num);
       if (existing.some((c) => hasMarker(c.body, REPLY_MARKER, { to: a.toCommentId }))) return;
-      await gh.postComment(repo, a.num, `${a.body}\n\n${renderMarker(REPLY_MARKER, { to: a.toCommentId })}`);
+      await gh.postComment(repo, a.num, `${neutralizeMarkers(a.body)}\n\n${renderMarker(REPLY_MARKER, { to: a.toCommentId })}`);
       return;
     }
     case "relabel":
@@ -83,21 +83,24 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
     case "panel":
       // Carry the panel marker so upsertPanel finds its single sticky comment AND it's never mistaken
       // for a human comment (constitution §6, §7). The agent supplies content; the shell stamps the marker.
-      await gh.upsertPanel(repo, a.num, renderStateMessage({ status: "note", body: a.body, ...provenance }));
+      await gh.upsertPanel(repo, a.num, renderStateMessage({ status: "note", body: neutralizeMarkers(a.body), ...provenance }));
       return;
     case "openDraftPR":
       if (await gh.findPrForBranch(repo, a.branch)) return; // already open
-      await gh.openDraftPR(repo, a.branch, a.title, a.body);
+      await gh.openDraftPR(repo, a.branch, neutralizeMarkers(a.title), neutralizeMarkers(a.body));
       return;
     case "propose":
       await proposeGate(gh, repo, a.num, a.proposal, a.draft, provenance);
       return;
     case "spec": {
       // Append-only versioned shared spec: bump the version only when the body changed (idempotent).
+      // #178: compare AND write the SAME neutralized form — currentSpec returns the stored (neutralized) body,
+      // so comparing it against the raw body would never match and would re-post a version every tick.
+      const safeBody = neutralizeMarkers(a.body).trim();
       const cur = currentSpec(await gh.listComments(repo, a.num));
-      if (cur && cur.body === a.body.trim()) return; // unchanged -> no new version
+      if (cur && cur.body === safeBody) return; // unchanged -> no new version
       const version = (cur?.version ?? 0) + 1;
-      await gh.postComment(repo, a.num, `${SPEC_MARKER(version, a.parties)}\n${a.body}`);
+      await gh.postComment(repo, a.num, `${SPEC_MARKER(version, a.parties)}\n${safeBody}`);
       return;
     }
     case "endorse": {
@@ -141,7 +144,7 @@ export async function proposeGate(gh: GitHubAdapter, repo: string, num: number, 
   if (live && comments.some((c) => parseStateMessage(c.body)?.correlationId === correlationId)) return;
   await applyStateLabels(gh, repo, num, "awaiting-approval");
   await gh.postComment(repo, num,
-    renderStateMessage({ status: "awaiting-approval", action: proposal, spec: specVersion, correlationId, body: draft, ...provenance }));
+    renderStateMessage({ status: "awaiting-approval", action: proposal, spec: specVersion, correlationId, body: neutralizeMarkers(draft), ...provenance }));
 }
 
 export async function ensureControlLabel(gh: GitHubAdapter, repo: string, name: string): Promise<void> {

@@ -251,7 +251,12 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     return demoteGate(ctx, issue, "⟳ approval gate was inconsistent（缺少审批评论），已退回重新评估。");
   }
 
-  const reactions = await ctx.gh.reactions(ctx.repo, gate.id);
+  // #178: a reaction is the human's approval signal, but trust-critical ONLY from the owner — the account
+  // monastery runs as (#92). Drop non-owner reactions so a stranger's 👍/👎/👀 on a public/collaborator repo
+  // cannot drive (or veto) a gated action. The shell never reacts; with the agent denied gh, an owner-authored
+  // reaction is necessarily the human.
+  const owner = await ctx.gh.login();
+  const reactions = (await ctx.gh.reactions(ctx.repo, gate.id)).filter((r) => r.author === owner);
   if (reactions.some((r) => r.content === "-1")) return terminalizeDeclined(ctx, issue, "👎 提议被拒，monastery 不再处理。");
 
   // #95: a parked implement gate goes STALE when a newer spec lands under it — invalidate it (back to
@@ -457,13 +462,14 @@ export async function pendingApprovals(
   repo: string,
 ): Promise<{ number: number; title: string; approvalKind?: string; approvalCommentId: string }[]> {
   const open = await gh.listOpenIssues(repo, 0);
+  const owner = await gh.login(); // #178: only the owner's 👍 counts as approval (see awaitingGate)
   const out: { number: number; title: string; approvalKind?: string; approvalCommentId: string }[] = [];
   for (const i of open) {
     if (i.labels.includes(DECLINED) || !i.labels.includes(NEEDS_APPROVAL)) continue;
     const comments = await gh.listComments(repo, i.number);
     const gate = latestApprovalGate(comments);
     if (!gate) continue; // needs-approval but no panel: inconsistent, skip
-    const reactions = await gh.reactions(repo, gate.id);
+    const reactions = (await gh.reactions(repo, gate.id)).filter((r) => r.author === owner);
     if (reactions.some((r) => r.content === "+1")) continue; // already approved
     out.push({ number: i.number, title: i.title, approvalKind: approvalKind(gate.body) ?? undefined, approvalCommentId: gate.id });
   }
