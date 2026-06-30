@@ -10,10 +10,10 @@ export const COMMANDS: ReadonlyArray<{ usage: string; desc: string }> = [
   { usage: "init <owner>/<repo>", desc: "ensure labels + scaffold the governance thesis on a repo" },
   { usage: "repos add <owner>/<repo> [model]", desc: "track a repo (optional per-repo model override)" },
   { usage: "repos remove <owner>/<repo>", desc: "stop tracking a repo" },
-  { usage: "status [--repo o/r] [--json]", desc: "show open issues and the live phase progress of any in-flight step" },
-  { usage: "backlog [--repo o/r] [--json]", desc: "show the last ranked backlog snapshot" },
+  { usage: "status [--repo o/r] [--json]", desc: "show the ranked backlog snapshot (read-only, zero LLM; run assess to refresh)" },
   { usage: "pending [--repo o/r] [--json]", desc: "list items awaiting your 👍 approval" },
-  { usage: "step [--repo o/r] [--issue N] [--dry-run] [--json]", desc: "run one reconcile tick (cron/bot invokes this)" },
+  { usage: "assess [--repo o/r] [--issue N] [--dry-run] [--json]", desc: "assess active issues — judge/propose + refresh the backlog (the think half)" },
+  { usage: "run [--repo o/r] [--dry-run] [--json]", desc: "execute the human-approved gated items, one heavy slot per run (the do half)" },
 ];
 
 const HELP_TOKENS = new Set(["--help", "-h", "help"]);
@@ -50,8 +50,8 @@ export function usage(): string {
     "",
     "Common flags:",
     "  --repo <owner>/<repo>   target a single tracked repo (default: all tracked repos)",
-    "  --dry-run               compute actions but write nothing to GitHub; local lock/progress cache may refresh (step only)",
-    "  --json                  machine-readable output / NDJSON event stream (step)",
+    "  --dry-run               compute actions but write nothing to GitHub; local lock/progress cache may refresh (assess/run)",
+    "  --json                  machine-readable output / NDJSON event stream (assess/run)",
     "  --help, -h              show this help",
     "  --version, -v           print the version",
     "",

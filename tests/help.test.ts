@@ -38,7 +38,7 @@ test("wantsVersion: --version / -v / version", () => {
 
 test("usage lists every dispatchable command (single source of truth with README)", () => {
   const out = usage();
-  for (const cmd of ["repos", "init", "status", "backlog", "pending", "step"]) {
+  for (const cmd of ["repos", "init", "status", "pending", "assess", "run"]) {
     expect(out).toContain(cmd);
   }
 });

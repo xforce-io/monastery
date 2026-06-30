@@ -115,28 +115,28 @@ class PerIssueProvider implements AgentProvider {
   }
 }
 
-test("#140 reconcile does NOT write backlog snapshots", async () => {
+test("#176 reconcile refreshes the backlog snapshot (assess owns it now — supersedes #140)", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [
-    { number: 1, title: "a", body: "b", labels: [], state: "open" },  // relabel -> later
-    { number: 2, title: "c", body: "d", labels: [], state: "open" },  // panel   -> soon
+    { number: 1, title: "a", body: "b", labels: [], state: "open", updatedAt: 1 },
   ]});
-  const provider = new PerIssueProvider({
-    1: [{ kind: "relabel", num: 1, add: ["type:bug"], remove: [] }],
-    2: [{ kind: "panel", num: 2, body: "status" }],
+  const provider = new FakeProvider({
+    "actions.json": JSON.stringify({ actions: [{ kind: "relabel", num: 1, add: ["type:bug"], remove: [] }] }),
+    "backlog.json": JSON.stringify({ entries: [{ number: 1, priority: "now", rationale: "high impact" }] }),
   });
   const written: BacklogSnapshot[] = [];
-  const c = { ...baseCtx(gh, provider), backlog: { writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
+  const c = { ...baseCtx(gh, provider), backlog: { readBacklog: () => null, writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
   await reconcile(c);
-  expect(written).toEqual([]);
+  expect(written).toHaveLength(1);                          // assess (inside the tick) refreshed it
+  expect(written[0].entries.map((e) => e.number)).toEqual([1]);
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 
 test("dry-run does NOT write the backlog", async () => {
   const gh = new FakeGitHub({ thesis: "T", issues: [{ number: 1, title: "a", body: "b", labels: [], state: "open" }] });
   const written: BacklogSnapshot[] = [];
-  const c = { ...baseCtx(gh, relabel(1)), dryRun: true, backlog: { writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
+  const c = { ...baseCtx(gh, relabel(1)), dryRun: true, backlog: { readBacklog: () => null, writeBacklog: (_r: string, s: BacklogSnapshot) => { written.push(s); } } };
   await reconcile(c);
-  expect(written.length).toBe(0);
+  expect(written.length).toBe(0);                           // dry-run refreshes nothing (#176 guard)
   rmSync(c.artifactRoot, { recursive: true, force: true });
 });
 

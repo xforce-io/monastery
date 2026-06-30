@@ -9,16 +9,17 @@ import { StepLock, RepoLockError, isAlive } from "../config/step-lock.js";
 import { GhAdapter } from "../github/gh-adapter.js";
 import { DryRunAdapter } from "../github/dry-run.js";
 import { reconcile } from "../engine/reconcile.js";
-import { backlogFingerprint, isBacklogFresh, refreshBacklog } from "../engine/backlog.js";
-import { issueStep, withReadOnlyCheckout, pendingApprovals } from "../engine/issue-step.js";
+import { assess } from "../engine/assess.js";
+import { run } from "../engine/run.js";
+import { issueStep, withReadOnlyCheckout, pendingApprovals, FAIL_THRESHOLD } from "../engine/issue-step.js";
 import { initRepo, type LabelEnsureCache } from "../engine/init.js";
 import { StructuredAgentError } from "../agents/spec.js";
 import { TransientGitHubError } from "../github/transient.js";
-import type { BacklogSnapshot, Outcome, ReconcileResult } from "../types.js";
+import type { Outcome, ReconcileResult } from "../types.js";
 import type { GitHubAdapter } from "../github/adapter.js";
 import { GitWorkspace } from "../workspace/git-workspace.js";
-import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, type StatusEntry } from "./status.js";
-import { formatBacklog, formatBacklogRepoError, formatMissingBacklog, formatPending, missingBacklog, type BacklogRepoError, type MissingBacklog, type PendingItem } from "./backlog.js";
+import { formatStatus, toStatusEntry, explainOutcome, readProgress, enrichWithProgress, toProgressView, type StatusEntry } from "./status.js";
+import { formatBacklog, backlogJsonView, formatPending, type PendingItem } from "./backlog.js";
 import { wantsHelp, wantsVersion, usage, readPackageVersion } from "./help.js";
 import { preflight, formatPreflightErrors, type Need } from "./preflight.js";
 import { dirname } from "node:path";
@@ -30,9 +31,9 @@ import { makeProviderPool, selectAgentProvider } from "../provider/select.js";
 const NEEDS: Record<string, Need> = {
   init: { gh: true, agent: false },
   status: { gh: true, agent: false },
-  backlog: { gh: true, agent: false },
   pending: { gh: true, agent: false },
-  step: { gh: true, agent: true },
+  assess: { gh: true, agent: true },
+  run: { gh: true, agent: true },
 };
 
 export interface ParsedArgs {
@@ -45,7 +46,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (cmd === "init") return { cmd, repo: rest[0] };
   const flag = (name: string) => rest.includes(`--${name}`);
   const opt = (name: string) => { const k = rest.indexOf(`--${name}`); return k >= 0 ? rest[k + 1] : undefined; };
-  if (cmd === "status" || cmd === "backlog" || cmd === "pending") return { cmd, repo: opt("repo"), json: flag("json") };
+  if (cmd === "status" || cmd === "pending") return { cmd, repo: opt("repo"), json: flag("json") };
   return { cmd, repo: opt("repo"), issue: opt("issue"), dryRun: flag("dry-run"), json: flag("json"), forceStaleLock: flag("force-stale-lock") };
 }
 
@@ -89,88 +90,41 @@ async function main(): Promise<void> {
   }
 
   if (args.cmd === "status") {
+    // #176: status is the default read-only view of the backlog snapshot (assess owns it). Zero LLM: it
+    // reads the local backlog.json. With no snapshot yet it falls back to a live issue list + a hint to
+    // run `assess` (never auto-assesses — viewing stays cheap).
     const repos = args.repo ? [args.repo] : store.listRepos();
     const gh = new GhAdapter();
     const lock = new StepLock(join(homedir(), ".monastery"));
     const now = Date.now();
-    const allEntries: StatusEntry[] = [];
+    const jsonOut: unknown[] = [];
+    const blocks: string[] = [];
     for (const repo of repos) {
-      // #75: overlay the per-repo phase-progress snapshot onto the issue being stepped right now.
+      const snapshot = store.readBacklog(repo);
+      if (snapshot) {
+        // #175: overlay the local progress sidecar (zero network) so stale locks are visible in the
+        // snapshot path too, and decorate each row with its next-step hint.
+        const snap = readProgress(lock.progressPath(repo));
+        const view = snap ? toProgressView(snap, { now, alive: isAlive(snap.pid) }) : undefined;
+        const progress = view ? { issue: snap!.issue, view } : undefined;
+        jsonOut.push(backlogJsonView(snapshot, { progress, failThreshold: FAIL_THRESHOLD }));
+        blocks.push(formatBacklog(snapshot, { progress, failThreshold: FAIL_THRESHOLD }));
+        continue;
+      }
+      // No snapshot yet — fall back to the live issue view + progress overlay, and nudge toward assess.
       const snap = readProgress(lock.progressPath(repo));
       const issues = await gh.listOpenIssues(repo, 0);
-      for (const i of issues) {
+      const entries: StatusEntry[] = issues.map((i) => {
         const entry = toStatusEntry(repo, i);
-        allEntries.push(snap ? enrichWithProgress(entry, snap, { now, alive: isAlive(snap.pid) }) : entry);
-      }
+        return snap ? enrichWithProgress(entry, snap, { now, alive: isAlive(snap.pid) }) : entry;
+      });
+      jsonOut.push({ repo, error: "missing_backlog_snapshot", entries });
+      blocks.push(`${formatStatus(entries)}\n(no backlog snapshot yet — run \`monastery assess --repo ${repo}\` to rank)`);
     }
-    console.log(args.json ? JSON.stringify(allEntries, null, 2) : formatStatus(allEntries));
+    console.log(args.json ? JSON.stringify(jsonOut, null, 2) : blocks.join("\n\n"));
     return;
   }
 
-  if (args.cmd === "backlog") {
-    const repos = args.repo ? [args.repo] : store.listRepos();
-    if (repos.length === 0) {
-      const empty = { error: "no_tracked_repos", hint: "run monastery repos add <owner>/<repo>" };
-      console.log(args.json ? JSON.stringify(empty, null, 2) : `no tracked repos; ${empty.hint}`);
-      return;
-    }
-    const tracked = new Set(store.listRepos());
-    const gh = new GhAdapter();
-    let selection: Awaited<ReturnType<typeof selectAgentProvider>> | undefined;
-    let modelLevels: ReturnType<typeof resolveModelLevels> | undefined;
-    const ensureProvider = async () => {
-      if (!selection) {
-        try {
-          const providerMode = resolveProviderMode();
-          selection = await selectAgentProvider({ mode: providerMode });
-        } catch (e) {
-          console.error(formatPreflightErrors([(e as Error).message]));
-          process.exit(1);
-        }
-        modelLevels = resolveModelLevels(selection.name);
-      }
-      return { selection, modelLevels: modelLevels! };
-    };
-    const items: (BacklogSnapshot | MissingBacklog | BacklogRepoError)[] = [];
-    for (const repo of repos) {
-      if (!tracked.has(repo)) {
-        items.push(missingBacklog(repo, false));
-        continue;
-      }
-      try {
-        const open = await gh.listOpenIssues(repo, 0);
-        const fingerprint = backlogFingerprint(open);
-        const cached = store.readBacklog(repo);
-        if (isBacklogFresh(cached, fingerprint)) {
-          items.push(cached);
-          continue;
-        }
-        const { selection: selected, modelLevels: levels } = await ensureProvider();
-        if (selected.fallbackFrom && !args.json) console.error(`[monastery] ${selected.fallbackFrom} unavailable; using ${selected.name} provider`);
-        const snapshot = await refreshBacklog({
-          repo,
-          gh,
-          provider: selected.provider,
-          model: store.repoModel(repo) ?? levels.standard,
-          artifactDir: mkdtempSync(join(tmpdir(), "monastery-backlog-")),
-          now: () => Date.now(),
-          language: store.repoLanguage(repo),
-        }, open);
-        store.writeBacklog(repo, snapshot);
-        items.push(snapshot);
-      } catch (e) {
-        items.push({ repo, error: "backlog_refresh_failed", message: (e as Error).message });
-      }
-    }
-    console.log(args.json
-      ? JSON.stringify(items, null, 2)
-      : items.map((i) => "error" in i
-        ? i.error === "missing_backlog_snapshot"
-          ? formatMissingBacklog(i)
-          : formatBacklogRepoError(i)
-        : formatBacklog(i)).join("\n\n"));
-    return;
-  }
 
   if (args.cmd === "pending") {
     // Live full scan (issue #90 review fix): not the batched backlog snapshot, so it never misses an
@@ -183,7 +137,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (args.cmd === "step") {
+  if (args.cmd === "assess" || args.cmd === "run") {
+    // #176: assess (think half) and run (do half) reuse the same tick machinery (lock, provider, ctx);
+    // they differ only in which engine pass executes. The old combined `step` is gone — a tick is now
+    // `assess` then `run` (cron runs both); the composed reconcile() stays internal for callers that want it.
+    const engineFn = args.cmd === "run" ? run : assess;
     const repos = args.repo ? [args.repo] : store.listRepos();
     const baseGh = new GhAdapter();
     let selection;
@@ -223,7 +181,7 @@ async function main(): Promise<void> {
           const line = `${repo}#${args.issue}: ${out.kind} — ${explainOutcome(out)}`;
           if (args.json) console.error(line); else console.log(line);
         } else {
-          results.push(await reconcile(ctx));
+          results.push(await engineFn(ctx));
         }
         if (args.dryRun) {
           const dry = gh as DryRunAdapter;

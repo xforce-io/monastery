@@ -38,6 +38,7 @@ export interface ProgressView {
   stale: boolean;
   status: string;
   reason: string | undefined;
+  pid: number;
 }
 
 export interface StatusEntry {
@@ -51,39 +52,43 @@ export interface StatusEntry {
   progress?: ProgressView;
 }
 
-/** Humanize a duration: under a minute -> "Ns", otherwise "Mm Ss" (no zero-pad, e.g. 4m12s). */
+/** Humanize a duration: <1m -> "Ns"; <1h -> "Mm Ss"; otherwise "Hh Mm" (no zero-pad). */
 export function humanizeElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${s % 60}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
 }
 
-/**
- * #75: overlay a per-repo progress snapshot onto a status entry. No-op unless the snapshot is for THIS
- * issue. A dead holder pid (alive=false) marks the view stale — a fail snapshot is then a tombstone that
- * still carries why it died. The caller supplies `alive` (StepLock.isAlive on snap.pid) and `now`.
- */
+/** Build the overlay view from a progress snapshot. undefined when absent, or when a dead holder's
+ *  last event was a clean `done` (a finished run's leftover, not in-progress work). Does NOT match by
+ *  issue number — callers do that. The caller supplies `alive` (StepLock.isAlive on snap.pid) and `now`. */
+export function toProgressView(
+  snap: ProgressSnapshot | null,
+  opts: { now: number; alive: boolean },
+): ProgressView | undefined {
+  if (!snap) return undefined;
+  if (!opts.alive && snap.status === "done") return undefined;
+  return {
+    phase: snap.phase,
+    attempt: snap.attempt,
+    elapsedMs: opts.now - snap.since,
+    stale: !opts.alive,
+    status: snap.status,
+    reason: snap.reason,
+    pid: snap.pid,
+  };
+}
+
+/** #75: overlay a per-repo progress snapshot onto a status entry. No-op unless the snapshot is for THIS issue. */
 export function enrichWithProgress(
   entry: StatusEntry,
   snap: ProgressSnapshot | null,
   opts: { now: number; alive: boolean },
 ): StatusEntry {
   if (!snap || snap.issue !== entry.number) return entry;
-  // A dead holder whose last event was a clean `done` is a finished run's leftover, not in-progress work —
-  // don't surface it (avoids reporting "still running" forever; no sidecar deletion needed). A dead holder
-  // mid-phase (start) or a fail tombstone IS surfaced, marked stale, so a crash/timeout stays visible.
-  if (!opts.alive && snap.status === "done") return entry;
-  return {
-    ...entry,
-    progress: {
-      phase: snap.phase,
-      attempt: snap.attempt,
-      elapsedMs: opts.now - snap.since,
-      stale: !opts.alive,
-      status: snap.status,
-      reason: snap.reason,
-    },
-  };
+  const progress = toProgressView(snap, opts);
+  return progress ? { ...entry, progress } : entry;
 }
 
 export function toStatusEntry(repo: string, issue: Issue): StatusEntry {
