@@ -15,6 +15,8 @@ description: Use when the user wants to operate the monastery repo-maintainer CL
 
 ## 命令映射(看优先)
 
+**无参默认(`/monastery` 后无任何请求)**:意图是"帮我看下现状、但别给我陈旧的"——别反问"想干嘛",给确定动作。推断 `<o/r>` 后走三步,**全程零 token、不写 GitHub**:① `monastery status --repo <o/r>` 亮当前快照;② 顺手 `gh` 纯读 open issues/PR(零 LLM)跟快照比对新鲜度;③ 快照漏了新动静(或无快照)→ 标一行 `⚠️ 快照可能陈旧:GitHub 上有 N 项没评估` 并**问**"要 `assess` 刷新吗?"。**绝不**无参就自动 `assess`——烧 token + 写 GitHub 那一下永远留给人点头(铁律 5)。
+
 | 用户意图 | 跑什么 |
 |---|---|
 | 状态 / 现在什么情况 / backlog / 排队 | `monastery status --repo <o/r>`(只读快照,**零 LLM**;无快照 → 提示去 `assess`,**不**自动重算) |
@@ -45,6 +47,7 @@ description: Use when the user wants to operate the monastery repo-maintainer CL
 
 ## Common mistakes
 
+- 无参 `/monastery` 就反问"想治理哪个仓库 / 想干嘛" → 用户其实就想看现状。**推断 repo,直接 `status` + 新鲜度体检,陈旧才问 `assess`。**
 - 省略 `--repo` → 全量扫所有 tracked 仓库,慢且越界。**默认带 `--repo`。**
 - 想看状态却跑 `assess` → 白烧 token。**看用 `status` / `pending`,它们零 LLM。**
 - 并发跑 `assess` / `run` → 互相抢锁、留 stale 锁。**一次一个。**
