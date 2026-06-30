@@ -69,6 +69,20 @@ test("propose posts a fresh approval gate comment + needs-approval label", async
   expect(i.labels).toContain("monastery:needs-approval");
 });
 
+test("#189 propose(decline) posts a human-gated decline suggestion, not a terminal label", async () => {
+  const g = gh();
+  await executeSafe(g, "o/r", { kind: "propose", num: 1, proposal: "decline", draft: "not worth doing" }, { agent: "maintainer" });
+  expect(parseStateMessage(g.comments[1][0])).toMatchObject({
+    kind: "approval",
+    action: "decline",
+    status: "awaiting-approval",
+    agent: "maintainer",
+  });
+  const [i] = await g.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain("monastery:needs-approval");
+  expect(i.labels).not.toContain("monastery:declined");
+});
+
 test("spec appends a versioned spec comment; same body is idempotent; changed body bumps the version", async () => {
   const g = gh();
   await executeSafe(g, "o/r", { kind: "spec", num: 1, body: "draft v1", parties: ["a-bot", "b-bot"] });

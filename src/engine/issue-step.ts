@@ -179,8 +179,8 @@ async function active(ctx: StepCtx, issue: Issue): Promise<Outcome> {
   }
 
   ctx.fails.clearFail(ctx.repo, issue.number);
-  // implement is the shell-owned heavy executor (sandbox patcher + human-gated draft PR); the rest are
-  // cheap idempotent GitHub writes. The agent never touches git/gh either way (constitution §3).
+  // implement/rework are shell-owned heavy executors; decline is a terminal state transition. All three are
+  // human-gated proposals: the agent asks, the shell acts only after a real owner 👍 (constitution §3/#176).
   // Each action is fault-isolated: one failing action (e.g. an undefined label) is noise, not a crash
   // that takes down the tick (constitution §10 — the safety layer always holds, even for a bad agent).
   const sa = log.phase("safe-actions", { count: actions.length });
@@ -316,6 +316,10 @@ async function awaitingGate(ctx: StepCtx, issue: Issue): Promise<Outcome> {
     const reason = stripMarkers(gate.body) || "已批准，关闭。";
     await doClose(ctx.gh, ctx.repo, issue.number, reason); // closes first -> idempotent, leaves the open list
     return { kind: "done" };
+  }
+  if (kind === "decline") {
+    const reason = stripMarkers(gate.body) || "👍 已批准废止，monastery 不再处理。";
+    return terminalizeDeclined(ctx, issue, reason);
   }
   if (kind === "implement" || kind === "rework") {
     if (kind === "implement") {

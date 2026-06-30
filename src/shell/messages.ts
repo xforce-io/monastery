@@ -8,7 +8,7 @@ export const STATE_MARKER = "<!--monastery-state";
  * schema and `actions.ts`'s `GatedKindSchema` derive from one list (no drift). `actions.ts` builds its zod
  * enum FROM this tuple; messages.ts owns it to keep the schema-parse self-contained (no value cycle).
  */
-export const GATED_KINDS = ["close", "merge", "implement", "rework"] as const;
+export const GATED_KINDS = ["close", "merge", "implement", "rework", "decline"] as const;
 export type GatedKind = (typeof GATED_KINDS)[number];
 
 export type StateMessageKind = "note" | "approval";

@@ -214,7 +214,7 @@ test("active issue: per-repo failThreshold does not swallow structured output fa
 
 // --- awaiting-gate: check the human signal; NEVER call the agent ---
 
-async function awaitingGate(num: number, proposal: "close" | "merge", draft: string): Promise<FakeGitHub> {
+async function awaitingGate(num: number, proposal: "close" | "merge" | "decline", draft: string): Promise<FakeGitHub> {
   const gh = ghWith({ number: num, title: "x", body: "y", labels: [], state: "open" });
   await executeSafe(gh, "o/r", { kind: "propose", num, proposal, draft }); // sets approval comment + needs-approval
   return gh;
@@ -241,6 +241,19 @@ test("awaiting-gate + 👎: declined is stamped, needs-approval cleared, no agen
   const [i] = await gh.listOpenIssues("o/r", 0);
   expect(i.labels).toContain(DECLINED);
   expect(i.labels).not.toContain(NEEDS_APPROVAL);
+});
+
+test("#189 awaiting-gate + 👍 on a decline proposal: shell stamps declined, clears approval, no agent call", async () => {
+  const gh = await awaitingGate(22, "decline", "not worth doing");
+  gh.commentReactions["0"] = ["+1"];
+  const provider = new FakeProvider(actionsJson([{ kind: "relabel", num: 22, add: ["z"], remove: [] }]));
+  const out = await issueStep(ctxWith(gh, provider), 22);
+  expect(out.kind).toBe("done");
+  expect(provider.calls).toHaveLength(0);
+  const [i] = await gh.listOpenIssues("o/r", 0);
+  expect(i.labels).toContain(DECLINED);
+  expect(i.labels).not.toContain(NEEDS_APPROVAL);
+  expect(gh.panels[22]).toContain("not worth doing");
 });
 
 // --- #178: human-gate signal authentication. The gate's safety rests on "a 👍 = the human owner" and

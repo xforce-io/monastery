@@ -11,6 +11,7 @@ test("ActionSchema accepts each proposable action kind", () => {
     { kind: "openDraftPR", num: 1, branch: "feat/1-x", title: "t", body: "b" },
     { kind: "propose", num: 1, proposal: "close", draft: "because X" },
     { kind: "propose", num: 1, proposal: "merge", draft: "looks good" },
+    { kind: "propose", num: 1, proposal: "decline", draft: "not worth doing" },
     { kind: "implement", num: 1 },
     { kind: "rework", num: 1 },                                  // #79: rework an open draft PR from feedback
     { kind: "rework", num: 1, draft: "address the review: rename X, add a test" },
