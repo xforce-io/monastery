@@ -29,8 +29,8 @@ test("#178 A3: ClaudeCodeProvider denies the agent git and gh shell tools", asyn
     const i = captured.indexOf("--disallowedTools");
     expect(i).toBeGreaterThanOrEqual(0); // the deny flag is present
     const denied = captured.slice(i + 1);
-    expect(denied).toContain("Bash(git:*)"); // git push / git remote blocked
-    expect(denied).toContain("Bash(gh:*)"); // gh api reactions / gh pr merge blocked
+    expect(denied).toContain("Bash(git *)"); // git push / git remote blocked (documented deny form)
+    expect(denied).toContain("Bash(gh *)"); // gh api reactions / gh pr merge blocked
   } finally {
     rmSync(d, { recursive: true, force: true });
   }

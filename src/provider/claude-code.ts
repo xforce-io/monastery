@@ -62,10 +62,12 @@ export class ClaudeCodeProvider implements AgentProvider {
         "-p", "--model", config.model, "--output-format", "json",
         // #178 A3: deny the agent git/gh at the spawn boundary so it cannot `git push` to main or
         // `gh ... reactions +1` to self-approve its own gate — even under a permissive host config (the human
-        // gate can't catch a self-react, since its author == the owner account monastery runs as). Defense-in-
-        // depth: `--disallowedTools` overrides any allow rule (strict tightening), but a denylist is bypassable
-        // (Claude Code docs: `/usr/bin/git`, subshells); the load-bearing guarantee stays the human gate (A1/A2).
-        "--disallowedTools", "Bash(git:*)", "Bash(gh:*)",
+        // gate can't catch a self-react, since its author == the owner account monastery runs as). The
+        // `Bash(git *)` form matches Claude Code's documented (`claude --help`) deny syntax; empirically
+        // verified on v2.1.191 to block `git`/`gh` even with `Bash` otherwise allowed (deny overrides allow).
+        // Defense-in-depth only — a denylist is bypassable (docs: `/usr/bin/git`, subshells); the load-bearing
+        // guarantee stays the human gate (A1/A2).
+        "--disallowedTools", "Bash(git *)", "Bash(gh *)",
       ], {
         cwd: config.artifactDir,
         inputFile: promptFile,

@@ -94,10 +94,13 @@ export async function executeSafe(gh: GitHubAdapter, repo: string, a: Action, pr
       return;
     case "spec": {
       // Append-only versioned shared spec: bump the version only when the body changed (idempotent).
+      // #178: compare AND write the SAME neutralized form — currentSpec returns the stored (neutralized) body,
+      // so comparing it against the raw body would never match and would re-post a version every tick.
+      const safeBody = neutralizeMarkers(a.body).trim();
       const cur = currentSpec(await gh.listComments(repo, a.num));
-      if (cur && cur.body === a.body.trim()) return; // unchanged -> no new version
+      if (cur && cur.body === safeBody) return; // unchanged -> no new version
       const version = (cur?.version ?? 0) + 1;
-      await gh.postComment(repo, a.num, `${SPEC_MARKER(version, a.parties)}\n${neutralizeMarkers(a.body)}`);
+      await gh.postComment(repo, a.num, `${SPEC_MARKER(version, a.parties)}\n${safeBody}`);
       return;
     }
     case "endorse": {
