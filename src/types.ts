@@ -14,6 +14,9 @@ export type Outcome = (
   // #86: set by awaitingGate under ctx.deferImplement — an approved implement gate that the tick scheduler
   // should run at most one of. reconcile collects these and runs only the backlog-top one this tick.
   readyImplement?: boolean;
+  // #192: this tick's content fingerprint of the exact maintainer input. Transient transport: assess collects
+  // it and persists it onto the backlog snapshot entry, so a later pass can skip an unchanged issue's LLM.
+  fingerprint?: string;
 };
 
 // Per-repo reconcile tick result (L0).
@@ -56,6 +59,9 @@ export interface BacklogEntry {
   awaitingApproval?: boolean;
   approvalKind?: string;        // "implement" | "close" | "merge"
   approvalCommentId?: string;   // the approval comment id — for the direct 👍 link
+  // #192: the maintainer-input fingerprint as of the last assessment of this issue. PURE cost cache — a
+  // missing/stale value only forces a full re-assess, never affects correctness or any terminal state.
+  inputFingerprint?: string;
 }
 
 export interface BacklogSnapshot {
