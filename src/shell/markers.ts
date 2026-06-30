@@ -11,6 +11,17 @@ export const isMonasteryComment = (body: string): boolean => body.includes(MONAS
 /** True if the comment is human-authored (no monastery marker). */
 export const isHumanComment = (c: { body: string }): boolean => !isMonasteryComment(c.body);
 
+/**
+ * #178: neutralize any monastery marker an AGENT embedded in free-text it controls (reply / panel / spec /
+ * gate draft / PR body). The shell concatenates agent bodies into GitHub comments verbatim; without this an
+ * agent could plant a `<!--monastery-state kind: approval-->` envelope that the gate parser then treats as a
+ * shell-authored gate — because the marker, NOT the author, is the trust signal under the single-account
+ * model (see top of file). HTML-escaping the comment-open makes the marker unparseable AND keeps it visible
+ * to the human (the injection shows as literal text instead of vanishing into an HTML comment).
+ */
+export const neutralizeMarkers = (body: string): string =>
+  body.replaceAll(MONASTERY_MARKER_PREFIX, "&lt;!--monastery-");
+
 // #154: class-B markers — the small `<!--monastery-<name> k=v ...-->` tags monastery stamps on its own
 // comments (reply / rework / impl-rejected). They used to be located by bare `body.includes(...)`, which
 // misfires on field-value prefixes (`to=C_123` matched `to=C_1234`) and reads field VALUES by substring
