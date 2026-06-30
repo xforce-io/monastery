@@ -213,20 +213,43 @@ test("cross-host lock older than the stale threshold is cleared and re-acquired"
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("force overwrite of a live lock warns about the displaced pid", () => {
+test("#185: force does NOT displace a provably-live same-host holder (no concurrent assess/run)", () => {
   const { lock, dir } = tmpLock();
-  const held = lock.acquire("owner/repo"); // live lock, our pid
+  const lockPath = join(dir, "repos", "owner__repo", "step.lock");
+  const held = lock.acquire("owner/repo"); // live lock, our pid, this host
+  const before = readFileSync(lockPath, "utf8");
+
+  let caught: unknown;
+  try { lock.acquire("owner/repo", "", true); } catch (e) { caught = e; }
+
+  // force must refuse — the holder is locally proven alive; deleting it would allow concurrent execution.
+  expect(caught).toBeInstanceOf(RepoLockError);
+  expect(existsSync(lockPath)).toBe(true);
+  expect(readFileSync(lockPath, "utf8")).toBe(before); // untouched — same holder still owns it
+
+  held();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("#185: force STILL displaces a cross-host recent lock (the legitimate escape hatch) and warns", () => {
+  const { lock, dir } = tmpLock();
+  const repoDir = join(dir, "repos", "owner__repo");
+  mkdirSync(repoDir, { recursive: true });
+  const lockPath = join(repoDir, "step.lock");
+  // A recent lock owned by another machine — liveness is locally unprovable. force = "I checked; it's gone."
+  writeFileSync(lockPath, JSON.stringify({
+    pid: 4242, host: "some-other-host", token: "remote", repo: "owner/repo",
+    startedAt: new Date().toISOString(), cmd: "",
+  }), "utf8");
 
   const warns: string[] = [];
   const spy = vi.spyOn(console, "warn").mockImplementation((m?: unknown) => { warns.push(String(m)); });
-  // force should overwrite even though the holder is alive, but not silently
-  const release = lock.acquire("owner/repo", "", true);
+  const release = lock.acquire("owner/repo", "", true); // must succeed
   spy.mockRestore();
 
-  expect(warns.some((w) => w.includes(String(process.pid)))).toBe(true);
-
+  expect(warns.some((w) => w.includes("4242"))).toBe(true); // not silent about what it displaced
+  expect(JSON.parse(readFileSync(lockPath, "utf8")).host).toBe(hostname()); // we now hold it
   release();
-  held();
   rmSync(dir, { recursive: true, force: true });
 });
 
