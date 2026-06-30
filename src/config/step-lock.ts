@@ -83,13 +83,25 @@ export class StepLock {
     mkdirSync(join(this.root, "repos", repoSlug(repo)), { recursive: true });
     const path = this.lockPath(repo);
 
-    // --force-stale-lock: unconditionally remove any existing lock before acquiring.
-    // The escape hatch for pid-reuse false positives; warn loudly about what we displace.
+    // --force-stale-lock: displace a lock whose liveness this machine CANNOT prove (cross-host, or aged past
+    // the threshold) — never one it can. #185: the old behavior deleted unconditionally, so `run
+    // --force-stale-lock` could nuke a live same-host `assess` and run concurrently on the same repo. force
+    // now refuses a provably-live local holder; the same-host pid-reuse false positive is left to the
+    // staleness threshold rather than risking a real holder. Warn loudly about whatever we do displace.
     if (force) {
       try {
         const prev = JSON.parse(readFileSync(path, "utf8")) as LockData;
+        const sameHost = prev.host === undefined || prev.host === hostname();
+        const ageMs = Date.now() - Date.parse(prev.startedAt);
+        const expired = Number.isFinite(ageMs) && ageMs > STALE_LOCK_MS;
+        if (sameHost && isAlive(prev.pid) && !expired) {
+          throw new RepoLockError(repo, prev.pid, prev.startedAt);
+        }
         console.warn(`[monastery] --force-stale-lock: removing existing lock held by pid ${prev.pid} (startedAt ${prev.startedAt})`);
-      } catch { /* no existing/unreadable lock — nothing to displace */ }
+      } catch (e) {
+        if (e instanceof RepoLockError) throw e; // a live local holder — force must not displace it
+        /* no existing/unreadable/corrupt lock — nothing of value to displace */
+      }
       try { unlinkSync(path); } catch { /* ignore */ }
     }
 

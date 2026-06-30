@@ -85,6 +85,27 @@ test("stepRepos skips a locked repo, runs the rest, and reports exit code 4 (loc
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("#185: with --force-stale-lock, a live same-host holder is reported as un-displaceable (not told to re-force)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "monastery-steprepos-"));
+  const lock = new StepLock(dir);
+  const held = lock.acquire("o/a"); // live holder, our pid, this host
+
+  const errs: string[] = [];
+  const code = await stepRepos({
+    repos: ["o/a"], lock, rawCmd: "run", force: true, json: false,
+    runOne: async () => {}, err: (m) => errs.push(m),
+  });
+
+  expect(code).toBe(4);
+  const joined = errs.join("\n");
+  expect(joined).toContain("will not displace");              // force-aware guidance
+  expect(joined).toContain(String(process.pid));              // names the live holder
+  expect(joined).not.toContain("use --force-stale-lock");     // don't tell them to do what they just did
+
+  held();
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("stepRepos releases the lock after a repo finishes so it can re-run", async () => {
   const dir = mkdtempSync(join(tmpdir(), "monastery-steprepos-"));
   const lock = new StepLock(dir);

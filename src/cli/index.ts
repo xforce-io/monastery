@@ -260,7 +260,13 @@ export async function stepRepos(deps: StepReposDeps): Promise<number> {
           err(JSON.stringify({ repo: e.repo, error: "repo_locked", pid: e.pid, startedAt: e.startedAt }));
         } else {
           err(`[monastery] repo ${e.repo} is already being stepped by pid ${e.pid} since ${e.startedAt}`);
-          err(`[monastery] refusing concurrent run; retry later or use --force-stale-lock only if the prior process is gone`);
+          // #185: if --force-stale-lock was already given and we STILL refused, the holder is locally proven
+          // alive — don't loop the operator back to a flag they just used; tell them force won't displace it.
+          if (deps.force) {
+            err(`[monastery] --force-stale-lock will not displace a live same-host process (pid ${e.pid}); wait for it to finish or stop it first`);
+          } else {
+            err(`[monastery] refusing concurrent run; retry later or use --force-stale-lock only if the prior process is gone`);
+          }
         }
         exitCode = 4; // repo lock conflict — distinct code so cron/scripts can retry vs. alert
         continue;
