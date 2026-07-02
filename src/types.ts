@@ -57,7 +57,7 @@ export interface BacklogEntry {
   // #90: an item blocked on the human's 👍. Kept at high priority (not sunk to parked) and tagged so
   // `monastery pending` can list it with a direct link to the exact comment to react on.
   awaitingApproval?: boolean;
-  approvalKind?: string;        // "implement" | "close" | "merge"
+  approvalKind?: string;        // "implement" | "rework" | "close" | "merge" | "decline"
   approvalCommentId?: string;   // the approval comment id — for the direct 👍 link
   // #192: the maintainer-input fingerprint as of the last assessment of this issue. PURE cost cache — a
   // missing/stale value only forces a full re-assess, never affects correctness or any terminal state.

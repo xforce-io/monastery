@@ -190,6 +190,25 @@ test("the agent accepts an implement action", async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("#189 the agent can propose decline as a human-gated suggestion", async () => {
+  const dir = newDir();
+  const out = await maintainer(new FakeProvider({ "actions.json": '{"actions":[{"kind":"propose","num":7,"proposal":"decline","draft":"not worth doing"}]}' }), "sonnet", input, dir);
+  expect(out).toEqual([{ kind: "propose", num: 7, proposal: "decline", draft: "not worth doing" }]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("#189 prompt describes decline as human-gated, not agent-terminal", async () => {
+  const dir = newDir();
+  const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });
+  await maintainer(provider, "sonnet", input, dir);
+  const ctx = provider.calls[0].context;
+  const actionBlock = ctx.split("\n\n").find((b) => /ACTION VOCABULARY/.test(b)) ?? "";
+  expect(actionBlock).toContain('"decline"');
+  expect(actionBlock).toMatch(/human|👍/i);
+  expect(actionBlock).toContain("monastery:declined");
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("upstream cross-repo dependencies are surfaced in context (state + ref)", async () => {
   const dir = newDir();
   const provider = new FakeProvider({ "actions.json": '{"actions":[]}' });

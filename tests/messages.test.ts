@@ -41,6 +41,11 @@ test("#154 schema: a legacy v0 protocol-only block is still tolerated (kind from
   expect(parseStateMessage(block("protocol: approval", "action: close"))).toMatchObject({ kind: "approval", action: "close" });
 });
 
+test("#189 schema: decline is a first-class gated action", () => {
+  const body = renderStateMessage({ status: "awaiting-approval", action: "decline", body: "建议废止" });
+  expect(parseStateMessage(body)).toMatchObject({ kind: "approval", action: "decline", status: "awaiting-approval" });
+});
+
 test("#154 schema: a well-formed v1 block still round-trips every typed field", () => {
   const body = renderStateMessage({
     status: "awaiting-approval", action: "implement", spec: 3, agent: "maintainer",
