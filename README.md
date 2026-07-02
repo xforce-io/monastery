@@ -2,18 +2,19 @@
 
 > Where repositories learn to govern themselves.
 
-**monastery** is an AI repo maintainer. It runs as a per-repo *reconciler*: each tick it reads
-your repo's open issues and PRs from GitHub, lets one governed agent decide the next step, and
-proposes or takes actions — with GitHub as the single source of truth. Risky actions (closing an
-issue, merging a PR) are never taken unilaterally; they wait for your 👍.
+**monastery** is an AI repo maintainer. It runs as a per-repo *reconciler*: it reads
+your repo's open issues and PRs from GitHub, has one governed agent assess the next useful work,
+and executes only human-approved actions — with GitHub as the single source of truth. Risky actions
+(closing an issue, merging a PR, implementing a proposal) are never taken unilaterally; they wait
+for your 👍 / Merge.
 
 You point it at a repo, then drive it from either front door:
 
 - **In a Claude Code session** — the bundled `monastery` skill turns plain-language intent ("巡检一下
   / what's waiting on me / run a tick") into the right CLI calls and reads the output back as prose.
   This is the everyday, human-in-the-loop way to operate it.
-- **Unattended** — a cron job or bot runs `monastery step` on a schedule. This is the autonomous
-  loop that lets a repo govern itself with no one watching.
+- **Unattended** — a cron job or bot runs the same `assess` / `run` loop on a schedule. `assess`
+  refreshes proposals; `run` executes only items that a human has approved on GitHub.
 
 Same reconcile loop underneath; the skill is just a thin conversational shell over the same CLI.
 
@@ -29,8 +30,8 @@ monastery drives local CLIs on your `PATH` — it does not bundle them:
 - **Node.js ≥ 20**.
 
 monastery runs a **preflight check** on startup: if `gh` is missing / unauthenticated or no agent
-provider CLI is available, it prints exactly what to fix and exits — no raw stack traces. For
-`step`, it also health-checks the selected agent provider before touching GitHub.
+provider CLI is available, it prints exactly what to fix and exits — no raw stack traces. The
+write-capable commands also health-check the selected agent provider before touching GitHub.
 
 ## Install
 
@@ -78,8 +79,9 @@ back as prose:
 |---------|---------|
 | 巡检一下 / what's the state | `monastery status` |
 | what's waiting on me / pending | `monastery pending` → each item with a direct GitHub link |
-| what's queued / backlog | `monastery backlog` |
-| run a tick / advance it | `monastery step --dry-run` → asks before the real run |
+| what's queued / backlog | `monastery status` |
+| assess issue 123 | `monastery assess --issue 123 --dry-run --json` → asks before the real assessment |
+| run approved work / advance it | `monastery run --dry-run --json` → asks before the real run |
 
 The skill is a **thin shell**: it previews writes before acting, never approves or merges on your
 behalf (that stays a human 👍 / Merge on GitHub), and never touches `init` / `repos` config.
@@ -87,12 +89,16 @@ behalf (that stays a human 👍 / Merge on GitHub), and never touches `init` / `
 ### B. Unattended — the autonomous loop
 
 ```bash
-# Dry-run one tick — computes what it *would* do, writes nothing.
-monastery step --repo <owner>/<repo> --dry-run
+# Refresh proposals for one repo. Dry-run first when changing automation.
+monastery assess --repo <owner>/<repo> --dry-run --json
+
+# Execute human-approved gated items. With no approvals, this is a no-op.
+monastery run --repo <owner>/<repo> --dry-run --json
 ```
 
-When the dry-run looks right, drop `--dry-run` and put `monastery step` on a cron/bot schedule. A 👍
-on the approval comment is how you approve a gated action (close/merge); see
+When the dry-run looks right, drop `--dry-run` and schedule `assess` and `run` separately. A 👍 on
+the approval comment is how you approve a gated action (close/implement/rework); PR merge remains a
+GitHub merge action. See
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ## Commands
@@ -102,10 +108,10 @@ on the approval comment is how you approve a gated action (close/merge); see
 | `monastery init <owner>/<repo>` | Ensure governance labels + scaffold the thesis on a repo. |
 | `monastery repos add <owner>/<repo> [model]` | Track a repo (optional per-repo model override). |
 | `monastery repos remove <owner>/<repo>` | Stop tracking a repo. |
-| `monastery status [--repo o/r]` | Open issues + live phase progress of any in-flight step. |
-| `monastery backlog [--repo o/r]` | The last ranked backlog snapshot. |
+| `monastery status [--repo o/r] [--json]` | Show the ranked backlog snapshot; read-only and zero LLM. |
 | `monastery pending [--repo o/r]` | Items awaiting your 👍 approval, with a direct link. |
-| `monastery step [--repo o/r]` | Run one reconcile tick (cron/bot invokes this). |
+| `monastery assess [--repo o/r] [--issue N] [--dry-run] [--json]` | Assess active issues, propose actions, and refresh the backlog snapshot. |
+| `monastery run [--repo o/r] [--dry-run] [--json]` | Execute human-approved gated items. |
 
 Run `monastery --help` or `monastery <command> --help` any time. With no `--repo`, commands act on
 **all** tracked repos.
@@ -114,11 +120,11 @@ Run `monastery --help` or `monastery <command> --help` any time. With no `--repo
 
 | Flag | Applies to | Effect |
 |------|-----------|--------|
-| `--dry-run` | `step` | Compute actions but write nothing to GitHub; local lock/progress cache may still refresh. |
-| `--json` | `step`, `status`, `backlog`, `pending` | Machine-readable output; `step` emits an NDJSON event stream on stdout. |
+| `--dry-run` | `assess`, `run` | Compute actions but write nothing to GitHub; local lock/progress cache may still refresh. |
+| `--json` | `status`, `pending`, `assess`, `run` | Machine-readable output; `assess` / `run` emit an NDJSON event stream on stdout. |
 | `--repo <owner>/<repo>` | most | Target one tracked repo instead of all. |
-| `--issue <N>` | `step` | Reconcile a single issue. |
-| `--force-stale-lock` | `step` | Reclaim a lock only if the prior process is gone. |
+| `--issue <N>` | `assess` | Assess a single issue. |
+| `--force-stale-lock` | `assess`, `run` | Reclaim a lock only if the prior process is gone. |
 
 | Env var | Effect |
 |---------|--------|
